@@ -138,6 +138,12 @@ if(BUI_BUILD_TESTS)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tk_input.py
   )
   set_tests_properties(buipy_tk_input PROPERTIES ENVIRONMENT "PYTHONPATH=${BUIPY_TEST_PYTHONPATH}")
+  # animation: bui.gsap, bui.motion, Qt's animations on the kit's engine (a stepped clock)
+  add_test(
+    NAME buipy_anim
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_anim.py
+  )
+  set_tests_properties(buipy_anim PROPERTIES ENVIRONMENT "PYTHONPATH=${BUIPY_TEST_PYTHONPATH}")
   add_test(
     NAME buipy_filebrowser
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_filebrowser.py
