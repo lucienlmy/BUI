@@ -139,7 +139,7 @@ set_image_budget = buipy.image_set_budget
 image_decode_frame = buipy.image_decode_frame
 
 # Video: the kit's <video> player (one for every binding). Video(src) plays
-# (muted autoplay) where it is attached and drawn; state is one of the
+# (autoplay, with its sound: muted / volume) where it is attached and drawn; state is one of the
 # VIDEO_* below; video_backends names the decoders this build has ("mf",
 # "avfoundation", "gstreamer", ...; "" without video). The component is
 # bui.components.Video.

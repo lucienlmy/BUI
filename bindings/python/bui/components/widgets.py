@@ -99,22 +99,28 @@ VIDEO_ENDED = 3  # buipy.Video.state
 class Video(Component):
     """A video file (MP4, WebM, MOV, ... whatever the OS decodes: Media
     Foundation, AVFoundation, GStreamer), fitted like CSS ``object-fit``.
-    Muted autoplay unless ``autoplay=False``; it decodes at the size drawn
-    and only while it shows. ``controls=True`` draws Blender's play/pause
-    button and a scrubber with the time. ``player`` is the
-    :class:`bui.Video` (play, pause, seek, rate, time, duration, on_state)."""
+    Autoplays with its sound unless ``autoplay=False`` (``muted=True`` for
+    a silent one; ``volume`` 0 .. 1); the frames follow the sound, which
+    plays on off screen, and are decoded at the size drawn only while it
+    shows. ``controls=True`` draws Blender's play/pause button, a scrubber
+    with the time and, with sound, a mute button. ``player`` is the
+    :class:`bui.Video` (play, pause, seek, rate, muted, volume, time,
+    duration, on_state)."""
 
     TYPE = "video"
     FITS = Image.FITS
 
     def __init__(self, src: str, *, autoplay: bool = True, loop: bool = False,
-                 controls: bool = False, poster: Optional[str] = None, fit: str = "contain",
+                 muted: bool = False, volume: float = 1.0, controls: bool = False,
+                 poster: Optional[str] = None, fit: str = "contain",
                  on_ended: Optional[Callable[[], None]] = None, **kw):
         super().__init__(**kw)
         if fit not in self.FITS:
             raise ValueError(f"fit must be one of {sorted(self.FITS)}, not {fit!r}")
         self.player = buipy.Video(str(src))  # kept by the node: it borrows the player
         self.player.loop = loop
+        self.player.muted = muted
+        self.player.volume = volume
         self.player.controls = controls
         if poster:
             self.player.poster = str(poster)

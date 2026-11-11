@@ -47,7 +47,8 @@ impl VideoState {
 type Listener = Box<dyn FnMut(VideoState)>;
 
 /// A video and its controls. UI thread only (`!Send`); share it with `Rc`.
-/// Muted autoplay by default (no audio yet).
+/// Autoplays with sound (`set_muted(true)` first for a silent one); the frames
+/// follow the sound, which plays on while the video is off screen.
 pub struct Video {
     ptr: NonNull<sys::BKVideo>,
     /// `on_state`'s callback, boxed twice so the kit holds a thin pointer.
@@ -95,6 +96,30 @@ impl Video {
 
     pub fn set_loop(&self, on: bool) {
         unsafe { sys::BK_video_set_loop(self.as_ptr(), i32::from(on)) };
+    }
+
+    /// Silent (the frames still follow the sound's clock).
+    pub fn set_muted(&self, muted: bool) {
+        unsafe { sys::BK_video_set_muted(self.as_ptr(), i32::from(muted)) };
+    }
+
+    pub fn muted(&self) -> bool {
+        unsafe { sys::BK_video_muted(self.as_ptr()) != 0 }
+    }
+
+    /// The sound's volume, 0.0 ..= 1.0.
+    pub fn set_volume(&self, volume: f64) {
+        unsafe { sys::BK_video_set_volume(self.as_ptr(), volume) };
+    }
+
+    pub fn volume(&self) -> f64 {
+        unsafe { sys::BK_video_volume(self.as_ptr()) }
+    }
+
+    /// Its sound plays: the file has an audio track this system decodes, and
+    /// there is an output device (`false` until it has started).
+    pub fn has_audio(&self) -> bool {
+        unsafe { sys::BK_video_has_audio(self.as_ptr()) != 0 }
     }
 
     /// An image file shown until the first frame.
@@ -176,6 +201,7 @@ pub(crate) struct VideoCache {
 pub(crate) struct VideoAttrs {
     pub autoplay: bool,
     pub looped: bool,
+    pub muted: bool,
     pub poster: Option<String>,
 }
 
@@ -201,6 +227,9 @@ fn apply(v: &Video, had: &VideoAttrs, now: &VideoAttrs) {
     }
     if had.looped != now.looped {
         v.set_loop(now.looped);
+    }
+    if had.muted != now.muted {
+        v.set_muted(now.muted);
     }
     if had.poster != now.poster {
         v.set_poster(now.poster.as_deref().unwrap_or(""));

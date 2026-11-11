@@ -807,13 +807,13 @@ impl<'a> Builder<'a> {
         &self.styles[self.nodes[i].style]
     }
 
-    /// `<video src>`'s player: muted autoplay unless `autoplay="false"` (React's
-    /// `autoPlay={false}`);
-    /// `loop`, `poster` (the HTML attributes).
+    /// `<video src>`'s player: autoplay with sound unless `autoplay="false"`
+    /// (React's `autoPlay={false}`); `loop`, `muted`, `poster` (the HTML attributes).
     fn video_src(&mut self, i: usize) -> Option<std::rc::Rc<crate::video::Video>> {
         let attrs = crate::video::VideoAttrs {
             autoplay: self.attr(i, "autoplay").or_else(|| self.attr(i, "autoPlay")) != Some("false"), // React: autoPlay
             looped: self.attr(i, "loop").is_some_and(|v| v != "false"),
+            muted: self.attr(i, "muted").is_some_and(|v| v != "false"),
             poster: self.attr(i, "poster").map(str::to_owned),
         };
         let src = self.attr(i, "src")?.to_owned();

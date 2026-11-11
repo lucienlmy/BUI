@@ -109,6 +109,9 @@ fn video_plays_and_players_free_everything() {
         p.on_state(|_| {});
         p.set_loop(true);
         p.seek(Duration::from_millis(500));
+        p.set_volume(2.0);
+        p.set_muted(true);
+        assert!(p.muted() && (p.volume() - 1.0).abs() < 1e-9, "sound by default, volume clamped");
         drop(p);
     }
     assert_eq!(LIVE.load(Ordering::Relaxed), rust0, "Rust allocations returned");

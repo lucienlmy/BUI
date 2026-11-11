@@ -105,12 +105,13 @@ fn main() {
             for fw in ["Cocoa", "CoreGraphics"] {
                 println!("cargo:rustc-link-lib=framework={fw}");
             }
-            // video (movie_avf.m). `rustc-link-lib`, not `rustc-link-arg`: only a link-lib
-            // reaches the crates that depend on this one (a link-arg stays with this package's
-            // own targets, and `blenderui`'s test binaries then fail to link). All three
-            // frameworks ship with every macOS the kit supports (11 and newer).
+            // video (movie_avf.m) and its sound (device_coreaudio.c). `rustc-link-lib`, not
+            // `rustc-link-arg`: only a link-lib reaches the crates that depend on this one (a
+            // link-arg stays with this package's own targets, and `blenderui`'s test binaries
+            // then fail to link). All four frameworks ship with every macOS the kit supports
+            // (11 and newer).
             if std::env::var_os("CARGO_FEATURE_VIDEO").is_some() {
-                for fw in ["AVFoundation", "CoreMedia", "CoreVideo"] {
+                for fw in ["AVFoundation", "CoreMedia", "CoreVideo", "AudioToolbox"] {
                     println!("cargo:rustc-link-lib=framework={fw}");
                 }
             }

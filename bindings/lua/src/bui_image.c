@@ -145,6 +145,36 @@ static int l_video_set_loop(lua_State *L) {
   return 0;
 }
 
+static int l_video_set_muted(lua_State *L) {
+  luabui_Video *vud = CHECK_VIDEO(L, 1);
+  if (vud->video) BK_video_set_muted(vud->video, (int)lua_toboolean(L, 2));
+  return 0;
+}
+
+static int l_video_muted(lua_State *L) {
+  luabui_Video *vud = CHECK_VIDEO(L, 1);
+  lua_pushboolean(L, vud->video && BK_video_muted(vud->video));
+  return 1;
+}
+
+static int l_video_set_volume(lua_State *L) {
+  luabui_Video *vud = CHECK_VIDEO(L, 1);
+  if (vud->video) BK_video_set_volume(vud->video, luaL_checknumber(L, 2));
+  return 0;
+}
+
+static int l_video_volume(lua_State *L) {
+  luabui_Video *vud = CHECK_VIDEO(L, 1);
+  lua_pushnumber(L, vud->video ? BK_video_volume(vud->video) : 0.0);
+  return 1;
+}
+
+static int l_video_has_audio(lua_State *L) {
+  luabui_Video *vud = CHECK_VIDEO(L, 1);
+  lua_pushboolean(L, vud->video && BK_video_has_audio(vud->video));
+  return 1;
+}
+
 static int l_video_set_poster(lua_State *L) {
   luabui_Video *vud = CHECK_VIDEO(L, 1);
   if (vud->video) BK_video_set_poster(vud->video, luaL_checkstring(L, 2));
@@ -245,6 +275,11 @@ static const luaL_Reg video_methods[] = {
   {"set_rate",    l_video_set_rate},
   {"set_loop",    l_video_set_loop},
   {"set_poster",  l_video_set_poster},
+  {"set_muted",   l_video_set_muted},
+  {"muted",       l_video_muted},
+  {"set_volume",  l_video_set_volume},
+  {"volume",      l_video_volume},
+  {"has_audio",   l_video_has_audio},
   {"set_controls",l_video_set_controls},
   {"state",       l_video_state},
   {"time",        l_video_time},
