@@ -212,6 +212,7 @@ unsafe extern "C" {
     pub fn BK_anim_active() -> c_int;
     pub fn BK_anim_set_host_clock(on: c_int);
     pub fn BK_anim_host_clock() -> c_int;
+    pub fn BK_anim_set_clock(now: Option<unsafe extern "C" fn() -> c_double>);
     pub fn BK_anim_set_reduced_motion(on: c_int);
     pub fn BK_anim_reduced_motion() -> c_int;
     pub fn BK_anim_set_time_scale(scale: c_double);

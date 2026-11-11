@@ -88,6 +88,10 @@ static BKMotion *to(Obj *o, int prop, float value, BKMotionVars v)
 }
 
 static double g_now = 100.0; /* the clock starts anywhere */
+static double test_clock(void)
+{
+  return g_now;
+}
 static void step(double seconds)
 {
   g_now += seconds;
@@ -383,6 +387,20 @@ static void test_timelines(void)
   double grid[9];
   BK_stagger(&g, 9, grid);
   CHECK(NEAR(grid[4], 0.0, 1e-9) && NEAR(grid[1], 0.1, 1e-9) && grid[0] > grid[1]);
+  /* with a clock set (frames stop when idle, as the kit's do), a motion started after an idle
+   * gap starts then, not when frames last ran */
+  {
+    step(1.0);
+    BK_anim_set_clock(test_clock);
+    g_now += 0.3; /* idle: no frames for 0.3 s */
+    Obj gap = {0};
+    BKMotion *g = to(&gap, BK_PROP_X, 100.0f, linear(1.0));
+    step(0.1);
+    CHECK(NEAR(gap.x, 10.0, 1e-3));
+    BK_anim_set_clock(NULL);
+    BK_motion_release(g);
+    step(1.0);
+  }
   /* a motion started after an idle stretch (the global timeline made anew) is active at once */
   step(2.0);
   Obj idle = {0};

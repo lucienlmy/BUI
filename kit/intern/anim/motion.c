@@ -119,7 +119,8 @@ static struct {
    * swapped with the last): no list to chase, no gaps */
   BKMotion **run;
   int nrun, cap_run;
-} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL, NULL, 0, 0};
+  double (*clock)(void); /* the kit's clock (BK_anim_set_clock), or NULL */
+} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL, NULL, 0, 0, NULL};
 
 /* a motion runs: the host draws frames again */
 static void wake(const BKMotion *m)
@@ -770,6 +771,10 @@ static void place(BKMotion *tl, BKMotion *m, double at)
 
 static void start_now(BKMotion *m, double delay)
 {
+  /* nothing ran: frames didn't tick the clock, so it's behind; a motion starts now */
+  if (G.clock && !G.host_clock && !BK_anim_active()) {
+    BK_anim_tick(G.clock());
+  }
   place(root(), m, G.root_time + delay);
 }
 
@@ -1293,6 +1298,11 @@ int BK_anim_active(void)
     }
   }
   return 0;
+}
+
+void BK_anim_set_clock(double (*now)(void))
+{
+  G.clock = now;
 }
 
 void BK_anim_set_host_clock(int on)

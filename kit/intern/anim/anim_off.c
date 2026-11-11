@@ -70,6 +70,7 @@ void BK_anim_set_lag_smoothing(double threshold, double adjusted) { (void)thresh
 void BK_anim_kill_target(void *obj, int prop) { (void)obj; (void)prop; }
 void BK_anim_exit(void) {}
 void BK_anim_set_host_clock(int on) { (void)on; }
+void BK_anim_set_clock(double (*now)(void)) { (void)now; }
 int BK_anim_host_clock(void) { return 0; }
 void BK_anim_set_wake(void (*wake)(void *data), void *data) { (void)wake; (void)data; }
 const BKAnimClass BK_anim_node = {NULL, NULL, NULL, NULL};

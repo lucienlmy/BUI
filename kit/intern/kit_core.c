@@ -1428,6 +1428,7 @@ BKContext *BK_context_new(BKNode *root)
   ctx->next_ctx = g_contexts;
   g_contexts = ctx;
   BK_anim_set_wake(anim_wake, NULL);
+  BK_anim_set_clock(bk_time); /* frames stop when idle: motions start on the kit's clock */
   return ctx;
 }
 

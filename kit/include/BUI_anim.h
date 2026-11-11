@@ -280,6 +280,10 @@ int BK_anim_active(void);
  * (on) a host with a clock of its own that calls BK_anim_tick itself (Rust's windows, whose
  * headless clock is virtual): two clocks would fight. */
 void BK_anim_set_host_clock(int on);
+/* The clock BK_anim_tick is fed with, when frames stop while nothing animates (the kit's): a
+ * motion started then catches the engine up first, so it starts now, not when frames last
+ * ran. Hosts that tick every frame, or own the clock (BK_anim_set_host_clock), need none. */
+void BK_anim_set_clock(double (*now)(void));
 int BK_anim_host_clock(void);
 /* Reduced motion (Motion's reducedMotion "always", the OS setting): transforms and layout
  * jump to their end; opacity and colors still animate. */
