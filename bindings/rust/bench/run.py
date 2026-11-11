@@ -80,15 +80,16 @@ def main():
     ap.add_argument("--warmup", type=float, default=3)
     ap.add_argument("--seconds", type=float, default=10)
     ap.add_argument("--cells", default="100,1000,3000")
+    ap.add_argument("--modes", default="anim,one,idle,motion")
     ap.add_argument("--apps", default="gpui,gpui-fast,blenderui,blenderui-gpu")
     a = ap.parse_args()
     configs = []
     for cells in map(int, a.cells.split(",")):
-        for mode in ("anim", "one", "idle"):
+        for mode in a.modes.split(","):
             for app in a.apps.split(","):
                 configs.append((app, cells, mode, ()))
         for app in ("blenderui", "blenderui-gpu"):
-            if app in a.apps.split(","):
+            if app in a.apps.split(",") and "anim" in a.modes.split(","):
                 configs.append((app, cells, "anim", ("--uncapped",)))
     results = []
     for app, cells, mode, extra in configs:

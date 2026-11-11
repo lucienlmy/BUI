@@ -31,7 +31,7 @@ impl Render for Scene {
             .gap(px(2.0))
             .p(px(2.0))
             .children((0..self.cells).map(|i| {
-                div()
+                let cell = div()
                     .w(px(w))
                     .h(px(h))
                     .bg(rgb(measure::cell_color(i, cfg.t_for(i, t))))
@@ -41,13 +41,25 @@ impl Render for Scene {
                     .justify_center()
                     .text_size(px(font))
                     .text_color(rgb(0xffffff))
-                    .child(measure::cell_label(i, cfg.t_for(i, t)))
+                    .child(measure::cell_label(i, cfg.t_for(i, t)));
+                if !cfg.motion {
+                    return cell;
+                }
+                // colour and opacity, there and back, eased, forever: Motion's keyframes
+                cell.animate(blenderui::vars! {
+                    backgroundColor: ["#4772b3", "#e06c75", "#4772b3"],
+                    opacity: [1, 0.3, 1],
+                    transition: { duration: 2, ease: "easeInOut", repeat: -1,
+                                  delay: -(measure::motion_offset(i) * 2.0) },
+                })
             })))
     }
 }
 
 fn main() {
     let cfg = measure::Config::from_args();
+    // frames blenderui draws, renders of the view or not (Motion's redraws)
+    measure::set_frame_source(blenderui::frames_presented);
     measure::start("blenderui", &cfg);
     let uncapped = std::env::args().any(|a| a == "--uncapped");
     Application::new().run(move |cx: &mut App| {

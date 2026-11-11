@@ -5,8 +5,8 @@
 mod measure;
 
 use gpui::{
-    App, AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled, Window,
-    WindowBounds, WindowOptions, div, px, rgb, size,
+    Animation, AnimationExt, App, AppContext, Bounds, Context, IntoElement, ParentElement, Render, Styled,
+    Window, WindowBounds, WindowOptions, bounce, div, ease_in_out, px, rgb, rgba, size,
 };
 
 struct Scene {
@@ -34,7 +34,7 @@ impl Render for Scene {
             .gap(px(2.0))
             .p(px(2.0))
             .children((0..self.cells).map(|i| {
-                div()
+                let cell = div()
                     .w(px(w))
                     .h(px(h))
                     .bg(rgb(measure::cell_color(i, cfg.t_for(i, t))))
@@ -44,7 +44,31 @@ impl Render for Scene {
                     .justify_center()
                     .text_size(px(font))
                     .text_color(rgb(0xffffff))
-                    .child(measure::cell_label(i, cfg.t_for(i, t)))
+                    .child(measure::cell_label(i, cfg.t_for(i, t)));
+                if !cfg.motion {
+                    return cell.into_any_element();
+                }
+                // colour and opacity, there and back, eased, forever (gpui has no
+                // keyframes or start offsets: the offset shifts the colour phase)
+                let off = measure::motion_offset(i);
+                cell.with_animation(
+                    ("cell", i),
+                    Animation::new(std::time::Duration::from_secs_f32(measure::MOTION_SECONDS * 2.0))
+                        .repeat()
+                        .with_easing(bounce(ease_in_out)),
+                    move |el, d| {
+                        let d = (d + off) % 1.0;
+                        let mix = |a: u32, b: u32, s: u32| {
+                            let (x, y) = (((a >> s) & 0xff) as f32, ((b >> s) & 0xff) as f32);
+                            ((x + (y - x) * d) as u32) << s
+                        };
+                        let c = mix(measure::MOTION_FROM, measure::MOTION_TO, 16)
+                            | mix(measure::MOTION_FROM, measure::MOTION_TO, 8)
+                            | mix(measure::MOTION_FROM, measure::MOTION_TO, 0);
+                        el.bg(rgba((c << 8) | 0xff)).opacity(1.0 - 0.7 * d)
+                    },
+                )
+                .into_any_element()
             }))
     }
 }
