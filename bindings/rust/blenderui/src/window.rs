@@ -1190,7 +1190,7 @@ impl Window {
         let widgets = &mut self.widgets;
         let recycle = self.frame.take().unwrap_or_default();
         self.caches.anim.begin(self.clock.now());
-        let frame = layout(root, vp, &self.state, &mut self.caches, recycle,
+        let mut frame = layout(root, vp, &self.state, &mut self.caches, recycle,
                            &mut |key, spec| widgets.ensure(canvas, key, spec, scale));
         // CSS animations / transitions still moving: render again next frame;
         // Motion's values alone: redraw (nothing running: no frames, so an
@@ -1198,7 +1198,14 @@ impl Window {
         let (css, motion) = self.caches.anim.end();
         // `@container`: sizes changed under a query, or an element came into
         // view (`whileInView`): render once more
-        let container_changed = self.caches.after_layout(&frame) | self.caches.anim.after_layout(&frame, vp);
+        let (in_view, flipped) = self.caches.anim.after_layout(&frame, &self.caches.styles, vp);
+        // useScroll: the values follow the scroll; what they move draws again
+        let scrolled = crate::motion::update_scroll(&frame);
+        if flipped {
+            // a layout animation starts where the element was seen: this frame too
+            self.caches.anim.redraw_motion(&mut frame, &mut self.caches.styles, vp);
+        }
+        let container_changed = self.caches.after_layout(&frame) | in_view;
         self.present(app, frame, None);
         // state of components that didn't render is freed; effects run now
         crate::hooks::end();
@@ -1207,7 +1214,7 @@ impl Window {
         }
         if css {
             self.request_animation_frame();
-        } else if motion {
+        } else if motion || scrolled {
             self.request_motion_frame();
         }
     }

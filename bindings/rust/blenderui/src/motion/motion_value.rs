@@ -102,7 +102,19 @@ impl MotionValue {
         })
     }
 
-    fn alive(self) -> bool {
+    /// Set it from the window (a scroll position): no wake, no motion
+    /// stopped. True when it changed.
+    pub(crate) fn set_quiet(self, r: Read) -> bool {
+        with(|s| match s.get_mut(self.i as usize).filter(|s| s.live && s.generation == self.generation) {
+            Some(slot) if slot.v != r => {
+                slot.v = r;
+                true
+            }
+            _ => false,
+        })
+    }
+
+    pub(crate) fn alive(self) -> bool {
         with(|s| s.get(self.i as usize).is_some_and(|s| s.live && s.generation == self.generation))
     }
 
@@ -219,7 +231,10 @@ struct Owned(MotionValue);
 
 impl Drop for Owned {
     fn drop(&mut self) {
-        self.0.dispose();
+        // at thread exit the slab may be gone before the component's state
+        if SLOTS.try_with(|_| ()).is_ok() && FREE.try_with(|_| ()).is_ok() {
+            self.0.dispose();
+        }
     }
 }
 

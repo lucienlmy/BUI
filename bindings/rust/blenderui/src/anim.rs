@@ -1306,9 +1306,12 @@ impl Animations {
         self.motion.pointer_up()
     }
 
-    /// After a layout: Motion's in-view states; true when one changed.
-    pub(crate) fn after_layout(&mut self, frame: &crate::layout::Frame, viewport: (f32, f32)) -> bool {
-        self.motion.after_layout(frame, viewport)
+    /// After a layout: Motion's in-view states and layout animations (render
+    /// again: an in-view state changed; correct this frame: a layout
+    /// animation started).
+    pub(crate) fn after_layout(&mut self, frame: &crate::layout::Frame, styles: &crate::layout::StyleStore,
+                               viewport: (f32, f32)) -> (bool, bool) {
+        self.motion.after_layout(frame, styles, viewport)
     }
 
     /// The boxes the last redraw changed (lend the list; give it back after).

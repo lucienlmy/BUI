@@ -44,6 +44,8 @@ pub(super) struct PropState {
     pub(super) base: Read,
     /// the target it last started a motion to
     last: Option<Value>,
+    /// a `layout` offset (1 x, 2 y, 3 scale x, 4 scale y), or 0
+    pub(super) layout: u8,
 }
 
 /// An element's animated values: the engine's target object.
@@ -52,13 +54,13 @@ pub(crate) struct Slot {
     pub(super) props: SmallVec<[PropState; 4]>,
     seen: u64,
     /// its element's key, and where it is in the live list
-    key: u64,
+    pub(super) key: u64,
     live: u32,
     /// After the last full frame: the element's box, its style before the
     /// moving values (they go over it again on redraws), whether a moving
     /// value changes layout (then a redraw can't do), and the MotionValues
     /// its `style` binds.
-    node: usize,
+    pub(super) node: usize,
     base: Option<Box<Computed>>,
     layout: bool,
     /// what its values touch (a redraw skips the rest): x / y, opacity / visibility
@@ -74,6 +76,10 @@ pub(crate) struct Slot {
 pub(super) struct Gest {
     /// `drag`: how it drags
     pub(super) drag: Option<super::spec::Drag>,
+    /// `layout`: what animates, its box last layout (without its offsets), and the transition
+    pub(super) layout: Option<super::spec::Layout>,
+    pub(super) last_box: Option<crate::geometry::Bounds<f32>>,
+    pub(super) layout_t: Transition,
     /// `whileInView`: wanted, when it counts, and whether it is (last layout)
     view: Option<super::spec::InView>,
     in_view: bool,
@@ -136,7 +142,7 @@ const CHUNK: usize = 64;
 pub(super) struct Arena {
     chunks: Vec<Box<[Slot; CHUNK]>>,
     pub(super) keys: KeyMap<u64, u32>,
-    live: Vec<u32>,
+    pub(super) live: Vec<u32>,
     free: Vec<u32>,
 }
 
@@ -253,9 +259,12 @@ impl Elements {
         }
     }
 
-    /// After a layout: which elements are in view now (`whileInView`); true
-    /// when one changed (its targets change: render again).
-    pub(crate) fn after_layout(&mut self, frame: &crate::layout::Frame, viewport: (f32, f32)) -> bool {
+    /// After a layout: which elements are in view now (`whileInView`), and
+    /// the `layout` elements that moved. (render again: an in-view state
+    /// changed; correct this frame: a layout animation started.)
+    pub(crate) fn after_layout(&mut self, frame: &crate::layout::Frame, styles: &crate::layout::StyleStore,
+                               viewport: (f32, f32)) -> (bool, bool) {
+        let flipped = self.flip(frame, styles, viewport);
         let mut changed = false;
         for k in 0..self.els.live.len() {
             let i = self.els.live[k];
@@ -277,7 +286,7 @@ impl Elements {
             }
         }
         self.check_exits();
-        changed
+        (changed, flipped)
     }
 
     /// Forget elements gone this frame (their motions stop).
@@ -329,6 +338,12 @@ impl Elements {
             let view = spec.target(When::WhileInView).map(|_| spec.viewport());
             let exiting = spec.exiting().unwrap_or(0);
             let drag = spec.drag();
+            let flip = spec.layout();
+            if flip.is_some() {
+                for k in [&super::flip::LAYOUT_X, &super::flip::LAYOUT_Y, &super::flip::LAYOUT_SX, &super::flip::LAYOUT_SY] {
+                    ensure(s, k.id(), base, u);
+                }
+            }
             if let Some(d) = drag {
                 // the pointer moves these: they're there from the start (a redraw can write them)
                 for (on, id) in [(d.x, sys::BK_PROP_X), (d.y, sys::BK_PROP_Y)] {
@@ -337,10 +352,14 @@ impl Elements {
                     }
                 }
             }
-            if view.is_some() || exiting != 0 || drag.is_some() || s.gest.is_some() {
+            if view.is_some() || exiting != 0 || drag.is_some() || flip.is_some() || s.gest.is_some() {
                 let g = s.gest.get_or_insert_with(Box::default);
                 g.view = view;
                 g.drag = drag;
+                g.layout = flip;
+                if flip.is_some() {
+                    g.layout_t = spec.transition().map_or_else(Transition::default, |v| v.transition.clone());
+                }
                 if g.exiting != exiting {
                     g.end_exit(); // a new exit, or none: shown again midway
                     g.exiting = exiting;
@@ -487,7 +506,7 @@ impl Elements {
         // what a redraw needs (a frame with nothing but moving values)
         s.node = node;
         s.layout = s.props.iter().any(|p| p.cur.is_some() && !paint_only(p));
-        s.moves = s.props.iter().any(|p| matches!(p.id, sys::BK_PROP_X | sys::BK_PROP_Y));
+        s.moves = s.props.iter().any(|p| matches!(p.id, sys::BK_PROP_X | sys::BK_PROP_Y) || matches!(p.layout, 1 | 2));
         s.fades = s.props.iter().any(|p| p.id == sys::BK_PROP_OPACITY || p.fields.contains(&Field::Visibility));
         s.bound.clear();
         if let Some(style) = spec.style() {
@@ -613,7 +632,8 @@ pub(super) fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) ->
 
 fn ensure(s: &mut Slot, id: i32, base: &Computed, u: &Units) {
     if s.find(id).is_none() {
-        let mut p = PropState { id, fields: fields_for(id), cur: None, base: Read::default(), last: None };
+        let mut p = PropState { id, fields: fields_for(id), cur: None, base: Read::default(), last: None,
+                                layout: super::flip::role(id) };
         p.base = base_of(&p, base, u);
         s.props.push(p);
     }

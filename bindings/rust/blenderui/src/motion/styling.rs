@@ -19,6 +19,7 @@ pub(super) fn paint_only(p: &PropState) -> bool {
         sys::BK_PROP_X | sys::BK_PROP_Y | sys::BK_PROP_Z | sys::BK_PROP_SCALE | sys::BK_PROP_SCALE_X
         | sys::BK_PROP_SCALE_Y | sys::BK_PROP_ROTATE | sys::BK_PROP_ROTATE_X | sys::BK_PROP_ROTATE_Y
         | sys::BK_PROP_SKEW_X | sys::BK_PROP_SKEW_Y => true,
+        _ if p.layout != 0 => true,
         _ => p.fields.iter().all(|f| matches!(f, Opacity | Color | Background | BorderColor(_) | OutlineColor
             | DecorationColor | Accent | BoxShadow | TextShadow | Filter | Backdrop | Rotate | Scale | Transform
             | Translate | Visibility)),
@@ -63,6 +64,7 @@ pub(super) fn base_of(p: &PropState, c: &Computed, u: &Units) -> Read {
         sys::BK_PROP_SCALE | sys::BK_PROP_SCALE_X | sys::BK_PROP_SCALE_Y => one(1.0),
         sys::BK_PROP_X | sys::BK_PROP_Y | sys::BK_PROP_Z | sys::BK_PROP_ROTATE | sys::BK_PROP_ROTATE_X
         | sys::BK_PROP_ROTATE_Y | sys::BK_PROP_SKEW_X | sys::BK_PROP_SKEW_Y => one(0.0),
+        _ if p.layout != 0 => one(if p.layout >= 3 { 1.0 } else { 0.0 }),
         _ => p.fields.first().and_then(|&f| field_numbers(f, c, u)).map_or(one(0.0), |(v, n, pct)| Read {
             v,
             n: n as u8,
@@ -111,11 +113,16 @@ pub(super) fn restore(p: &PropState, base: &Computed, st: &mut Computed) -> bool
         sys::BK_PROP_BACKGROUND_COLOR => st.background = base.background,
         sys::BK_PROP_SCALE | sys::BK_PROP_SCALE_X | sys::BK_PROP_SCALE_Y | sys::BK_PROP_ROTATE | sys::BK_PROP_SKEW_X
         | sys::BK_PROP_SKEW_Y => return true,
-        _ => {
-            for &f in p.fields {
-                copy_field(f, base, st);
+        _ => match p.layout {
+            1 => st.translate.0 = base.translate.0,
+            2 => st.translate.1 = base.translate.1,
+            3 | 4 => return true,
+            _ => {
+                for &f in p.fields {
+                    copy_field(f, base, st);
+                }
             }
-        }
+        },
     }
     false
 }
@@ -164,6 +171,14 @@ pub(super) fn write(p: &PropState, r: &Read, c: &mut Computed, u: &Units) {
         sys::BK_PROP_OPACITY => c.opacity = v.clamp(0.0, 1.0),
         sys::BK_PROP_COLOR if r.n == 4 => c.color = rgba(&r.v),
         sys::BK_PROP_BACKGROUND_COLOR if r.n == 4 => c.background = rgba(&r.v),
+        // `layout` offsets: in pixels, and scales, on top of the rest
+        _ if p.layout == 1 => c.translate.0 = offset(c.translate.0, v, sys::BK_UNIT_PX, u),
+        _ if p.layout == 2 => c.translate.1 = offset(c.translate.1, v, sys::BK_UNIT_PX, u),
+        _ if p.layout >= 3 => {
+            let e = c.effects_mut();
+            let (sx, sy) = e.scale2.unwrap_or((1.0, 1.0));
+            e.scale2 = Some(if p.layout == 3 { (sx * v, sy) } else { (sx, sy * v) });
+        }
         _ => {
             let pct = r.unit == sys::BK_UNIT_PERCENT;
             for &f in p.fields {
