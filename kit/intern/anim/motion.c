@@ -335,7 +335,8 @@ static double start_in_parent(const BKMotion *m)
 /* the parent's current local time (the root's: the global time) */
 static double parent_time(const BKMotion *m)
 {
-  return m->parent ? m->parent->it_time : G.root_time;
+  /* the global timeline's time is the clock's (its it_time is only set when it ticks) */
+  return m->parent && m->parent != G.root ? m->parent->it_time : G.root_time;
 }
 
 /* local time for a parent time */
@@ -656,6 +657,7 @@ static BKMotion *root(void)
     G.root = motion_new(NULL);
     G.root->timeline = true;
     G.root->repeat = -1;
+    G.root->t = G.root->it_time = G.root_time;
     set_dur(G.root, NEVER);
   }
   return G.root;

@@ -383,6 +383,12 @@ static void test_timelines(void)
   double grid[9];
   BK_stagger(&g, 9, grid);
   CHECK(NEAR(grid[4], 0.0, 1e-9) && NEAR(grid[1], 0.1, 1e-9) && grid[0] > grid[1]);
+  /* a motion started after an idle stretch (the global timeline made anew) is active at once */
+  step(2.0);
+  Obj idle = {0};
+  BKMotion *fresh = to(&idle, BK_PROP_X, 100.0f, linear(1.0));
+  CHECK(BK_motion_is_active(fresh));
+  BK_motion_release(fresh);
   /* a timeline that finished empty plays on with what is added later (GSAP) */
   Obj late = {0};
   BKMotion *empty = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
