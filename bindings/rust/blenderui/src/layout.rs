@@ -918,7 +918,6 @@ impl<'a> Builder<'a> {
                 hover: self.state.hovered.contains(&key),
                 tap: self.state.active.contains(&key),
                 focus: self.state.focused == Some(key),
-                drag: false,
             },
         };
         match self.anim.apply(key, base, &env) {

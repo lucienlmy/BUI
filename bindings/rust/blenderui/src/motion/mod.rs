@@ -20,6 +20,7 @@
 //! `{{ }}`) are `static`s: their property ids and eases are resolved once per
 //! call site, and a frame allocates nothing.
 
+mod drag;
 mod ease;
 mod element;
 mod pending;
@@ -75,7 +76,7 @@ pub(crate) fn advance(seconds: f64) {
     CLOCK.set((origin, offset + seconds));
 }
 
-fn now() -> f64 {
+pub(super) fn now() -> f64 {
     let (origin, offset) = CLOCK.get();
     origin.map_or(0.0, |o| o.elapsed().as_secs_f64()) + offset
 }

@@ -277,7 +277,7 @@ impl P<'_> {
                     } else {
                         None
                     };
-                    if value.is_none() && !component {
+                    if value.is_none() && !component && !MOTION_FLAGS.contains(&name.as_str()) {
                         match bare(&name)? {
                             Some(class) => {
                                 classes.push(class);
@@ -537,15 +537,21 @@ fn vars_object(t: &TokenTree) -> R<(TokenTree, bool)> {
     Ok((t.clone(), false))
 }
 
-/// Motion's props that take a variant's name as a string.
+/// Motion's props that take a string (a variant's name; `drag="x"`, `layout="position"`).
 const MOTION_TARGETS: &[&str] = &["initial", "animate", "exit", "whileHover", "whileTap", "whileFocus",
-                                  "whileInView", "whileDrag"];
+                                  "whileInView", "whileDrag", "drag", "layout"];
+
+/// Motion's props that alone mean `true` (`<motion.div layout drag>`).
+const MOTION_FLAGS: &[&str] = &["drag", "layout"];
 
 fn attribute(name: &str, value: Option<TokenTree>) -> R<TokenStream> {
     if let (true, Some(TokenTree::Literal(l))) = (MOTION_TARGETS.contains(&name), &value) {
         let mut out = ts(&format!(".{}", method_name(name)));
         out.extend([TokenTree::Group(Group::new(Delimiter::Parenthesis, TokenStream::from(TokenTree::Literal(l.clone()))))]);
         return Ok(out);
+    }
+    if value.is_none() && MOTION_FLAGS.contains(&name) {
+        return Ok(ts(&format!(".{name}(true)")));
     }
     let ns = name.split(':').next().unwrap_or("");
     if name.contains(':') && !matches!(ns, "xlink" | "xml" | "xmlns") {

@@ -1292,6 +1292,20 @@ impl Animations {
         self.motion.redraw(frame, styles, viewport)
     }
 
+    /// Motion's drag: the pointer pressed on `path`, moved, let go (true:
+    /// something drags, or a drag ended).
+    pub(crate) fn pointer_down(&mut self, path: &[u64], x: f32, y: f32) -> bool {
+        self.motion.pointer_down(path, x, y)
+    }
+
+    pub(crate) fn pointer_move(&mut self, x: f32, y: f32) -> bool {
+        self.motion.pointer_move(x, y)
+    }
+
+    pub(crate) fn pointer_up(&mut self) -> bool {
+        self.motion.pointer_up()
+    }
+
     /// After a layout: Motion's in-view states; true when one changed.
     pub(crate) fn after_layout(&mut self, frame: &crate::layout::Frame, viewport: (f32, f32)) -> bool {
         self.motion.after_layout(frame, viewport)

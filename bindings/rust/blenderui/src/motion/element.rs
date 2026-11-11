@@ -31,7 +31,6 @@ pub(crate) struct Gestures {
     pub hover: bool,
     pub tap: bool,
     pub focus: bool,
-    pub drag: bool,
 }
 
 /// One animated property of an element.
@@ -50,7 +49,7 @@ pub(super) struct PropState {
 /// An element's animated values: the engine's target object.
 #[derive(Default)]
 pub(crate) struct Slot {
-    props: SmallVec<[PropState; 4]>,
+    pub(super) props: SmallVec<[PropState; 4]>,
     seen: u64,
     /// its element's key, and where it is in the live list
     key: u64,
@@ -66,13 +65,15 @@ pub(crate) struct Slot {
     moves: bool,
     fades: bool,
     bound: SmallVec<[(i32, super::MotionValue); 2]>,
-    /// what few elements use (in view, exiting): out of the way of the rest
-    gest: Option<Box<Gest>>,
+    /// what few elements use (in view, exiting, drag): out of the way of the rest
+    pub(super) gest: Option<Box<Gest>>,
 }
 
 /// A slot's rarer state.
 #[derive(Default)]
-struct Gest {
+pub(super) struct Gest {
+    /// `drag`: how it drags
+    pub(super) drag: Option<super::spec::Drag>,
     /// `whileInView`: wanted, when it counts, and whether it is (last layout)
     view: Option<super::spec::InView>,
     in_view: bool,
@@ -132,15 +133,15 @@ const CHUNK: usize = 64;
 /// address), the live ones listed densely (a frame walks them in memory
 /// order; one that goes is swapped with the last), freed ones reused.
 #[derive(Default)]
-struct Arena {
+pub(super) struct Arena {
     chunks: Vec<Box<[Slot; CHUNK]>>,
-    keys: KeyMap<u64, u32>,
+    pub(super) keys: KeyMap<u64, u32>,
     live: Vec<u32>,
     free: Vec<u32>,
 }
 
 impl Arena {
-    fn at(&mut self, i: u32) -> &mut Slot {
+    pub(super) fn at(&mut self, i: u32) -> &mut Slot {
         &mut self.chunks[i as usize / CHUNK][i as usize % CHUNK]
     }
 
@@ -186,7 +187,9 @@ impl Arena {
 /// Every motion element of a window, by element key.
 #[derive(Default)]
 pub(crate) struct Elements {
-    els: Arena,
+    pub(super) els: Arena,
+    /// the drag in progress
+    pub(super) drag: Option<super::drag::Dragging>,
     frame: u64,
     /// scratch: each box's move on a redraw
     shift: Vec<(f32, f32)>,
@@ -286,6 +289,9 @@ impl Elements {
             if self.els.at(i).seen == frame {
                 k += 1;
             } else {
+                if self.drag.as_ref().is_some_and(|d| d.slot == i) {
+                    self.drag = None; // the dragged element went
+                }
                 self.els.release(i); /* the last takes its place */
             }
         }
@@ -322,9 +328,19 @@ impl Elements {
             let s = unsafe { &mut *slot };
             let view = spec.target(When::WhileInView).map(|_| spec.viewport());
             let exiting = spec.exiting().unwrap_or(0);
-            if view.is_some() || exiting != 0 || s.gest.is_some() {
+            let drag = spec.drag();
+            if let Some(d) = drag {
+                // the pointer moves these: they're there from the start (a redraw can write them)
+                for (on, id) in [(d.x, sys::BK_PROP_X), (d.y, sys::BK_PROP_Y)] {
+                    if on {
+                        ensure(s, id, base, u);
+                    }
+                }
+            }
+            if view.is_some() || exiting != 0 || drag.is_some() || s.gest.is_some() {
                 let g = s.gest.get_or_insert_with(Box::default);
                 g.view = view;
+                g.drag = drag;
                 if g.exiting != exiting {
                     g.end_exit(); // a new exit, or none: shown again midway
                     g.exiting = exiting;
@@ -343,7 +359,7 @@ impl Elements {
         } else {
             [Some(When::Animate), in_view.then_some(When::WhileInView), g.focus.then_some(When::WhileFocus),
              g.hover.then_some(When::WhileHover), g.tap.then_some(When::WhileTap),
-             g.drag.then_some(When::WhileDrag)]
+             self.drag.as_ref().is_some_and(|d| d.key == key).then_some(When::WhileDrag)]
         };
         for w in layers.into_iter().flatten() {
             let Some(vars) = spec.vars(w) else { continue };
@@ -591,7 +607,7 @@ impl Elements {
 /// A motion of property `id` of the slot to `keys` with transition `t`.
 /// A motion of property `id` of the slot to `keys` with transition `t`: the
 /// handle is the caller's.
-fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) -> *mut sys::BKMotion {
+pub(super) fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) -> *mut sys::BKMotion {
     tween(&SLOT_CLASS, slot.cast(), &[(id, keys)], t, Flavor::Motion, false, None)
 }
 

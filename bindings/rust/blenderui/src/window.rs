@@ -742,6 +742,21 @@ impl App {
         });
     }
 
+    /// Press the left button at (x, y) (and hold it: see [`simulate_release`](Self::simulate_release)).
+    pub fn simulate_press(&mut self, window: WindowId, x: f32, y: f32) {
+        self.simulate_mouse_move(window, x, y);
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_press(ctx, (x * s) as c_int, (y * s) as c_int, 0);
+        });
+    }
+
+    /// Let go of the left button at (x, y).
+    pub fn simulate_release(&mut self, window: WindowId, x: f32, y: f32) {
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_release(ctx, (x * s) as c_int, (y * s) as c_int, sys::BK_BUTTON1);
+        });
+    }
+
     /// Press at `from`, drag to `to` and release there.
     pub fn simulate_drag(&mut self, window: WindowId, from: (f32, f32), to: (f32, f32)) {
         self.simulate_mouse_move(window, from.0, from.1);
@@ -1389,6 +1404,9 @@ impl Window {
             }
             sys::BK_EV_MOTION | sys::BK_EV_ENTER => {
                 self.pointer = (x, y);
+                if self.caches.anim.pointer_move(x, y) {
+                    self.request_motion_frame(); // a drag: a redraw, no render
+                }
                 self.update_hover(app, true);
                 let (modifiers, _) = self.pointer_event(&ev.text);
                 let pressed = (!self.pressed.is_empty()).then_some(self.press_button);
@@ -1410,6 +1428,7 @@ impl Window {
                 self.set_focus(&path);
                 self.pressed = path.clone();
                 self.dirty = true;
+                self.caches.anim.pointer_down(&path, x, y);
                 let e = MouseDownEvent { button, position: point(px(x), px(y)), modifiers,
                                          click_count: if ev.kind == sys::BK_EV_DOUBLE { 2 } else { 1 } };
                 if let Some(&deepest) = path.last() {
@@ -1431,6 +1450,7 @@ impl Window {
                 self.pressed.clear();
                 self.state.active.clear();
                 self.dirty = true;
+                self.caches.anim.pointer_up();
                 if let (Some(target), MouseButton::Left) = (common, button) {
                     self.toggle_details(target);
                     let down = MouseDownEvent { button, position: point(px(x), px(y)), modifiers, click_count: 1 };
