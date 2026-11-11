@@ -3,7 +3,7 @@ title: Video
 description: A <video> in every language, decoded by the operating system at the size it is drawn, frames in one GPU texture updated in place, and nothing decoded while it is off screen. Backends, API, controls, performance and limits.
 section: Concepts
 order: 66
-sources: ["kit/intern/image/video.c", "kit/intern/image/movie.c", "kit/intern/image/movie_mf.c", "kit/intern/image/movie_gst.c", "kit/intern/image/movie_avf.m", "kit/intern/image/anim.c", "kit/intern/image/play.c", "kit/intern/image/cache.c", "kit/include/BUI_kit.h", "gpu/include/GPU_raster.h", "gpu/intern/gpu_raster.c", "gpu/shaders/bui_ui.hlsl", "gpu/intern/gpu_gl.c", "bindings/rust/blenderui/src/video.rs", "bindings/python/src/buipy_video.c", "bindings/python/bui/components/widgets.py", "bench/video/video_bench.c", "tests/video_test.c", "features.json"]
+sources: ["kit/intern/image/video.c", "kit/intern/audio/audio.h", "kit/intern/audio/audio.c", "kit/intern/audio/device_wasapi.c", "kit/intern/audio/device_coreaudio.c", "kit/intern/audio/device_pulse.c", "kit/intern/image/movie.c", "kit/intern/image/movie_mf.c", "kit/intern/image/movie_gst.c", "kit/intern/image/movie_avf.m", "kit/intern/image/anim.c", "kit/intern/image/play.c", "kit/intern/image/cache.c", "kit/include/BUI_kit.h", "gpu/include/GPU_raster.h", "gpu/intern/gpu_raster.c", "gpu/shaders/bui_ui.hlsl", "gpu/intern/gpu_gl.c", "bindings/rust/blenderui/src/video.rs", "bindings/python/src/buipy_video.c", "bindings/python/bui/components/widgets.py", "bench/video/video_bench.c", "tests/video_test.c", "features.json"]
 ---
 
 BUI plays video with the same machinery as [animated images](/docs/concepts/images#animations): one codec interface for GIF, WebP and video (Blender's `MovieReader` shape: open, next frame, seek, close), one clock (`play.c`) and the same worker threads. What is different is where the frames come from and where they go.
@@ -11,7 +11,8 @@ BUI plays video with the same machinery as [animated images](/docs/concepts/imag
 - **The operating system decodes.** Windows uses Media Foundation (DXVA hardware decoding through its own Direct3D 11 device, scaling on the GPU), Linux uses GStreamer (VA-API through its `va` plugin where the driver has it, software otherwise), macOS uses AVFoundation / VideoToolbox. They are loaded at run time: a machine without them (Windows "N" editions, a Linux box without GStreamer) starts normally and just reports no video. Nothing is linked: on Windows the `video` feature adds 3 KB to a fat-LTO binary ([Binary size](/docs/reference/binary-size)).
 - **Decoded at the size drawn.** A 4K file in a 640 px box is decoded and scaled by the decoder (on the GPU on Windows) to 640 px, as NV12 (1.5 bytes a pixel). Resizing within 0.5x to 1.25x of that size just scales when drawing; beyond it the decoder switches size where it was.
 - **One texture, updated in place.** Two NV12 frames per player are allocated once (the one shown and the next, decoded ahead), then reused: no allocation per frame. On the GPU renderers each player has one luma and one chroma texture updated in place; the shader converts BT.601 / BT.709 YCbCr to RGB. The software raster converts only the pixels it draws, while drawing.
-- **Only what is on screen plays.** A video scrolled away, clipped, in a hidden window, or in a window that isn't rendering pauses: no decoding, no timers, no redraws. It continues from where it was when it shows again.
+- **Only what is on screen is decoded.** A video scrolled away, clipped, in a hidden window, or in a window that isn't rendering decodes no frames: no timers, no redraws. Its sound plays on, as in a browser, and the picture catches up to the sound when it shows again (a video without sound continues from where it was).
+- **Sound, and the frames follow it.** The audio track plays on the default output: WASAPI on Windows, CoreAudio on macOS, PulseAudio (or PipeWire's PulseAudio service) on Linux, each loaded at run time. The same OS backend decodes it, through a second reader on the file, on the output's own thread. As in Blender's AV-sync, the sound is the clock: a frame shows when the sound reaches its time. If the output takes a while to wake up (Bluetooth headphones can take two seconds), the picture plays on and the sound joins where it is.
 
 ## Showing a video
 
@@ -21,8 +22,8 @@ BUI plays video with the same machinery as [animated images](/docs/concepts/imag
 ```rust
 use blenderui::prelude::*;
 
-// the element owns its player: muted autoplay (autoplay="false" to hold the
-// first frame), loop, poster
+// the element owns its player: autoplay with sound (autoplay="false" to hold the
+// first frame, muted for a silent one), loop, poster
 rsx! { <video src="intro.mp4" loop poster="intro.jpg" class="w-[640px] h-[360px] object-cover" /> }
 
 // or keep the player: play, pause, seek, rate, time, duration, state events
@@ -33,7 +34,8 @@ let clip = std::rc::Rc::new({
 });
 video().video(clip.clone()).w(px(640.0)).h(px(360.0));
 clip.seek(std::time::Duration::from_secs(10));
-clip.set_rate(2.0);
+clip.set_rate(2.0); // the sound pauses at rates other than 1
+clip.set_volume(0.5); // or clip.set_muted(true)
 
 // in a canvas
 canvas(move |b, p| p.video(b, &clip, blenderui::sys::BK_FIT_CONTAIN));
@@ -59,6 +61,7 @@ v = Video("intro.mp4", controls=True, loop=True, poster="intro.jpg", fit="cover"
           on_ended=lambda: print("done"))
 v.pause(); v.seek(10.0); v.play()
 v.player.rate = 2.0                        # the bui.Video behind it
+v.player.volume = 0.5                      # or v.player.muted = True (Video(..., muted=True))
 print(v.player.time, v.player.duration, v.player.state == bui.VIDEO_PLAYING)
 bui.video_backends                         # "mf", "gstreamer", "avfoundation"; "" without video
 ```
@@ -67,7 +70,8 @@ bui.video_backends                         # "mf", "gstreamer", "avfoundation"; 
 <Tab label="C">
 
 ```c
-BKVideo *v = BK_video_new("intro.mp4");          /* muted autoplay; loads when first drawn */
+BKVideo *v = BK_video_new("intro.mp4");          /* autoplay with sound; loads when first drawn */
+BK_video_set_volume(v, 0.5);                     /* or BK_video_set_muted(v, 1) */
 BK_video_set_loop(v, 1);
 BK_video_set_controls(v, 1);                     /* Blender-style controls on "video" nodes */
 BK_video_set_listener(v, on_state, app);         /* loaded, playing, paused, ended, error */
@@ -138,7 +142,9 @@ Formats are the OS's: what Windows' Movies & TV, GStreamer's `gst-play-1.0` or Q
 
 ## Limits
 
-- **No audio** yet: every video is muted. A small mixer (miniaudio) behind an optional feature is the plan.
+- **Sound at other rates:** at a playback rate other than 1 the sound pauses (no pitch-kept time stretching); it picks up again at rate 1.
+- **Sound is tested on Windows.** The macOS (CoreAudio) and Linux (PulseAudio) outputs are written against their documented APIs and haven't been run yet.
+- An off-screen video with sound reports `ended` when it shows again, not when its sound ends.
 - **Not zero-copy** on Windows: frames are decoded and scaled on the GPU, then copied back (at the drawn size) and uploaded to the renderer's own device. Sharing the decoder's textures with the renderer's device is the next step.
 - **8-bit** output: 10-bit (P010) and HDR video are converted to 8-bit NV12 by the decoder.
 - No dav1d or FFmpeg backend yet: a format the OS can't decode doesn't play (state: error).

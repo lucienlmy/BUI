@@ -135,7 +135,9 @@ and `BK_set_animations(0)` holds them all. To step one yourself:
 `BK_video_*` (kit/intern/image/video.c) plays video files through the OS
 decoders (Media Foundation, GStreamer, AVFoundation; loaded at run time),
 decoded at the size drawn, in one GPU texture per player, and only while it
-shows. Muted autoplay; no audio yet.
+shows. It autoplays with its sound, played on the default output (WASAPI,
+CoreAudio, PulseAudio / PipeWire); the frames follow the sound, which plays on
+while the video is off screen (the picture catches up when it shows again).
 
 ```c
 BKVideo *v = BK_video_new("intro.mp4");     /* loads when first drawn */
@@ -145,7 +147,8 @@ BK_video_set_listener(v, on_state, app);    /* BK_VIDEO_LOADING .. ENDED, ERROR 
 BKNode *n = BK_node_new("video");
 BK_node_set_video(n, v, BK_FIT_CONTAIN);    /* or a canvas item's .video */
 BK_video_seek(v, 10.0);
-BK_video_set_rate(v, 2.0);
+BK_video_set_rate(v, 2.0);                  /* the sound pauses at rates other than 1 */
+BK_video_set_muted(v, 1);                   /* or BK_video_set_volume(v, 0.5) */
 int tex = BK_video_texture(v, 0, 640, 360); /* Dear ImGui: the frame in a texture */
 BK_video_free(v);                           /* after nodes / items let go */
 ```

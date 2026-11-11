@@ -7,6 +7,15 @@ All notable changes to **blenderui** (BUI). The format follows
 ## [Unreleased]
 
 ### Added
+- **Sound in video.** A `<video>` plays its audio track on the default output (WASAPI on Windows, CoreAudio on
+  macOS, PulseAudio / PipeWire on Linux, each loaded at run time), decoded by the same OS backend as its frames,
+  and the frames follow the sound as Blender's AV-sync does. The sound plays on while the video is off screen and
+  the picture catches up when it shows again; sound that starts late (an output waking up) joins where the picture
+  is. New `BK_video_set_muted` / `muted`, `BK_video_set_volume` / `volume` and `BK_video_has_audio`, in Rust
+  (`Video::set_muted`, ...; the HTML `muted` attribute), Python (`muted`, `volume`, `has_audio`; the component's
+  `muted=` and `volume=`) and Lua; the Blender-style controls get a mute button. Videos autoplay with sound now
+  (they were silent): mute one with `muted`. Tested on Windows; the macOS and Linux outputs are written against
+  their documented APIs and untried.
 - **Custom themes.** A theme file (JSON, in gpui-kit's shape, with Blender's own names for the colors) adds your
   own themes to Dark and Light: `bui.load_theme(path_or_text)`, `blenderui::load_theme` / `load_theme_file`,
   `app.loadTheme`, `bui.load_theme` (Lua), `BK_theme_load_file` / `BK_theme_load_json` (C), then `set_theme(name)`.

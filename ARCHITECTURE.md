@@ -123,7 +123,10 @@ Video uses the same path: one codec interface (`BKImAnimCodec`: open, output
 size, next, seek, close) for GIF, WebP and the OS movie backends
 (`movie_mf.c` Media Foundation, `movie_gst.c` GStreamer, `movie_avf.m`
 AVFoundation; loaded at run time), one clock (`play.c`), and private cache
-entries per player (`video.c`). Frames are NV12 pixmaps
+entries per player (`video.c`). Its sound (`kit/intern/audio`) is a second
+reader on the audio track, pulled by the OS audio output's thread (WASAPI,
+CoreAudio, PulseAudio), and its position is the clock the frames follow.
+Frames are NV12 pixmaps
 (`BUI_PIXMAP_NV12_*`) at the size drawn, two per player reused; a pixmap's
 `stream` keeps one GPU texture pair per player, updated in place, converted
 to RGB in the shader (the software raster converts what it draws).
