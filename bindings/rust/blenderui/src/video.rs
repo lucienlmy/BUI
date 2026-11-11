@@ -107,6 +107,18 @@ impl Video {
         unsafe { sys::BK_video_muted(self.as_ptr()) != 0 }
     }
 
+    /// Keep the system's audio effects. Windows plays RAW, without them (Realtek, Dolby and
+    /// Nahimic "enhancements"), which opens the output in half the time; turn them on for a video
+    /// that should have them. Other systems ignore it. Takes effect when the sound opens, or at
+    /// once if it already did (the output opens again).
+    pub fn set_audio_effects(&self, on: bool) {
+        unsafe { sys::BK_video_set_audio_effects(self.as_ptr(), i32::from(on)) };
+    }
+
+    pub fn audio_effects(&self) -> bool {
+        unsafe { sys::BK_video_audio_effects(self.as_ptr()) != 0 }
+    }
+
     /// The sound's volume, 0.0 ..= 1.0.
     pub fn set_volume(&self, volume: f64) {
         unsafe { sys::BK_video_set_volume(self.as_ptr(), volume) };
@@ -202,6 +214,7 @@ pub(crate) struct VideoAttrs {
     pub autoplay: bool,
     pub looped: bool,
     pub muted: bool,
+    pub audio_effects: bool,
     pub poster: Option<String>,
 }
 
@@ -230,6 +243,9 @@ fn apply(v: &Video, had: &VideoAttrs, now: &VideoAttrs) {
     }
     if had.muted != now.muted {
         v.set_muted(now.muted);
+    }
+    if had.audio_effects != now.audio_effects {
+        v.set_audio_effects(now.audio_effects);
     }
     if had.poster != now.poster {
         v.set_poster(now.poster.as_deref().unwrap_or(""));

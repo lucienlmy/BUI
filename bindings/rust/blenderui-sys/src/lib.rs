@@ -298,6 +298,8 @@ unsafe extern "C" {
     pub fn BK_video_set_volume(v: *mut BKVideo, volume: c_double);
     pub fn BK_video_volume(v: *const BKVideo) -> c_double;
     pub fn BK_video_has_audio(v: *const BKVideo) -> c_int;
+    pub fn BK_video_set_audio_effects(v: *mut BKVideo, on: c_int);
+    pub fn BK_video_audio_effects(v: *const BKVideo) -> c_int;
     pub fn BK_video_set_poster(v: *mut BKVideo, src: *const c_char);
     pub fn BK_video_set_controls(v: *mut BKVideo, on: c_int);
     pub fn BK_video_state(v: *const BKVideo) -> c_int;

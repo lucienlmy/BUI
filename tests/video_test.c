@@ -285,6 +285,11 @@ static void test_sound(const char *clip)
   CHECK(fabs(BK_video_volume(v) - 0.25) < 1e-6);
   BK_video_set_muted(v, 1);
   CHECK(BK_video_muted(v));
+  CHECK(!BK_video_audio_effects(v)); /* the system's effects are off by default */
+  BK_video_set_audio_effects(v, 1);
+  CHECK(BK_video_audio_effects(v));
+  BK_video_set_audio_effects(v, 0);
+  CHECK(!BK_video_audio_effects(v));
   BK_video_set_loop(v, 1); /* an output can take seconds to wake (Bluetooth): it plays on meanwhile */
   show(canvas, v);
   BK_render(ctx, r, W, H, 1);
@@ -302,6 +307,19 @@ static void test_sound(const char *clip)
     const double moved = BK_video_time(v) - t0, wall = now_s() - w0;
     printf("sound: %.2f s of video in %.2f s\n", moved, wall);
     CHECK(fabs(moved - wall) < 0.25);
+
+    /* the effects on while it plays: the output opens again, and the sound is back in time */
+    BK_video_set_audio_effects(v, 1);
+    CHECK(BK_video_audio_effects(v) && !BK_video_has_audio(v)); /* closed until it plays again */
+    run(ctx, r, 6.0, sounding, v);
+    CHECK(BK_video_has_audio(v));
+    const double e0 = BK_video_time(v), ew0 = now_s();
+    run(ctx, r, 1.0, NULL, NULL);
+    const double e_moved = fmod(BK_video_time(v) - e0 + 2.0, 2.0), e_wall = now_s() - ew0;
+    printf("sound with the effects: %.2f s of video in %.2f s\n", e_moved, e_wall);
+    CHECK(fabs(e_moved - e_wall) < 0.3);
+    BK_video_set_audio_effects(v, 0);
+    run(ctx, r, 6.0, sounding, v);
 
     /* paused: the sound and the frames hold */
     BK_video_pause(v);

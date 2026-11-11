@@ -149,6 +149,7 @@ BK_node_set_video(n, v, BK_FIT_CONTAIN);    /* or a canvas item's .video */
 BK_video_seek(v, 10.0);
 BK_video_set_rate(v, 2.0);                  /* the sound pauses at rates other than 1 */
 BK_video_set_muted(v, 1);                   /* or BK_video_set_volume(v, 0.5) */
+BK_video_set_audio_effects(v, 1);           /* keep the system's audio effects (Windows plays RAW otherwise) */
 int tex = BK_video_texture(v, 0, 640, 360); /* Dear ImGui: the frame in a texture */
 BK_video_free(v);                           /* after nodes / items let go */
 ```

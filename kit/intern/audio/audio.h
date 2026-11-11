@@ -29,9 +29,16 @@
 typedef void (*BKAudioFill)(void *data, float *out, int frames, int rate, int channels);
 
 typedef struct BKAudioDevice BKAudioDevice;
+/* Open flags. */
+enum {
+  /* Keep the system's audio effects (the Windows stream is otherwise RAW: it opens in half the
+   * time and a pause is heard sooner, without the effects chain; other systems have no such
+   * choice and ignore it). */
+  BK_AUDIO_EFFECTS = 1 << 0,
+};
 /* Starts a stream; the device opens on its own thread and calls `fill` from
  * there once it plays. NULL when this build has no audio output. */
-BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data);
+BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data, int flags);
 /* Seconds of the stream that have reached the speakers (0 before it plays):
  * the position of the samples `fill` wrote, less what the device buffers. */
 double bk_audio_device_played(BKAudioDevice *d);
@@ -44,7 +51,7 @@ typedef struct BKAudio BKAudio;
 /* The first audio track of `path`, read by `codec` (the one that plays its
  * video). Opens nothing yet: the device and the reader open on the device's
  * thread. NULL when the codec reads no audio or there is no device. */
-BKAudio *bk_audio_new(const BKImAnimCodec *codec, const char *path);
+BKAudio *bk_audio_new(const BKImAnimCodec *codec, const char *path, int flags);
 void bk_audio_free(BKAudio *a);
 void bk_audio_play(BKAudio *a, bool playing);
 void bk_audio_seek(BKAudio *a, double t);

@@ -126,8 +126,9 @@ static void *stream_thread(void *param)
   return NULL;
 }
 
-BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data)
+BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data, int flags)
 {
+  (void)flags; /* no effects to choose here */
   pthread_once(&P.once, load);
   if (!P.open || !P.write || !P.latency || !P.free) {
     return NULL;

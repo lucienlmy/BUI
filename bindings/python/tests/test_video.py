@@ -90,6 +90,11 @@ def test_sound():
     from bui.components import Video
     v = Video(CLIP_SOUND, controls=True, loop=True, muted=True, volume=0.5)  # silent: a test
     assert v.player.muted and v.player.volume == 0.5
+    assert v.player.audio_effects is False, "the system's effects are off by default"
+    v.player.audio_effects = True
+    assert v.player.audio_effects is True
+    v.player.audio_effects = False
+    assert Video(CLIP_SOUND, audio_effects=True).player.audio_effects is True
     loop = Loop(v)
     loop.run(5.0, lambda: v.player.state != bui.VIDEO_LOADING)
     loop.run(6.0, lambda: v.player.has_audio)  # an output can take seconds to wake

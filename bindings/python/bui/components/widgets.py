@@ -100,7 +100,8 @@ class Video(Component):
     """A video file (MP4, WebM, MOV, ... whatever the OS decodes: Media
     Foundation, AVFoundation, GStreamer), fitted like CSS ``object-fit``.
     Autoplays with its sound unless ``autoplay=False`` (``muted=True`` for
-    a silent one; ``volume`` 0 .. 1); the frames follow the sound, which
+    a silent one; ``volume`` 0 .. 1; ``audio_effects=True`` keeps the system's
+    audio effects, which Windows otherwise skips for a faster start); the frames follow the sound, which
     plays on off screen, and are decoded at the size drawn only while it
     shows. ``controls=True`` draws Blender's play/pause button, a scrubber
     with the time and, with sound, a mute button. ``player`` is the
@@ -111,7 +112,8 @@ class Video(Component):
     FITS = Image.FITS
 
     def __init__(self, src: str, *, autoplay: bool = True, loop: bool = False,
-                 muted: bool = False, volume: float = 1.0, controls: bool = False,
+                 muted: bool = False, volume: float = 1.0, audio_effects: bool = False,
+                 controls: bool = False,
                  poster: Optional[str] = None, fit: str = "contain",
                  on_ended: Optional[Callable[[], None]] = None, **kw):
         super().__init__(**kw)
@@ -121,6 +123,7 @@ class Video(Component):
         self.player.loop = loop
         self.player.muted = muted
         self.player.volume = volume
+        self.player.audio_effects = audio_effects
         self.player.controls = controls
         if poster:
             self.player.poster = str(poster)

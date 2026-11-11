@@ -45,8 +45,9 @@ static void refill(void *user, AudioQueueRef queue, AudioQueueBufferRef buf)
   AudioQueueEnqueueBuffer(queue, buf, 0, NULL);
 }
 
-BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data)
+BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data, int flags)
 {
+  (void)flags; /* no effects to choose here */
   if (&AudioQueueNewOutput == NULL) {
     return NULL; /* weak-linked and absent */
   }

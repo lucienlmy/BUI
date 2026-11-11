@@ -12,7 +12,7 @@ BUI plays video with the same machinery as [animated images](/docs/concepts/imag
 - **Decoded at the size drawn.** A 4K file in a 640 px box is decoded and scaled by the decoder (on the GPU on Windows) to 640 px, as NV12 (1.5 bytes a pixel). Resizing within 0.5x to 1.25x of that size just scales when drawing; beyond it the decoder switches size where it was.
 - **One texture, updated in place.** Two NV12 frames per player are allocated once (the one shown and the next, decoded ahead), then reused: no allocation per frame. On the GPU renderers each player has one luma and one chroma texture updated in place; the shader converts BT.601 / BT.709 YCbCr to RGB. The software raster converts only the pixels it draws, while drawing.
 - **Only what is on screen is decoded.** A video scrolled away, clipped, in a hidden window, or in a window that isn't rendering decodes no frames: no timers, no redraws. Its sound plays on, as in a browser, and the picture catches up to the sound when it shows again (a video without sound continues from where it was).
-- **Sound, and the frames follow it.** The audio track plays on the default output: WASAPI on Windows, CoreAudio on macOS, PulseAudio (or PipeWire's PulseAudio service) on Linux, each loaded at run time. The same OS backend decodes it, through a second reader on the file, on the output's own thread. As in Blender's AV-sync, the sound is the clock: a frame shows when the sound reaches its time. If the output takes a while to open, the picture plays on and the sound joins where it is. On Windows the stream is opened RAW, which skips the system's audio effects (Realtek, Dolby and Nahimic "enhancements"): opening a stream through those took 1.4 to 1.9 s on a Realtek machine, against half a second RAW, and every Windows audio API goes through them. Set `BUI_AUDIO_EFFECTS=1` to keep the effects. Only about 20 ms of sound is queued ahead of the speakers, so a pause is heard almost at once.
+- **Sound, and the frames follow it.** The audio track plays on the default output: WASAPI on Windows, CoreAudio on macOS, PulseAudio (or PipeWire's PulseAudio service) on Linux, each loaded at run time. The same OS backend decodes it, through a second reader on the file, on the output's own thread. As in Blender's AV-sync, the sound is the clock: a frame shows when the sound reaches its time. If the output takes a while to open, the picture plays on and the sound joins where it is. On Windows the stream is opened RAW, which skips the system's audio effects (Realtek, Dolby and Nahimic "enhancements"): opening a stream through those took 1.4 to 1.9 s on a Realtek machine, against half a second RAW, and every Windows audio API goes through them. Opt in per video with `audio_effects` (`Video(src, audio_effects=True)` in Python, `set_audio_effects(true)` in Rust, the `audioeffects` attribute on `<video>`, `BK_video_set_audio_effects` in C), or for every video with `BUI_AUDIO_EFFECTS=1`; other systems ignore it. Only about 20 ms of sound is queued ahead of the speakers, so a pause is heard almost at once.
 
 ## Showing a video
 
@@ -36,6 +36,7 @@ video().video(clip.clone()).w(px(640.0)).h(px(360.0));
 clip.seek(std::time::Duration::from_secs(10));
 clip.set_rate(2.0); // the sound pauses at rates other than 1
 clip.set_volume(0.5); // or clip.set_muted(true)
+clip.set_audio_effects(true); // keep the system's audio effects (Windows skips them: faster start)
 
 // in a canvas
 canvas(move |b, p| p.video(b, &clip, blenderui::sys::BK_FIT_CONTAIN));
@@ -62,6 +63,7 @@ v = Video("intro.mp4", controls=True, loop=True, poster="intro.jpg", fit="cover"
 v.pause(); v.seek(10.0); v.play()
 v.player.rate = 2.0                        # the bui.Video behind it
 v.player.volume = 0.5                      # or v.player.muted = True (Video(..., muted=True))
+v.player.audio_effects = True              # Windows skips the system's effects by default (faster start)
 print(v.player.time, v.player.duration, v.player.state == bui.VIDEO_PLAYING)
 bui.video_backends                         # "mf", "gstreamer", "avfoundation"; "" without video
 ```
@@ -72,6 +74,7 @@ bui.video_backends                         # "mf", "gstreamer", "avfoundation"; 
 ```c
 BKVideo *v = BK_video_new("intro.mp4");          /* autoplay with sound; loads when first drawn */
 BK_video_set_volume(v, 0.5);                     /* or BK_video_set_muted(v, 1) */
+BK_video_set_audio_effects(v, 1);                /* keep the system's effects (Windows plays RAW otherwise) */
 BK_video_set_loop(v, 1);
 BK_video_set_controls(v, 1);                     /* Blender-style controls on "video" nodes */
 BK_video_set_listener(v, on_state, app);         /* loaded, playing, paused, ended, error */

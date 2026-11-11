@@ -484,7 +484,7 @@ const BOOLEAN_ATTRS: &[&str] = &[
     "allowfullscreen", "async", "autofocus", "autoplay", "checked", "controls", "default", "defer", "disabled",
     "formnovalidate", "hidden", "inert", "ismap", "itemscope", "loop", "multiple", "muted", "nomodule",
     "novalidate", "open", "playsinline", "readonly", "required", "reversed", "selected", "popover", "draggable",
-    "contenteditable", "spellcheck", "translate", "styled",
+    "contenteditable", "spellcheck", "translate", "styled", "audioeffects",
 ];
 
 /// A bare attribute (`<div p-4 hover:bg-sky-500>`): Some(class) when it is

@@ -210,6 +210,7 @@ SETTER(controls, BK_video_set_controls(self->v, PyObject_IsTrue(value)))
 SETTER(poster, BK_video_set_poster(self->v, value == Py_None ? NULL : PyUnicode_AsUTF8(value)))
 SETTER(muted, BK_video_set_muted(self->v, PyObject_IsTrue(value)))
 SETTER(volume, BK_video_set_volume(self->v, PyFloat_AsDouble(value)))
+SETTER(audio_effects, BK_video_set_audio_effects(self->v, PyObject_IsTrue(value)))
 
 static PyObject *get_muted(VideoObject *self, void *c)
 {
@@ -223,6 +224,13 @@ static PyObject *get_volume(VideoObject *self, void *c)
   (void)c;
   LIVE(self);
   return PyFloat_FromDouble(BK_video_volume(self->v));
+}
+
+static PyObject *get_audio_effects(VideoObject *self, void *c)
+{
+  (void)c;
+  LIVE(self);
+  return PyBool_FromLong(BK_video_audio_effects(self->v));
 }
 
 static PyObject *get_has_audio(VideoObject *self, void *c)
@@ -260,6 +268,8 @@ static PyGetSetDef video_getset[] = {
     {"poster", NULL, (setter)set_poster, "An image file shown until the first frame.", NULL},
     {"muted", (getter)get_muted, (setter)set_muted, "Silent (its frames still follow the sound).", NULL},
     {"volume", (getter)get_volume, (setter)set_volume, "The sound's volume, 0 .. 1.", NULL},
+    {"audio_effects", (getter)get_audio_effects, (setter)set_audio_effects,
+     "Keep the system's audio effects (Windows plays RAW by default: faster to open).", NULL},
     {"has_audio", (getter)get_has_audio, NULL, "Its sound plays (an audio track, an output).", NULL},
     {"on_state", (getter)get_on_state, (setter)set_on_state, "callable(state) on changes.", NULL},
     {NULL, NULL, NULL, NULL, NULL},

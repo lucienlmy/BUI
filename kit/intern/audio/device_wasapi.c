@@ -6,7 +6,8 @@
  * Opening a stream through an effects chain (Realtek's, Dolby, Nahimic, "audio
  * enhancements") took 1.4 to 1.9 s here, while the same call takes half a second RAW, and every
  * other Windows audio API (waveOut, DirectSound, XAudio2, miniaudio) goes through the same chain.
- * The cost is that the effects aren't applied to a video's sound; BUI_AUDIO_EFFECTS=1 keeps them.
+ * The cost is that the effects aren't applied to a video's sound; BK_video_set_audio_effects keeps
+ * them for one video, and BUI_AUDIO_EFFECTS=1 for all of them.
  *
  * Only about two device periods of sound are queued ahead of the speakers (not the whole buffer):
  * what is queued still plays after a pause, and a short queue keeps that short. The stream's thread
@@ -61,7 +62,7 @@ static struct {
   CoCreateInstanceFn create;
   CoTaskMemFreeFn task_free;
   AvSetMmThreadCharacteristicsFn mmcss; /* avrt.dll: NULL without it */
-  bool effects;                         /* BUI_AUDIO_EFFECTS: keep the system's effects (not RAW) */
+  bool effects;                         /* BUI_AUDIO_EFFECTS: every video keeps the system's effects */
 } COM = {INIT_ONCE_STATIC_INIT};
 
 static BOOL CALLBACK com_load(PINIT_ONCE once, PVOID param, PVOID *ctx)
@@ -85,6 +86,7 @@ static BOOL CALLBACK com_load(PINIT_ONCE once, PVOID param, PVOID *ctx)
 struct BKAudioDevice {
   BKAudioFill fill;
   void *data;
+  bool effects; /* keep the system's effects: the stream isn't RAW */
   HANDLE thread, wake; /* `wake`: the stream's buffer event (and stop) */
   volatile LONG stop;
   CRITICAL_SECTION lock; /* `clock`, `base` for played() */
@@ -157,7 +159,7 @@ static bool stream_open(BKAudioDevice *d, Stream *s)
                                         SPEAKER_FRONT_CENTER;
     fmt.SubFormat = k_SUBTYPE_IEEE_FLOAT;
     const REFERENCE_TIME buffer = 500000; /* 50 ms: room, not what is queued (feed) */
-    if (!COM.effects) {
+    if (!d->effects) {
       IAudioClient2 *c2 = NULL;
       if (SUCCEEDED(IAudioClient_QueryInterface(s->client, &k_IID_IAudioClient2, (void **)&c2))) {
         AudioClientProperties props;
@@ -264,7 +266,7 @@ static DWORD WINAPI stream_thread(LPVOID param)
   return 0;
 }
 
-BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data)
+BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data, int flags)
 {
   InitOnceExecuteOnce(&COM.once, com_load, NULL, NULL);
   if (!COM.co_init || !COM.create || !COM.task_free) {
@@ -273,6 +275,7 @@ BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data)
   BKAudioDevice *d = (BKAudioDevice *)MEM_callocN(sizeof(BKAudioDevice), "BKAudioDevice");
   d->fill = fill;
   d->data = data;
+  d->effects = (flags & BK_AUDIO_EFFECTS) != 0 || COM.effects; /* BUI_AUDIO_EFFECTS: for every video */
   InitializeCriticalSection(&d->lock);
   d->wake = CreateEventW(NULL, FALSE, FALSE, NULL);
   d->thread = d->wake ? CreateThread(NULL, 0, stream_thread, d, 0, NULL) : NULL;

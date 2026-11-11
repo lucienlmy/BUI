@@ -430,9 +430,16 @@ void BK_video_set_poster(BKVideo *v, const char *src);
 /* Blender-style controls over it (play/pause, scrubber, time, and mute when it
  * has sound) in "video" nodes. */
 void BK_video_set_controls(BKVideo *v, int on);
-/* Sound: muted (the clock still follows it), and the volume (0 .. 1). */
+/* Sound: muted (the clock still follows it), and the volume (0 .. 1).
+ * Audio effects: on Windows the sound plays RAW, without the system's effects chain
+ * (Realtek, Dolby, Nahimic "enhancements"), which opens the output in half the time; turn
+ * them on for a video that should have them (before it is drawn, or later: the output
+ * opens again). Other systems ignore it. The environment variable BUI_AUDIO_EFFECTS=1
+ * does it for every video. */
 void BK_video_set_muted(BKVideo *v, int muted);
 int BK_video_muted(const BKVideo *v);
+void BK_video_set_audio_effects(BKVideo *v, int on); /* default off, see below */
+int BK_video_audio_effects(const BKVideo *v);
 void BK_video_set_volume(BKVideo *v, double volume);
 double BK_video_volume(const BKVideo *v);
 /* Its sound plays (the file has an audio track this system decodes, and an

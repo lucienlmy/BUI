@@ -34,7 +34,8 @@ struct BKVideo {
   uint64_t tex_key; /* BK_video_texture: the frame last copied */
   BKAudio *audio;   /* the sound (NULL: none, or not loaded yet) */
   bool audio_tried;
-  bool muted, loop;
+  bool muted, loop, effects; /* effects: keep the system's audio effects (audio.h) */
+  bool sound_synced;         /* the sound and the picture agreed: the picture follows the sound */
   float volume;
   double rate;
 };
@@ -44,10 +45,11 @@ static BKImPlay *play_of(const BKVideo *v)
   return bk_image_entry_play(v->entry);
 }
 
-/* The frames' clock: the sound heard. Sound behind the picture (the output
- * took its time to open: Bluetooth wakes up, a device changed) goes where the
- * picture is, as a picture behind the sound goes to the sound (play.c); until
- * that is heard the frames keep their own time. */
+/* The frames' clock: the sound heard. A sound that has just started (the output took its
+ * time to open, or opened again) was set to where the picture was when it was asked, which is
+ * stale: it goes to where the picture is now, behind or ahead, and the frames keep their own
+ * time until it is there. Once the two agree the picture follows the sound, which then keeps
+ * the beat even when the picture wasn't decoded for a while (play.c catches the picture up). */
 static double sound_clock(void *data)
 {
   BKVideo *v = (BKVideo *)data;
@@ -55,14 +57,17 @@ static double sound_clock(void *data)
   if (c < 0.0) {
     return -1.0;
   }
-  const double t = imb_play_time(play_of(v)), dur = BK_video_duration(v);
-  double behind = t - c;
-  if (v->loop && dur > 0.0 && behind > 0.5 * dur) {
-    behind -= dur; /* the sound came round first: it isn't behind */
-  }
-  if (behind > 0.25) {
-    bk_audio_seek(v->audio, t + 0.1); /* ahead by about the time it takes to be heard */
-    return -1.0;
+  if (!v->sound_synced) {
+    const double t = imb_play_time(play_of(v)), dur = BK_video_duration(v);
+    double off = t - c; /* > 0: the sound is behind the picture */
+    if (v->loop && dur > 0.0) {
+      off -= dur * floor(off / dur + 0.5); /* round a loop: the nearest way round */
+    }
+    if (fabs(off) > 0.25) {
+      bk_audio_seek(v->audio, t + 0.1); /* ahead by about the time it takes to be heard */
+      return -1.0;
+    }
+    v->sound_synced = true;
   }
   return c;
 }
@@ -70,7 +75,8 @@ static double sound_clock(void *data)
 /* The sound plays while the video plays at its own speed. */
 static void sound_follow(BKVideo *v)
 {
-  bk_audio_play(v->audio, BK_video_state(v) == BK_VIDEO_PLAYING && v->rate == 1.0);}
+  bk_audio_play(v->audio, BK_video_state(v) == BK_VIDEO_PLAYING && v->rate == 1.0);
+}
 
 static void sound_gain(BKVideo *v)
 {
@@ -83,7 +89,9 @@ static void sound_open(BKVideo *v)
 {
   BKImPlay *p = play_of(v);
   v->audio_tried = true;
-  v->audio = bk_audio_new(imb_play_codec(p), bk_image_entry_path(v->entry));  if (!v->audio) {
+  v->sound_synced = false;
+  v->audio = bk_audio_new(imb_play_codec(p), bk_image_entry_path(v->entry),
+                          v->effects ? BK_AUDIO_EFFECTS : 0);  if (!v->audio) {
     return;
   }
   sound_gain(v);
@@ -172,6 +180,7 @@ void BK_video_set_rate(BKVideo *v, double rate)
     v->rate = BK_CLAMP(rate, 1.0 / 16.0, 16.0);
     if (v->rate == 1.0 && was != 1.0) {
       bk_audio_seek(v->audio, BK_video_time(v)); /* the sound waited: from the frames' time */
+      v->sound_synced = false;
     }
     sound_follow(v);
   }
@@ -247,6 +256,25 @@ void BK_video_set_muted(BKVideo *v, int muted)
 int BK_video_muted(const BKVideo *v)
 {
   return v && v->muted;
+}
+
+void BK_video_set_audio_effects(BKVideo *v, int on)
+{
+  if (!v || (on != 0) == v->effects) {
+    return;
+  }
+  v->effects = on != 0;
+  if (v->audio) { /* the output opens again with the new setting, where the video is */
+    bk_audio_free(v->audio);
+    v->audio = NULL;
+    sound_open(v);
+    sound_follow(v);
+  }
+}
+
+int BK_video_audio_effects(const BKVideo *v)
+{
+  return v && v->effects;
 }
 
 void BK_video_set_volume(BKVideo *v, double volume)

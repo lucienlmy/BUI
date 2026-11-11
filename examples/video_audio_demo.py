@@ -65,6 +65,9 @@ def build():
     def set_speed(v):
         player.rate = v
 
+    def set_effects(on):
+        player.audio_effects = on
+
     def set_muted(on):
         player.muted = on
         refresh()
@@ -81,7 +84,8 @@ def build():
         status,
         Panel("Sound",
               NumberSlider("Volume", 1.0, min=0.0, max=1.0, on_change=set_volume),
-              Checkbox("Muted", False, on_change=set_muted)),
+              Checkbox("Muted", False, on_change=set_muted),
+              Checkbox("System audio effects (Windows: slower to start)", False, on_change=set_effects)),
         Panel("Playback",
               Row(Button("Play", video.play), Button("Pause", video.pause),
                   Button("-1 s", lambda: seek(-1.0)), Button("+1 s", lambda: seek(1.0))),

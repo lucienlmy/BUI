@@ -69,7 +69,7 @@ struct BKAudio {
 
 static void fill(void *data, float *out, int frames, int rate, int channels);
 
-BKAudio *bk_audio_new(const BKImAnimCodec *codec, const char *path)
+BKAudio *bk_audio_new(const BKImAnimCodec *codec, const char *path, int flags)
 {
   if (!codec || !codec->audio_open || !path) {
     return NULL;
@@ -82,7 +82,7 @@ BKAudio *bk_audio_new(const BKImAnimCodec *codec, const char *path)
   a->gain = 1.0f;
   a->seek = -1.0;
   BLI_mutex_init(&a->lock);
-  a->dev = bk_audio_device_open(fill, a);
+  a->dev = bk_audio_device_open(fill, a, flags);
   if (!a->dev) {
     bk_audio_free(a);
     return NULL;
