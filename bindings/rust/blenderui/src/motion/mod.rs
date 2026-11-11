@@ -22,12 +22,16 @@
 
 mod ease;
 mod element;
+mod motion_value;
+mod tween;
 mod value;
 mod vars;
 
 pub use ease::{Ease, ease};
 pub use element::{Spec, Target, Variants};
-pub(crate) use element::{Elements, Gestures};
+pub(crate) use element::{Elements, Gestures, end_pending, pending};
+pub use motion_value::{MotionValue, use_motion_value, use_spring, use_transform, use_velocity};
+pub use tween::{Targets, Timeline, Tween, animate, gsap};
 pub use value::{Key, Value, keys};
 pub use vars::{Events, Flavor, Kind, Transition, Vars};
 
@@ -47,22 +51,48 @@ thread_local! {
     static USED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-/// A motion is about to start on this thread: from now on the windows'
-/// clocks drive the engine (not the kit's frames).
-pub(crate) fn used() {
+thread_local! {
+    /// The engine's clock on this thread: real time (from when the app
+    /// started), plus what `App::advance_clock` added (all of it, headless).
+    static CLOCK: std::cell::Cell<(Option<std::time::Instant>, f64)> = const { std::cell::Cell::new((None, 0.0)) };
+}
+
+/// An app starts on this thread: its clock is real time, or (headless)
+/// virtual, moved only by [`advance`].
+pub(crate) fn start_clock(real: bool) {
+    CLOCK.set((real.then(std::time::Instant::now), 0.0));
+}
+
+/// `App::advance_clock`.
+pub(crate) fn advance(seconds: f64) {
+    let (origin, offset) = CLOCK.get();
+    CLOCK.set((origin, offset + seconds));
+}
+
+fn now() -> f64 {
+    let (origin, offset) = CLOCK.get();
+    origin.map_or(0.0, |o| o.elapsed().as_secs_f64()) + offset
+}
+
+/// Advance every motion to now: once per frame, before layout (a second
+/// call at the same time does nothing).
+pub(crate) fn tick() {
+    if USED.get() {
+        // SAFETY: UI thread; the targets the engine writes are alive (they're
+        // forgotten before they're freed).
+        unsafe { sys::BK_anim_tick(now()) };
+    }
+}
+
+/// A motion is about to start: the engine runs on this thread's clock (not
+/// the kit's frames) and catches up with it, so the motion starts now even
+/// after an idle stretch without frames.
+pub(crate) fn sync() {
     if !USED.replace(true) {
         // SAFETY: plain value.
         unsafe { sys::BK_anim_set_host_clock(1) };
     }
-}
-
-/// Advance every motion to `now` (seconds): once per frame, before layout.
-pub(crate) fn tick(now: f64) {
-    if USED.get() {
-        // SAFETY: UI thread; the targets the engine writes are alive (they're
-        // forgotten before they're freed).
-        unsafe { sys::BK_anim_tick(now) };
-    }
+    tick();
 }
 
 /// Whether anything is animating (windows keep rendering frames).

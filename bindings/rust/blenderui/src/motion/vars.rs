@@ -356,6 +356,27 @@ impl Vars {
     }
 }
 
+/// A motion of `obj` (of class `cls`): property `id` of each of `tracks` to its
+/// keyframes, timed by `t` with `flavor`'s defaults; `from`: the keyframes
+/// are where it starts and it goes to its current values (gsap.from). Unread
+/// values are skipped. The motion runs in the global timeline (or `paused`);
+/// the handle is the caller's.
+pub(crate) fn tween(cls: &'static sys::BKAnimClass, obj: *mut c_void, tracks: &[(i32, &[Value])], t: &Transition,
+                    flavor: Flavor, from: bool, events: Option<Box<Events>>) -> *mut sys::BKMotion {
+    super::sync();
+    let bufs: SmallVec<[(i32, TrackBuf); 4]> =
+        tracks.iter().filter_map(|(id, keys)| Some((*id, TrackBuf::read(keys)?))).collect();
+    let engine: SmallVec<[sys::BKTrack; 4]> = bufs.iter().map(|(id, b)| b.track(*id, t, from)).collect();
+    let (first, nkeys, to) = bufs.first().map_or((0, 1, 0.0), |(id, b)| (*id, tracks[0].1.len(), b.last));
+    let mut vars = t.engine(flavor, first, nkeys, to);
+    if let Some(e) = events {
+        e.attach(&mut vars);
+    }
+    // SAFETY: the tracks' buffers live through the call (the engine copies them); `obj`
+    // stays valid while the engine may write it (its owner forgets it before freeing).
+    unsafe { sys::BK_tween(cls, obj, engine.as_ptr(), engine.len() as i32, &raw const vars) }
+}
+
 /// The engine's track for keyframes `keys` (read once; the buffers live on
 /// the stack for the call).
 pub(crate) struct TrackBuf {

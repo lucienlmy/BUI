@@ -259,14 +259,18 @@ impl P<'_> {
                     base = call;
                 }
                 _ => {
-                    let name = self.name()?;
+                    let mut name = self.name()?;
                     let value = if is(self.peek(), '=') {
                         self.i += 1;
                         match self.peek() {
                             Some(t @ (TokenTree::Literal(_) | TokenTree::Group(_))) => {
-                                let t = vars_object(t)?;
+                                let (obj, is_object) = vars_object(t)?;
+                                // `style={{ x: mv }}`: Motion's style (values read every frame)
+                                if name == "style" && is_object {
+                                    name = "motionStyle".into();
+                                }
                                 self.i += 1;
-                                Some(t)
+                                Some(obj)
                             }
                             _ => return Err(format!("rsx!: `{name}=` needs \"text\" or {{expr}}")),
                         }
@@ -520,17 +524,17 @@ fn bare(name: &str) -> R<Option<String>> {
 }
 
 /// One attribute on an HTML element.
-/// `{{ x: 100 }}`: a vars object (`vars!`); anything else as it is.
-fn vars_object(t: &TokenTree) -> R<TokenTree> {
+/// `{{ x: 100 }}`: a vars object (`vars!`, and true); anything else as it is.
+fn vars_object(t: &TokenTree) -> R<(TokenTree, bool)> {
     if let TokenTree::Group(g) = t {
         let inner: Vec<TokenTree> = g.stream().into_iter().collect();
         if let (Delimiter::Brace, [TokenTree::Group(o)]) = (g.delimiter(), inner.as_slice()) {
             if o.delimiter() == Delimiter::Brace {
-                return Ok(TokenTree::Group(Group::new(Delimiter::Brace, crate::vars::object(o.stream())?)));
+                return Ok((TokenTree::Group(Group::new(Delimiter::Brace, crate::vars::object(o.stream())?)), true));
             }
         }
     }
-    Ok(t.clone())
+    Ok((t.clone(), false))
 }
 
 /// Motion's props that take a variant's name as a string.

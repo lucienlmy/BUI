@@ -383,6 +383,16 @@ static void test_timelines(void)
   double grid[9];
   BK_stagger(&g, 9, grid);
   CHECK(NEAR(grid[4], 0.0, 1e-9) && NEAR(grid[1], 0.1, 1e-9) && grid[0] > grid[1]);
+  /* a timeline that finished empty plays on with what is added later (GSAP) */
+  Obj late = {0};
+  BKMotion *empty = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+  step(0.5); /* empty: done, out of the global timeline */
+  BKMotion *lt = to(&late, BK_PROP_X, 100.0f, linear(1.0));
+  BK_timeline_add(empty, lt, "");
+  BK_motion_release(lt);
+  step(0.5);
+  CHECK(NEAR(late.x, 50.0, 1e-3));
+  BK_motion_release(empty);
   printf("timelines: positions, labels, calls, seeking, repeat, yoyo, events, stagger\n");
 }
 

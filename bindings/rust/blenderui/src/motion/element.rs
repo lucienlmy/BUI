@@ -16,9 +16,10 @@ use smallvec::SmallVec;
 use blenderui_sys as sys;
 
 use super::value::{Key, Read, Value};
-use super::vars::{Flavor, TrackBuf, Transition, Vars};
+use super::vars::{Flavor, Transition, Vars, tween};
 use crate::anim::{Field, field_numbers, fields_of, set_field_numbers};
 use crate::element::Div;
+use crate::layout::ElData;
 use crate::geometry::{Length, Units};
 use crate::style::{Computed, KeyMap};
 
@@ -109,6 +110,8 @@ pub struct Spec {
     /// the element's transition, with Motion's per-property ones
     pub transition: Option<Vars>,
     pub variants: Option<Variants>,
+    /// `style={{ x: mv }}`: values (MotionValues) read every frame
+    pub style: Option<Vars>,
 }
 
 impl Spec {
@@ -158,6 +161,14 @@ impl Div {
     #[must_use]
     pub fn transition(mut self, t: impl Into<Vars>) -> Div {
         self.motion_mut().transition = Some(t.into());
+        self
+    }
+
+    /// Values set every frame, usually [`MotionValue`](super::MotionValue)s
+    /// (Motion's `style={{ x: mv }}`).
+    #[must_use]
+    pub fn motion_style(mut self, v: Vars) -> Div {
+        self.motion_mut().style = Some(v);
         self
     }
 
@@ -275,12 +286,25 @@ impl Elements {
         self.els.contains_key(&key)
     }
 
-    /// Element `key` with motion `spec` and style `base` this frame: start the
-    /// motions its targets need, and lay the moving values over `out`.
-    pub(crate) fn apply(&mut self, key: u64, spec: &Spec, base: &Computed, g: Gestures, u: &Units,
+    /// Element `el` (`key`) with motion `spec` and style `base` this frame:
+    /// start the motions its targets (and imperative motions for it) need, and
+    /// lay the moving values over `out`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn apply(&mut self, key: u64, el: &ElData, spec: Option<&Spec>, base: &Computed, g: Gestures, u: &Units,
                         out: &mut Option<Computed>) {
         let frame = self.frame;
         let first = !self.els.contains_key(&key);
+        if first && spec.is_none() && !PENDING.with(|p| with_pending(p, |ps| ps.iter().any(|p| p.selector.matches(el)))) {
+            return; // nothing animates it
+        }
+        let empty;
+        let spec = match spec {
+            Some(s) => s,
+            None => {
+                empty = Spec::default();
+                &empty
+            }
+        };
         let slot: *mut Slot = &raw mut **self.els.entry(key).or_default();
         // targets, later layers over earlier ones (Motion's priority)
         let mut targets: SmallVec<[(&Key, &Value, &Vars); 8]> = SmallVec::new();
@@ -307,6 +331,15 @@ impl Elements {
             }
             for p in &mut s.props {
                 p.base = base_of(p, base, u);
+            }
+            // `style={{ x: mv }}`: values read every frame
+            if let Some(style) = &spec.style {
+                for (k, v) in style.props.iter() {
+                    ensure(s, k.id(), base, u);
+                    if let (Some(p), Some(r)) = (s.find(k.id()), v.read().filter(|r| !r.current)) {
+                        p.cur = Some(r);
+                    }
+                }
             }
             if first {
                 // where it starts: `initial`, or (initial={false}) where it goes
@@ -363,6 +396,27 @@ impl Elements {
                 unsafe { &mut *slot }.props[i].last = None;
             }
         }
+        // imperative motions waiting for this element (gsap.to("#id", ..))
+        PENDING.with(|p| with_pending(p, |ps| {
+            for p in ps.iter_mut().filter(|p| p.selector.matches(el)) {
+                {
+                    // SAFETY: no engine call while borrowed.
+                    let s = unsafe { &mut *slot };
+                    for (k, _) in &p.props {
+                        ensure(s, k.id(), base, u);
+                    }
+                }
+                let tracks: SmallVec<[(i32, &[Value]); 4]> = p.props.iter().map(|(k, v)| (k.id(), v.keys())).collect();
+                let m = tween(&SLOT_CLASS, slot.cast(), &tracks, &p.transition, p.flavor, p.from, None);
+                let off = super::tween::at(p.transition.stagger.unwrap_or(0.0) * p.matched as f64);
+                // SAFETY: both alive; the timeline takes it, then our handle goes.
+                unsafe {
+                    sys::BK_timeline_add(p.timeline.raw(), m, off.as_ptr());
+                    sys::BK_motion_release(m);
+                }
+                p.matched += 1;
+            }
+        }));
         // lay the values over the style
         let s = unsafe { &*slot };
         for p in &s.props {
@@ -373,17 +427,96 @@ impl Elements {
     }
 }
 
+/// One compound selector: tag, `#id`, `.class`es, all matching.
+#[derive(Debug, Default)]
+struct Compound {
+    tag: Option<Box<str>>,
+    id: Option<Box<str>>,
+    classes: SmallVec<[Box<str>; 2]>,
+}
+
+/// The elements of an imperative motion: `"#id"`, `".a.b"`, `"div.card"`, a
+/// comma-separated list (any matching).
+#[derive(Debug, Default)]
+pub(crate) struct Selector(SmallVec<[Compound; 1]>);
+
+impl Selector {
+    pub(crate) fn parse(s: &str) -> Selector {
+        Selector(s.split(',').map(|part| {
+            let mut c = Compound::default();
+            let mut rest = part.trim();
+            let tag_end = rest.find(['#', '.']).unwrap_or(rest.len());
+            if tag_end > 0 && &rest[..tag_end] != "*" {
+                c.tag = Some(rest[..tag_end].into());
+            }
+            rest = &rest[tag_end..];
+            while let Some(kind) = rest.chars().next() {
+                let end = rest[1..].find(['#', '.']).map_or(rest.len(), |i| i + 1);
+                let name: Box<str> = rest[1..end].into();
+                if kind == '#' {
+                    c.id = Some(name);
+                } else {
+                    c.classes.push(name);
+                }
+                rest = &rest[end..];
+            }
+            c
+        }).collect())
+    }
+
+    pub(crate) fn matches(&self, el: &ElData) -> bool {
+        let attr = |n: &str| el.attrs.iter().find(|(k, _)| &**k == n).map(|(_, v)| &**v);
+        self.0.iter().any(|c| {
+            c.tag.as_deref().is_none_or(|t| t == el.tag)
+                && c.id.as_deref().is_none_or(|id| attr("id") == Some(id))
+                && c.classes.iter().all(|cl| attr("class").is_some_and(|v| v.split_whitespace().any(|x| x == &**cl)))
+        })
+    }
+}
+
+/// An imperative motion waiting for its elements (they're found at the
+/// next layout, in document order: the stagger order).
+pub(crate) struct Pending {
+    pub selector: Selector,
+    pub props: Vec<(&'static Key, Value)>,
+    pub transition: Transition,
+    pub from: bool,
+    pub flavor: Flavor,
+    pub timeline: super::Tween,
+    pub matched: usize,
+}
+
+thread_local! {
+    static PENDING: std::cell::Cell<Vec<Pending>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
+fn with_pending<R>(c: &std::cell::Cell<Vec<Pending>>, f: impl FnOnce(&mut Vec<Pending>) -> R) -> R {
+    let mut v = c.take();
+    let r = f(&mut v);
+    c.set(v);
+    r
+}
+
+pub(crate) fn queue(p: Pending) {
+    PENDING.with(|c| with_pending(c, |v| v.push(p)));
+}
+
+/// Whether imperative motions wait for elements (every element is checked).
+pub(crate) fn pending() -> bool {
+    PENDING.with(|c| with_pending(c, |v| !v.is_empty()))
+}
+
+/// After a layout: the waiting motions found their elements (or none).
+pub(crate) fn end_pending() {
+    let done = PENDING.with(std::cell::Cell::take);
+    drop(done);
+}
+
 /// A motion of property `id` of the slot to `keys` with transition `t`.
 fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) {
-    super::used();
-    let Some(buf) = TrackBuf::read(keys) else { return };
-    let track = buf.track(id, t, false);
-    let vars = t.engine(Flavor::Motion, id, keys.len(), buf.last);
-    // SAFETY: the slot is alive and not borrowed; track buffers live through the call.
-    unsafe {
-        let m = sys::BK_tween(&raw const SLOT_CLASS, slot.cast(), &raw const track, 1, &raw const vars);
-        sys::BK_motion_release(m); // the global timeline holds it while it runs
-    }
+    let m = tween(&SLOT_CLASS, slot.cast(), &[(id, keys)], t, Flavor::Motion, false, None);
+    // SAFETY: our handle (the global timeline holds it while it runs).
+    unsafe { sys::BK_motion_release(m) };
 }
 
 fn ensure(s: &mut Slot, id: i32, base: &Computed, u: &Units) {

@@ -782,6 +782,8 @@ static double position(BKMotion *tl, const char *pos)
   return BK_MAX(0.0, base + sign * amount);
 }
 
+static void ensure_placed(BKMotion *m);
+
 double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *pos)
 {
   if (!tl || !child || !tl->timeline || tl == child) {
@@ -789,6 +791,10 @@ double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *pos)
   }
   const double at = position(tl, pos);
   place(tl, child, at);
+  /* GSAP: a timeline that had finished (or was empty) plays on with what is added to it */
+  if (!tl->parent && tl != G.root && !tl->paused && !tl->killed) {
+    ensure_placed(tl);
+  }
   return at;
 }
 

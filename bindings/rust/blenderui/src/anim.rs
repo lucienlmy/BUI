@@ -1236,7 +1236,8 @@ pub(crate) struct Env<'a> {
     pub media: &'a [bool],
     /// Properties set by `!important` declarations on the element.
     pub important: &'a [Prop],
-    /// Motion's props on the element, and the states its `while*` follow.
+    /// The element, its Motion props, and the states its `while*` follow.
+    pub el: &'a crate::layout::ElData,
     pub motion: Option<&'a crate::motion::Spec>,
     pub gestures: crate::motion::Gestures,
 }
@@ -1260,7 +1261,7 @@ impl Animations {
         self.frame += 1;
         self.running = false;
         self.motion.begin();
-        crate::motion::tick(now);
+        crate::motion::tick();
     }
 
     /// After a layout: forget elements that are gone (or lost their
@@ -1269,6 +1270,7 @@ impl Animations {
         let frame = self.frame;
         self.els.retain(|_, e| e.seen == frame);
         self.motion.end();
+        crate::motion::end_pending();
         self.running |= crate::motion::active();
         self.running
     }
@@ -1416,12 +1418,12 @@ impl Animations {
 
     /// Motion's values on top of the CSS animations (`out`: their result).
     fn apply_motion(&mut self, key: u64, base: &Computed, env: &Env, mut out: Option<Computed>) -> Option<Computed> {
-        if let Some(spec) = env.motion {
+        if env.motion.is_some() || self.motion.has(key) || crate::motion::pending() {
             let u = Units { font_size: base.font_size, viewport: env.viewport };
             let start = out.take();
             let from = start.as_ref().unwrap_or(base);
             let mut moved = None;
-            self.motion.apply(key, spec, from, env.gestures, &u, &mut moved);
+            self.motion.apply(key, env.el, env.motion, from, env.gestures, &u, &mut moved);
             out = moved.or(start);
         }
         out

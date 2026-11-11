@@ -91,6 +91,8 @@ pub enum Value {
     Keys(Cow<'static, [Value]>),
     /// The value it has when the motion starts (Motion's `null` keyframe).
     Current,
+    /// A [`MotionValue`](super::MotionValue)'s value, read every frame (`style={{ x: mv }}`).
+    Motion(super::MotionValue),
 }
 
 impl From<f32> for Value {
@@ -182,6 +184,7 @@ impl Value {
                 (n > 0).then(|| Read { n: n as u8, unit, rel: rel as i8, ..r })
             }
             Value::Current => Some(Read::CURRENT),
+            Value::Motion(m) => Some(m.read()),
             Value::Keys(k) => k.last().and_then(Value::read),
         }
     }

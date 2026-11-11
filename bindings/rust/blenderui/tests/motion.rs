@@ -3,7 +3,10 @@
 
 use std::time::Duration;
 
-use blenderui::motion::Value;
+use std::cell::Cell;
+use std::rc::Rc;
+
+use blenderui::motion::{MotionValue, Value, gsap};
 use blenderui::prelude::*;
 use blenderui::vars;
 
@@ -35,11 +38,12 @@ fn near(a: f32, b: f32, eps: f32) -> bool {
 
 struct Page {
     open: bool,
+    mv: MotionValue,
 }
 
 impl Render for Page {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        let wide = self.open;
+        let (wide, mv) = (self.open, self.mv);
         rsx! {
             <body style="margin: 0">
                 <motion.div id="tween" style="height: 10px; width: 10px"
@@ -60,6 +64,9 @@ impl Render for Page {
                     animate={{ x: if wide { 100.0 } else { 0.0 }, transition: { duration: 1, ease: "linear" } }} />
                 <motion.div id="hover" style="position: absolute; left: 0; top: 200px; height: 50px; width: 50px"
                     whileHover={{ width: 150 }} transition={{ duration: 0.5, ease: "linear" }} />
+                <div class="box" id="b1" style="height: 10px; width: 10px" />
+                <div class="box" id="b2" style="height: 10px; width: 10px" />
+                <motion.div id="bound" style="height: 10px" style={{ width: mv }} />
             </body>
         }
     }
@@ -82,7 +89,8 @@ fn motion_elements() {
     Application::headless().run(|cx| {
         // the steps here are long: GSAP's lag smoothing would take them for stalls
         blenderui::motion::lag_smoothing(0.0, 0.0);
-        let h = open(cx, Page { open: false });
+        let mv = MotionValue::new(30.0);
+        let h = open(cx, Page { open: false, mv });
         let w = h.id;
         // a tween: 10 -> 110 over 1 s, linear
         assert!(near(bounds(cx, w, "tween").size.width, 10.0, 0.5), "starts where its style is");
@@ -137,5 +145,50 @@ fn motion_elements() {
         assert!(near(bounds(cx, w, "hover").size.width, 50.0, 0.6), "back: {}", bounds(cx, w, "hover").size.width);
         ms(cx, w, 100);
         assert!(!cx.window(w).unwrap().is_animating(), "idle once everything settled");
+
+        // style={{ width: mv }}: the element follows the value every frame
+        assert!(near(bounds(cx, w, "bound").size.width, 30.0, 0.5));
+        let done = Rc::new(Cell::new(0));
+        let d = done.clone();
+        let t = gsap::to(mv, vars! { value: 130, duration: 1, ease: "none", onComplete: move || d.set(d.get() + 1) });
+        ms(cx, w, 500);
+        assert!(near(mv.get(), 80.0, 0.5), "gsap.to a value: {}", mv.get());
+        assert!(near(bounds(cx, w, "bound").size.width, 80.0, 0.6), "the bound element moved with it");
+        t.pause();
+        ms(cx, w, 250);
+        assert!(near(mv.get(), 80.0, 0.5), "paused");
+        t.resume();
+        ms(cx, w, 600);
+        assert!(near(mv.get(), 130.0, 0.5) && done.get() == 1, "complete, once: {} {}", mv.get(), done.get());
+
+        // gsap.to by selector: the elements, staggered in document order
+        let _ = gsap::to(".box", vars! { width: 110, duration: 1, ease: "none", stagger: 0.5 });
+        cx.draw(w);
+        ms(cx, w, 500);
+        assert!(near(bounds(cx, w, "b1").size.width, 60.0, 0.6), "b1 halfway: {}", bounds(cx, w, "b1").size.width);
+        assert!(near(bounds(cx, w, "b2").size.width, 10.0, 0.6), "b2 starts 0.5 s later");
+        ms(cx, w, 1000);
+        assert!(near(bounds(cx, w, "b2").size.width, 110.0, 0.6) && near(bounds(cx, w, "b1").size.width, 110.0, 0.6));
+
+        // a timeline: positions, labels, calls
+        let calls = Rc::new(Cell::new(0));
+        let c = calls.clone();
+        let a = MotionValue::new(0.0);
+        let b = MotionValue::new(0.0);
+        let tl = gsap::timeline(vars! {});
+        tl.to(a, vars! { value: 100, duration: 1, ease: "none" }, "")
+            .add_label("half", "<0.5")
+            .to(b, vars! { value: 100, duration: 1, ease: "none" }, "half")
+            .call(move || c.set(c.get() + 1), ">");
+        assert_eq!(tl.label_time("half"), Some(0.5));
+        assert!(near(tl.duration() as f32, 1.5, 1e-6));
+        ms(cx, w, 1000);
+        assert!(near(a.get(), 100.0, 0.5) && near(b.get(), 50.0, 0.5), "a {} b {}", a.get(), b.get());
+        ms(cx, w, 600);
+        assert!(near(b.get(), 100.0, 0.5) && calls.get() == 1, "the call ran once at the end");
+        tl.seek(0.25);
+        assert!(near(a.get(), 25.0, 0.5) && near(b.get(), 0.0, 0.5), "seek back: every child where it belongs");
+        a.dispose();
+        b.dispose();
     });
 }

@@ -415,6 +415,7 @@ unsafe extern "C" fn on_wake() {
 
 impl App {
     fn create(headless: bool) -> App {
+        crate::motion::start_clock(!headless);
         App { windows: Vec::new(), entities: Vec::new(), headless, globals: HashMap::new(), propagate: true,
               remote: None, close_hooks: Vec::new(),
               activation_hooks: Vec::new(), notified: 0 }
@@ -680,6 +681,7 @@ impl App {
     /// windows' clocks stand still otherwise, so tests step animations and
     /// transitions deterministically; native windows add `d` to real time.
     pub fn advance_clock(&mut self, d: std::time::Duration) {
+        crate::motion::advance(d.as_secs_f64());
         for w in self.windows.iter_mut().flatten() {
             w.clock.advance(d);
             if w.caches.anim.any() {

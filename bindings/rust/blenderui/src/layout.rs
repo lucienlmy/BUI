@@ -886,7 +886,7 @@ impl<'a> Builder<'a> {
     /// Never cached, so the shared styles stay what the cascade made them.
     fn animate(&mut self, i: usize, div: &Div, parent: StyleId, style: StyleId) -> StyleId {
         let key = self.nodes[i].key;
-        if !self.anim.wants(key, &self.styles[style]) && div.motion().is_none() {
+        if !self.anim.wants(key, &self.styles[style]) && div.motion().is_none() && !crate::motion::pending() {
             return style;
         }
         let important: smallvec::SmallVec<[Prop; 8]> = {
@@ -901,6 +901,7 @@ impl<'a> Builder<'a> {
             sheet: self.author,
             media: &self.au_media,
             important: &important,
+            el: self.els.last().expect("the element being laid out"),
             motion: div.motion(),
             gestures: crate::motion::Gestures {
                 hover: self.state.hovered.contains(&key),
