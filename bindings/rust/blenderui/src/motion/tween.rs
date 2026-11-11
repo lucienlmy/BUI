@@ -12,7 +12,7 @@ use smallvec::SmallVec;
 use blenderui_sys as sys;
 
 use super::MotionValue;
-use super::element::{Pending, Selector, queue};
+use super::pending::{Pending, Selector, queue};
 use super::value::Value;
 use super::vars::{Flavor, Transition, Vars};
 

@@ -22,14 +22,18 @@
 
 mod ease;
 mod element;
+mod pending;
+mod spec;
+mod styling;
 mod motion_value;
 mod tween;
 mod value;
 mod vars;
 
 pub use ease::{Ease, ease};
-pub use element::{Spec, Target, Variants, When};
-pub(crate) use element::{Elements, Gestures, end_pending, pending};
+pub use spec::{Spec, Target, Variants, When};
+pub(crate) use element::{Elements, Gestures};
+pub(crate) use pending::{end_pending, pending};
 pub use motion_value::{MotionValue, use_motion_value, use_spring, use_transform, use_velocity};
 pub use tween::{Targets, Timeline, Tween, animate, gsap};
 pub use value::{Key, Value, keys};
