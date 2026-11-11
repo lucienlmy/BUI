@@ -127,7 +127,7 @@ test('Svelte: text and elements take turns; keyed lists reorder; dropped nodes a
   assert.strictEqual(window._nodes.size, before, 'removed elements and their text are freed')
 })
 
-test('Svelte: hidden keeps a subtree; transitions commit without animating', async (t) => {
+test('Svelte: hidden keeps a subtree; transitions animate (el.animate on the engine)', async (t) => {
   let setShow
   const { app, window } = render(Show, { props: { expose: (s) => { setShow = s } }, headless: true, width: 100, height: 100 })
   t.after(() => app.quit())
@@ -138,9 +138,19 @@ test('Svelte: hidden keeps a subtree; transitions commit without animating', asy
   setShow(false)
   await tick(100)
   assert.strictEqual(find('kid').hasAttribute('hidden'), true, 'hidden, and kept')
+  assert.ok(find('vt'), 'the outro is running (the headless clock stands still)')
+  // Svelte's delay animation, then its 400 ms fade
+  for (let ms = 0; ms < 1000 && find('vt'); ms += 100) {
+    await app.advanceClock(100)
+    await tick()
+  }
   assert.strictEqual(find('vt'), undefined, 'the outro finished and freed its node')
   setShow(true)
-  await tick(100)
+  await tick()
+  for (let i = 0; i < 6; i++) {
+    await app.advanceClock(100)
+    await tick()
+  }
   assert.strictEqual(find('kid').hasAttribute('hidden'), false)
   assert.strictEqual(find('vt').textContent, 'shown')
 })

@@ -80,9 +80,10 @@ are served by `internal.js` and write straight into BUI's nodes; each is
 used only while Svelte's has the shape it was written for (a test compares
 them), otherwise Svelte's own runs.
 
-Not there yet: transitions run their start and end without animating in
-between; `{@html}` (no HTML parser); `bind:clientWidth` and other size
-bindings (no `ResizeObserver`).
+Transitions (`transition:fade` ...) run on BUI's animation engine through
+`el.animate()`. Not there yet: `{@html}` (no HTML parser); `bind:clientWidth`
+and other size bindings (no `ResizeObserver`); transitions that read
+`getComputedStyle` (fade's opacity) start from the value the element has.
 
 ## Requirements
 
