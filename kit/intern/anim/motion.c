@@ -26,18 +26,20 @@
 /** \name Types
  * \{ */
 
+/* What a frame reads first, then what it reads rarely: a tween's track is about one cache line
+ * (physics state, only for springs and inertia, is in the motion's block after the tracks). */
 typedef struct Track {
   int prop, n, nkeys, unit;
-  float *values;   /* nkeys * n: resolved when the tween starts */
-  float *times;    /* nkeys, 0 .. 1 */
-  BKEase *eases;   /* nkeys - 1 per segment, or NULL: the tween's ease */
-  uint8_t *current; /* per key: the value at the start */
-  int8_t *rel;     /* per key: relative to the value at the start */
-  BKPhysics ph;    /* physics tracks: on the value (n == 1) or on 0 .. 1 (colors) */
-  float last[4];
   bool instant : 1;  /* reduced motion: it jumps to its end */
   bool killed : 1;   /* another motion took the property */
   bool has_last : 1;
+  float last[4];
+  float *values;   /* nkeys * n: resolved when the tween starts */
+  BKEase *eases;   /* nkeys - 1 per segment, or NULL: the tween's ease */
+  float *times;    /* nkeys, 0 .. 1 */
+  uint8_t *current; /* per key: the value at the start */
+  int8_t *rel;     /* per key: relative to the value at the start */
+  BKPhysics *ph;   /* physics tracks: on the value (n == 1) or on 0 .. 1 (colors) */
 } Track;
 
 typedef struct Label {
@@ -45,35 +47,38 @@ typedef struct Label {
   double time;
 } Label;
 
+/* The fields a frame reads come first (two cache lines), then the rest. */
 struct BKMotion {
-  /* state flags, one word */
+  /* -- every frame */
   bool timeline : 1, call : 1, paused : 1, reversed : 1, yoyo : 1, rendered : 1, started : 1, killed : 1,
       resolved : 1;
   int refs;
-  int run; /* in the global timeline: its index in G.run */
-  BKMotion *parent, *prev, *next; /* in a timeline's children, in order of start */
+  int run;      /* in the global timeline: its index in G.run */
+  int repeat;
+  int kind;
+  int ntracks;
+  int iteration;
+  int events;
   /* time: local = anchor_local + dir * (parent_time - anchor_parent) * ts */
   double anchor_parent, anchor_local;
   double ts;
   double dur;      /* one iteration */
-  int repeat;
   double rdelay;
   double t;        /* the total time last rendered */
   double it_time;  /* the time in its iteration then: its children's parent time */
-  int iteration;
-  BKMotionFn on;
-  int events;
-  void *data;
-  void (*free_data)(void *data);
-  /* tween */
+  BKMotion *parent;
+  Track *tracks; /* in the motion's own block, with their keyframes */
   const BKAnimClass *cls;
   void *obj;
+  BKMotionFn on;
+  void *data;
   BKEase ease;
-  int kind, overwrite;
+  /* -- rarely */
+  int overwrite;
+  BKMotion *prev, *next; /* in a timeline's children, in order of start */
+  void (*free_data)(void *data);
   BKSpring spring;
   BKInertia inertia;
-  Track *tracks; /* in the motion's own block, with their keyframes */
-  int ntracks;
   /* timeline */
   BKMotion *first, *last, *recent;
   Label *labels;
@@ -418,8 +423,8 @@ static void resolve(BKMotion *m)
       if (t->n != 1) {
         s.velocity = 0.0f;
       }
-      bk_physics_init(&t->ph, m->kind, &s, &in, from, to);
-      longest = BK_MAX(longest, t->ph.duration);
+      bk_physics_init(t->ph, m->kind, &s, &in, from, to);
+      longest = BK_MAX(longest, t->ph->duration);
     }
   }
   if (m->kind != BK_MOTION_TWEEN_KIND) {
@@ -439,7 +444,7 @@ static void track_eval(const BKMotion *m, const Track *t, double it, double p, f
   }
   if (m->kind != BK_MOTION_TWEEN_KIND) {
     float pos, vel;
-    bk_physics_eval(&t->ph, it, &pos, &vel);
+    bk_physics_eval(t->ph, it, &pos, &vel);
     if (m->kind == BK_MOTION_INERTIA_KIND || t->n == 1) {
       out[0] = pos;
       return;
@@ -878,9 +883,12 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
     nease += in->eases && in->nkeys == nk && nk > 1 ? (size_t)(nk - 1) : 0;
     nbyte += (size_t)nk * (in->rel ? 2 : 1);
   }
-  /* one block: the motion, its tracks, their floats, eases and flags (aligned in that order) */
+  /* one block: the motion, its tracks, physics (springs, inertia), floats, eases and flags
+   * (aligned in that order) */
+  const bool physics = v->kind != BK_MOTION_TWEEN_KIND;
   const size_t off_tracks = (sizeof(BKMotion) + 7) & ~(size_t)7;
-  const size_t off_float = off_tracks + sizeof(Track) * (size_t)ntracks;
+  const size_t off_phys = off_tracks + sizeof(Track) * (size_t)ntracks;
+  const size_t off_float = off_phys + (physics ? sizeof(BKPhysics) * (size_t)ntracks : 0);
   const size_t off_ease = off_float + sizeof(float) * nfloat;
   const size_t off_byte = off_ease + sizeof(BKEase) * nease;
   BKMotion *m = motion_alloc(v, off_byte + nbyte - sizeof(BKMotion));
@@ -941,6 +949,9 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
       memcpy(t->eases, in->eases, sizeof(BKEase) * (size_t)(nk - 1));
     }
     t->instant = G.reduced && is_layout_prop(t->prop);
+    if (physics) {
+      t->ph = (BKPhysics *)(block + off_phys) + i;
+    }
   }
   m->dur = v->kind == BK_MOTION_TWEEN_KIND ? BK_MAX(0.0, v->duration) : 0.0;
   if (v->kind != BK_MOTION_TWEEN_KIND) {
@@ -1158,7 +1169,7 @@ float BK_motion_velocity(const BKMotion *m, int prop)
     const double it = iteration_time(m, m->t, &iter);
     if (m->kind != BK_MOTION_TWEEN_KIND && t->n == 1) {
       float pos, vel;
-      bk_physics_eval(&t->ph, it, &pos, &vel);
+      bk_physics_eval(t->ph, it, &pos, &vel);
       return vel;
     }
     /* a keyframed value: its slope at this time */
