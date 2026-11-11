@@ -53,6 +53,18 @@ add_library(bui::kit ALIAS bui_kit)
 # the optional parts this build has (features.json): BUI_IMAGE_*, BUI_VIDEO*, ...
 bui_features(bui_kit)
 
+# Animation (GSAP- and Motion-style): the engine, or the API alone when it is off
+if(BUI_ANIM)
+  target_sources(bui_kit PRIVATE
+    intern/anim/ease.c
+    intern/anim/spring.c
+    intern/anim/value.c
+    intern/anim/motion.c
+    intern/anim/node.c)
+else()
+  target_sources(bui_kit PRIVATE intern/anim/anim_off.c)
+endif()
+
 if(BUI_FILEBROWSER) # Blender's File Browser (editors/space_file)
   target_sources(bui_kit PRIVATE
     intern/kit_filebrowser_paths.c
