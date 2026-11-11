@@ -162,10 +162,12 @@ pub fn add_font(family: &str, bold: bool, italic: bool, data: &[u8]) -> bool {
     unsafe { sys::BUI_text_add_font(fam.as_ptr(), flags, data.as_ptr().cast(), len) != 0 }
 }
 
-/// How the GPU renderer draws text. `true`: Slug, glyph outlines evaluated
-/// in the pixel shader (sharp at any size; the default with the `slug`
-/// feature). `false`: a per-glyph bitmap atlas like Blender's (less GPU
-/// work). Takes effect on the next frame; `BUI_SLUG=1`/`0` overrides.
+/// How the GPU renderer draws all text. `true`: Slug, glyph outlines
+/// evaluated in the pixel shader (sharp at any size). `false`: a per-glyph
+/// bitmap atlas like Blender's (less GPU work). Without a choice, the `slug`
+/// feature draws text of 40 px and up with Slug and smaller text from the
+/// atlas (half the GPU time on UI text; the CPU renderer's exact pixels).
+/// Takes effect on the next frame; `BUI_SLUG=1`/`0` overrides.
 pub fn set_slug(on: bool) {
     // SAFETY: sets a global flag.
     unsafe { sys::BUI_gpu_set_slug(on as std::os::raw::c_int) }

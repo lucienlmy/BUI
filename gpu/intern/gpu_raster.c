@@ -265,7 +265,14 @@ void BUI_gpu_set_slug(int on)
   g_slug = on ? 1 : 0;
 }
 
-int BUI_gpu_slug(void)
+/* The text size from which the default draws with Slug: below it a glyph's bitmap is small,
+ * cached once and exactly what the CPU renderer draws, and sampling it costs the GPU far less
+ * than evaluating outlines per pixel (half the GPU time on a UI of small text); above it
+ * bitmaps get big and Slug keeps edges sharp. */
+#define SLUG_MIN_PX 40
+
+/* The explicit choice (BUI_SLUG, else BUI_gpu_set_slug), or -1: the default. */
+static int slug_choice(void)
 {
   /* called per text run: read the environment once */
   static int env_slug = -2; /* -2 unread, -1 unset */
@@ -275,10 +282,20 @@ int BUI_gpu_slug(void)
                                   env[0] == 'T') :
                                  -1;
   }
-  if (env_slug >= 0) {
-    return env_slug;
-  }
-  return g_slug >= 0 ? g_slug : BUI_SLUG_DEFAULT;
+  return env_slug >= 0 ? env_slug : g_slug;
+}
+
+int BUI_gpu_slug(void)
+{
+  const int c = slug_choice();
+  return c >= 0 ? c : BUI_SLUG_DEFAULT;
+}
+
+/* Whether text of `px` pixels draws with Slug. */
+static int slug_for(float px)
+{
+  const int c = slug_choice();
+  return c >= 0 ? c : (BUI_SLUG_DEFAULT && px >= (float)SLUG_MIN_PX);
 }
 
 int BUI_raster_gpu_attach(BuiRaster *r, void *window_handle, int wait)
@@ -2941,7 +2958,7 @@ static int gpu_text_glyphs(BuiRaster *r, TextRun *e, float x, float y, const flo
   }
   const FontSlot *fs = &g_fonts[e->font];
   const float ox = floorf(x + 0.5f), base = floorf(y + 0.5f);
-  const int slug = BUI_gpu_slug() && bui_gpu_slug_on(r->gpu);
+  const int slug = slug_for((float)fs->px) && bui_gpu_slug_on(r->gpu);
   const int passes = embolden > 0.0f ? 1 + (int)(embolden + 0.5f) : 1; /* synthetic bold */
   for (int i = 0; i < e->ng; i++) {
     const float pen = ox + e->gx[i];
