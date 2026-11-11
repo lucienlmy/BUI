@@ -33,11 +33,11 @@ typedef struct Track {
   BKEase *eases;   /* nkeys - 1 per segment, or NULL: the tween's ease */
   uint8_t *current; /* per key: the value at the start */
   int8_t *rel;     /* per key: relative to the value at the start */
-  bool instant;    /* reduced motion: it jumps to its end */
-  bool killed;     /* another motion took the property */
   BKPhysics ph;    /* physics tracks: on the value (n == 1) or on 0 .. 1 (colors) */
   float last[4];
-  bool has_last;
+  bool instant : 1;  /* reduced motion: it jumps to its end */
+  bool killed : 1;   /* another motion took the property */
+  bool has_last : 1;
 } Track;
 
 typedef struct Label {
@@ -46,21 +46,21 @@ typedef struct Label {
 } Label;
 
 struct BKMotion {
-  bool timeline, call;
+  /* state flags, one word */
+  bool timeline : 1, call : 1, paused : 1, reversed : 1, yoyo : 1, rendered : 1, started : 1, killed : 1,
+      resolved : 1;
   int refs;
-  BKMotion *parent, *prev, *next; /* in the parent's children, in order of start */
+  int run; /* in the global timeline: its index in G.run */
+  BKMotion *parent, *prev, *next; /* in a timeline's children, in order of start */
   /* time: local = anchor_local + dir * (parent_time - anchor_parent) * ts */
   double anchor_parent, anchor_local;
   double ts;
-  bool paused, reversed;
   double dur;      /* one iteration */
   int repeat;
   double rdelay;
-  bool yoyo;
   double t;        /* the total time last rendered */
   double it_time;  /* the time in its iteration then: its children's parent time */
   int iteration;
-  bool rendered, started, killed;
   BKMotionFn on;
   int events;
   void *data;
@@ -72,9 +72,8 @@ struct BKMotion {
   int kind, overwrite;
   BKSpring spring;
   BKInertia inertia;
-  Track *tracks;
+  Track *tracks; /* in the motion's own block, with their keyframes */
   int ntracks;
-  bool resolved;
   /* timeline */
   BKMotion *first, *last, *recent;
   Label *labels;
@@ -108,7 +107,11 @@ static struct {
   int ndrivers, cap_drivers;
   void (*wake)(void *data);
   void *wake_data;
-} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL};
+  /* the global timeline's motions, dense (a frame is one pass over them; one that ends is
+   * swapped with the last): no list to chase, no gaps */
+  BKMotion **run;
+  int nrun, cap_run;
+} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL, NULL, 0, 0};
 
 /* a motion runs: the host draws frames again */
 static void wake(const BKMotion *m)
@@ -209,9 +212,10 @@ int BK_anim_available(void)
   return 1;
 }
 
-static BKMotion *motion_new(const BKMotionVars *v)
+/* a motion with `extra` zeroed bytes after it (a tween's tracks and keyframes: one block) */
+static BKMotion *motion_alloc(const BKMotionVars *v, size_t extra)
 {
-  BKMotion *m = (BKMotion *)MEM_callocN(sizeof(BKMotion), "BKMotion");
+  BKMotion *m = (BKMotion *)MEM_callocN(sizeof(BKMotion) + extra, "BKMotion");
   m->refs = 1;
   m->ts = v && v->time_scale > 0.0 ? v->time_scale : 1.0;
   m->dur = v ? BK_MAX(0.0, v->duration) : 0.0;
@@ -229,20 +233,19 @@ static BKMotion *motion_new(const BKMotionVars *v)
   return m;
 }
 
+static BKMotion *motion_new(const BKMotionVars *v)
+{
+  return motion_alloc(v, 0);
+}
+
+/* the tracks live in the motion's block: they only let go of what they drive */
 static void free_tracks(BKMotion *m)
 {
   for (int i = 0; i < m->ntracks; i++) {
-    Track *t = &m->tracks[i];
-    if (!t->killed) {
+    if (!m->tracks[i].killed) {
       driver_drop(m, i);
     }
-    MEM_SAFE_FREE(t->values);
-    MEM_SAFE_FREE(t->times);
-    MEM_SAFE_FREE(t->eases);
-    MEM_SAFE_FREE(t->current);
-    MEM_SAFE_FREE(t->rel);
   }
-  MEM_SAFE_FREE(m->tracks);
 }
 
 static void detach(BKMotion *m);
@@ -612,12 +615,20 @@ static BKMotion *root(void)
 
 static void link_child(BKMotion *tl, BKMotion *c)
 {
-  /* a timeline's children in order of start (its calls and labels follow it); the global
-   * timeline's in order of arrival: thousands of motions start at once, sorting would be
-   * quadratic, and nothing there depends on the order */
+  if (tl == G.root) {
+    if (G.nrun == G.cap_run) {
+      G.cap_run = G.cap_run ? G.cap_run * 2 : 64;
+      G.run = (BKMotion **)MEM_reallocN(G.run, sizeof(BKMotion *) * (size_t)G.cap_run);
+    }
+    c->parent = tl;
+    c->run = G.nrun;
+    G.run[G.nrun++] = c;
+    return;
+  }
+  /* a timeline's children in order of start (its calls and labels follow it) */
   const double s = start_in_parent(c);
   BKMotion *after = tl->last;
-  while (after && tl != G.root && start_in_parent(after) > s) {
+  while (after && start_in_parent(after) > s) {
     after = after->prev;
   }
   c->parent = tl;
@@ -641,6 +652,14 @@ static void detach(BKMotion *m)
 {
   BKMotion *p = m->parent;
   if (!p) {
+    return;
+  }
+  if (p == G.root) { /* swap and pop */
+    BKMotion *last = G.run[--G.nrun];
+    G.run[m->run] = last;
+    last->run = m->run;
+    m->parent = NULL;
+    BK_motion_release(m); /* the global timeline's hold */
     return;
   }
   if (m->prev) {
@@ -843,22 +862,32 @@ BKMotionVars BK_motion_vars_default(void)
   return v;
 }
 
-static void *dup(const void *src, size_t size)
-{
-  if (!src) {
-    return NULL;
-  }
-  void *p = MEM_mallocN(size, "anim track data");
-  memcpy(p, src, size);
-  return p;
-}
-
 BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int ntracks,
                    const BKMotionVars *vars)
 {
   const BKMotionVars dv = BK_motion_vars_default();
   const BKMotionVars *v = vars ? vars : &dv;
-  BKMotion *m = motion_new(v);
+  ntracks = BK_MAX(0, ntracks);
+  /* the tracks' sizes: keys (gsap.to: from where it is now; gsap.from: then to where it is) */
+  size_t nfloat = 0, nease = 0, nbyte = 0;
+  for (int i = 0; i < ntracks; i++) {
+    const BKTrack *in = &tracks[i];
+    const int ink = BK_MAX(1, in->nkeys), n = BK_CLAMP(in->n, 1, 4);
+    const int nk = in->from ? ink + 1 : (in->nkeys <= 1 ? 2 : ink);
+    nfloat += (size_t)(nk * n) + (in->times && in->nkeys == nk ? (size_t)nk : 0);
+    nease += in->eases && in->nkeys == nk && nk > 1 ? (size_t)(nk - 1) : 0;
+    nbyte += (size_t)nk * (in->rel ? 2 : 1);
+  }
+  /* one block: the motion, its tracks, their floats, eases and flags (aligned in that order) */
+  const size_t off_tracks = (sizeof(BKMotion) + 7) & ~(size_t)7;
+  const size_t off_float = off_tracks + sizeof(Track) * (size_t)ntracks;
+  const size_t off_ease = off_float + sizeof(float) * nfloat;
+  const size_t off_byte = off_ease + sizeof(BKEase) * nease;
+  BKMotion *m = motion_alloc(v, off_byte + nbyte - sizeof(BKMotion));
+  char *block = (char *)m;
+  float *fp = (float *)(block + off_float);
+  BKEase *ep = (BKEase *)(block + off_ease);
+  uint8_t *bp = (uint8_t *)(block + off_byte);
   m->cls = cls;
   m->obj = obj;
   if (cls && cls->retain) {
@@ -869,51 +898,47 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
   m->spring = v->spring;
   m->inertia = v->inertia;
   m->overwrite = v->overwrite;
-  m->ntracks = BK_MAX(0, ntracks);
-  m->tracks = m->ntracks ? (Track *)MEM_callocN(sizeof(Track) * (size_t)m->ntracks, "anim tracks") : NULL;
-  for (int i = 0; i < m->ntracks; i++) {
+  m->ntracks = ntracks;
+  m->tracks = ntracks ? (Track *)(block + off_tracks) : NULL;
+  for (int i = 0; i < ntracks; i++) {
     const BKTrack *in = &tracks[i];
     Track *t = &m->tracks[i];
-    const int n = BK_CLAMP(in->n, 1, 4);
-    /* gsap.from: the given values, then where it is now */
-    const int nkeys = BK_MAX(1, in->nkeys) + (in->from ? 1 : 0);
+    const int ink = BK_MAX(1, in->nkeys), n = BK_CLAMP(in->n, 1, 4);
+    const bool to = !in->from && in->nkeys <= 1; /* gsap.to: from where it is now */
+    const int nk = in->from ? ink + 1 : (to ? 2 : ink);
+    const int at = to ? 1 : 0; /* where the given keys go */
     t->prop = in->prop;
     t->n = n;
-    t->nkeys = nkeys;
+    t->nkeys = nk;
     t->unit = in->unit;
-    t->values = (float *)MEM_callocN(sizeof(float) * (size_t)(nkeys * n), "anim values");
-    memcpy(t->values, in->values, sizeof(float) * (size_t)(BK_MAX(1, in->nkeys) * n));
-    t->current = (uint8_t *)MEM_callocN((size_t)nkeys, "anim current keys");
+    t->values = fp;
+    fp += nk * n;
+    memcpy(&t->values[at * n], in->values, sizeof(float) * (size_t)(ink * n));
+    t->current = bp;
+    bp += nk;
     if (in->current) {
-      memcpy(t->current, in->current, (size_t)BK_MAX(1, in->nkeys));
+      memcpy(&t->current[at], in->current, (size_t)ink);
+    }
+    if (to) {
+      t->current[0] = 1;
     }
     if (in->from) {
-      t->current[nkeys - 1] = 1;
+      t->current[nk - 1] = 1; /* gsap.from: then where it is now */
     }
-    else if (in->nkeys <= 1) { /* gsap.to: from where it is now */
-      t->nkeys = nkeys + 1;
-      float *values = (float *)MEM_callocN(sizeof(float) * (size_t)(t->nkeys * n), "anim values");
-      memcpy(&values[n], t->values, sizeof(float) * (size_t)n);
-      MEM_freeN(t->values);
-      t->values = values;
-      uint8_t *cur = (uint8_t *)MEM_callocN((size_t)t->nkeys, "anim current keys");
-      cur[0] = 1;
-      cur[1] = t->current[0];
-      MEM_freeN(t->current);
-      t->current = cur;
-      if (in->rel && in->rel[0]) {
-        t->rel = (int8_t *)MEM_callocN((size_t)t->nkeys, "anim rel keys");
-        t->rel[1] = in->rel[0];
-      }
+    if (in->rel) {
+      t->rel = (int8_t *)bp;
+      bp += nk;
+      memcpy(&t->rel[at], in->rel, (size_t)ink);
     }
-    if (!t->rel && in->rel) {
-      t->rel = (int8_t *)dup(in->rel, (size_t)BK_MAX(1, in->nkeys));
+    if (in->times && in->nkeys == nk) {
+      t->times = fp;
+      fp += nk;
+      memcpy(t->times, in->times, sizeof(float) * (size_t)nk);
     }
-    if (in->times && in->nkeys == t->nkeys) {
-      t->times = (float *)dup(in->times, sizeof(float) * (size_t)t->nkeys);
-    }
-    if (in->eases && in->nkeys == t->nkeys && t->nkeys > 1) {
-      t->eases = (BKEase *)dup(in->eases, sizeof(BKEase) * (size_t)(t->nkeys - 1));
+    if (in->eases && in->nkeys == nk && nk > 1) {
+      t->eases = ep;
+      ep += nk - 1;
+      memcpy(t->eases, in->eases, sizeof(BKEase) * (size_t)(nk - 1));
     }
     t->instant = G.reduced && is_layout_prop(t->prop);
   }
@@ -1173,19 +1198,22 @@ int BK_anim_tick(double now)
     return 0; /* nothing was ever started: nothing to keep */
   }
   r->t = r->it_time = G.root_time;
-  for (BKMotion *c = r->first, *next; c; c = next) {
+  for (int i = 0; i < G.nrun;) {
+    BKMotion *c = G.run[i];
     BK_motion_retain(c);
     render(c, local_at(c, G.root_time), false);
-    next = c->next;
     /* GSAP's global timeline lets go of what has finished playing */
     const double t = local_at(c, G.root_time);
     const bool over = !c->paused && (c->reversed ? t <= 0.0 : t >= BK_motion_total_duration(c));
     if (over && c->parent == r) {
-      detach(c);
+      detach(c); /* the last one takes its place: look at index i again */
+    }
+    if (i < G.nrun && G.run[i] == c) {
+      i++;
     }
     BK_motion_release(c);
   }
-  if (!r->first && G.root == r) { /* all done: the global timeline goes until the next start */
+  if (!G.nrun && G.root == r) { /* all done: the global timeline goes until the next start */
     G.root = NULL;
     BK_motion_release(r);
     return 0;
@@ -1198,8 +1226,8 @@ int BK_anim_active(void)
   if (!G.root) {
     return 0;
   }
-  for (const BKMotion *c = G.root->first; c; c = c->next) {
-    if (!c->paused) {
+  for (int i = 0; i < G.nrun; i++) {
+    if (!G.run[i]->paused) {
       return 1;
     }
   }
@@ -1239,28 +1267,35 @@ void BK_anim_set_lag_smoothing(double threshold, double adjusted)
   G.lag_adjusted = BK_MAX(0.0, adjusted);
 }
 
+/* stop tween `c`'s tracks of `obj` (`prop` < 0: all); a tween left with none stops */
+static void kill_tween(BKMotion *c, void *obj, int prop)
+{
+  if (c->obj != obj) {
+    return;
+  }
+  bool any = false;
+  for (int i = 0; i < c->ntracks; i++) {
+    Track *t = &c->tracks[i];
+    if (!t->killed && (prop < 0 || t->prop == prop)) {
+      driver_drop(c, i);
+      t->killed = true;
+    }
+    any |= !t->killed;
+  }
+  if (!any) {
+    BK_motion_kill(c);
+  }
+}
+
 static void kill_target(BKMotion *tl, void *obj, int prop)
 {
   for (BKMotion *c = tl->first, *next; c; c = next) {
     next = c->next;
     if (c->timeline) {
       kill_target(c, obj, prop);
-      continue;
     }
-    if (c->obj != obj) {
-      continue;
-    }
-    bool any = false;
-    for (int i = 0; i < c->ntracks; i++) {
-      Track *t = &c->tracks[i];
-      if (!t->killed && (prop < 0 || t->prop == prop)) {
-        driver_drop(c, i);
-        t->killed = true;
-      }
-      any |= !t->killed;
-    }
-    if (!any) {
-      BK_motion_kill(c);
+    else {
+      kill_tween(c, obj, prop);
     }
   }
 }
@@ -1286,18 +1321,34 @@ void BK_anim_kill_target(void *obj, int prop)
     }
     return;
   }
-  kill_target(G.root, obj, prop); /* every property, or motions made without overwrite */
+  /* every property, or motions made without overwrite: a walk over every motion */
+  for (int i = 0; i < G.nrun;) {
+    BKMotion *c = G.run[i];
+    BK_motion_retain(c);
+    if (c->timeline) {
+      kill_target(c, obj, prop);
+    }
+    else {
+      kill_tween(c, obj, prop);
+    }
+    if (i < G.nrun && G.run[i] == c) {
+      i++;
+    }
+    BK_motion_release(c);
+  }
 }
 
 void bk_motion_exit(void)
 {
   if (G.root) {
-    while (G.root->first) {
-      BK_motion_kill(G.root->first);
+    while (G.nrun) {
+      BK_motion_kill(G.run[G.nrun - 1]);
     }
     BK_motion_release(G.root);
     G.root = NULL;
   }
+  MEM_SAFE_FREE(G.run);
+  G.cap_run = 0;
   MEM_SAFE_FREE(G.drivers);
   G.ndrivers = G.cap_drivers = 0;
   G.root_time = G.last_now = 0.0;

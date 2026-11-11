@@ -31,6 +31,28 @@ static struct {
   int nnames, cap_names;
 } P;
 
+/* Bezier lookup tables: y at LUT_N + 1 evenly spaced x, made once per distinct curve (found
+ * again by its control points: Motion makes the same few curves for every motion). A frame
+ * then reads two samples instead of solving the cubic (error about 1e-5). */
+#define LUT_N 256
+static struct {
+  struct Lut { float p[4]; float *y; } *l;
+  int n, cap;
+} L;
+
+static float lut_eval(const float *y, float t);
+
+/* 2^x without a library call (expo eases, every frame): the power of two in the exponent
+ * bits, 2^fraction from a polynomial (relative error about 2e-7). x in -126 .. 126. */
+static inline float fast_exp2(float x)
+{
+  x = BK_CLAMP(x, -126.0f, 126.0f);
+  const float fi = floorf(x), f = x - fi;
+  const float p = 1.0f + f * (0.6931472f + f * (0.2402265f + f * (0.0555041f + f * (0.0096181f + f * 0.0013334f))));
+  union { uint32_t u; float f; } b = {(uint32_t)((int)fi + 127) << 23};
+  return b.f * p;
+}
+
 static int pool_add(float *xy, int n, const BKEase *inner)
 {
   if (P.n == P.cap) {
@@ -52,6 +74,11 @@ void bk_ease_exit(void)
   MEM_SAFE_FREE(P.t);
   MEM_SAFE_FREE(P.names);
   memset(&P, 0, sizeof(P));
+  for (int i = 0; i < L.n; i++) {
+    MEM_freeN(L.l[i].y);
+  }
+  MEM_SAFE_FREE(L.l);
+  memset(&L, 0, sizeof(L));
 }
 
 static float table_eval(const Table *tb, float x)
@@ -181,12 +208,21 @@ static float motion_back_in(float t)
 static float base_in(const BKEase *e, float t)
 {
   switch (e->kind) {
-    case BK_EASE_POWER:
-      return powf(t, e->p[0]);
+    case BK_EASE_POWER: { /* GSAP's are whole powers (quad .. quint): multiplied, not powf */
+      const int k = (int)e->p[0];
+      if ((float)k != e->p[0] || k < 1 || k > 8) {
+        return powf(t, e->p[0]);
+      }
+      float r = t;
+      for (int i = 1; i < k; i++) {
+        r *= t;
+      }
+      return r;
+    }
     case BK_EASE_SINE:
       return 1.0f - cosf(t * PI_F * 0.5f);
     case BK_EASE_EXPO:
-      return t <= 0.0f ? 0.0f : powf(2.0f, 10.0f * (t - 1.0f));
+      return t <= 0.0f ? 0.0f : fast_exp2(10.0f * (t - 1.0f));
     case BK_EASE_CIRC:
       return 1.0f - sqrtf(BK_MAX(0.0f, 1.0f - t * t));
     case BK_EASE_BACK: {
@@ -214,7 +250,11 @@ float BK_ease_eval(const BKEase *e, float t)
     case BK_EASE_LINEAR:
       return t;
     case BK_EASE_BEZIER:
-      return t <= 0.0f || t >= 1.0f ? t : bezier(e->p, t);
+      if (t <= 0.0f || t >= 1.0f) {
+        return t;
+      }
+      /* a table from before BK_anim_exit, or none: solve */
+      return e->table && e->table <= L.n ? lut_eval(L.l[e->table - 1].y, t) : bezier(e->p, t);
     case BK_EASE_STEPS:
       return steps(e->p, t);
     case BK_EASE_TABLE:
@@ -246,9 +286,42 @@ float BK_ease_eval(const BKEase *e, float t)
   }
 }
 
+static int bezier_lut(const float p[4])
+{
+  for (int i = 0; i < L.n; i++) {
+    if (memcmp(L.l[i].p, p, sizeof(float[4])) == 0) {
+      return i + 1;
+    }
+  }
+  if (L.n >= 0xffff) {
+    return 0; /* solve instead */
+  }
+  if (L.n == L.cap) {
+    L.cap = L.cap ? L.cap * 2 : 8;
+    L.l = (struct Lut *)MEM_reallocN(L.l, sizeof(*L.l) * (size_t)L.cap);
+  }
+  struct Lut *lut = &L.l[L.n++];
+  memcpy(lut->p, p, sizeof(float[4]));
+  lut->y = (float *)MEM_mallocN(sizeof(float) * (LUT_N + 1), "bezier lut");
+  for (int i = 0; i <= LUT_N; i++) {
+    const float x = (float)i / LUT_N;
+    lut->y[i] = i == 0 ? 0.0f : i == LUT_N ? 1.0f : bezier(p, x);
+  }
+  return L.n;
+}
+
+static float lut_eval(const float *y, float t)
+{
+  const float f = t * LUT_N;
+  const int i = (int)f; /* t in (0, 1): 0 .. LUT_N - 1 */
+  return y[i] + (y[i + 1] - y[i]) * (f - (float)i);
+}
+
 BKEase BK_ease_bezier(float x1, float y1, float x2, float y2)
 {
-  return (BKEase){BK_EASE_BEZIER, BK_EASE_AS_IS, 0, {BK_CLAMP(x1, 0.0f, 1.0f), y1, BK_CLAMP(x2, 0.0f, 1.0f), y2}};
+  BKEase e = {BK_EASE_BEZIER, BK_EASE_AS_IS, 0, {BK_CLAMP(x1, 0.0f, 1.0f), y1, BK_CLAMP(x2, 0.0f, 1.0f), y2}};
+  e.table = (uint16_t)bezier_lut(e.p);
+  return e;
 }
 
 /** \} */
