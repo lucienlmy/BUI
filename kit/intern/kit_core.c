@@ -2230,7 +2230,9 @@ int BK_render(BKContext *ctx, BuiRaster *r, int w, int h, int full)
   bk_image_tick(); /* animated images whose next frame is due */
   bk_draw.r = r;
   ctx->raster = r;
-  BK_anim_tick(bk_time()); /* motions write their values (nodes damage themselves) */
+  if (!BK_anim_host_clock()) {
+    BK_anim_tick(bk_time()); /* motions write their values (nodes damage themselves) */
+  }
   anim_step(ctx);
   if (w != ctx->win_w || h != ctx->win_h || BUI_raster_width(r) != w ||
       BUI_raster_height(r) != h)

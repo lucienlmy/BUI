@@ -331,7 +331,7 @@ static void test_timelines(void)
   BK_timeline_label(tl, "mid", ">");                       /* where b ends: 1.5 */
   CHECK(NEAR(BK_timeline_label_time(tl, "mid"), 1.5, 1e-9));
   CHECK(NEAR(BK_timeline_add(tl, tc, "mid+=0.25"), 1.75, 1e-9));
-  BK_timeline_call(tl, on_call, NULL, "mid");
+  BK_timeline_call(tl, on_call, NULL, NULL, "mid");
   CHECK(NEAR(BK_motion_duration(tl), 2.75, 1e-9));
   BK_motion_release(ta);
   BK_motion_release(tb);

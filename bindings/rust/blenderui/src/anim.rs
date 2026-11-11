@@ -902,6 +902,50 @@ fn set(f: Field, c: &mut Computed, v: Val) {
     }
 }
 
+/// A field as numbers (Motion / GSAP values): lengths in px (percentages as
+/// they are, `percent` set), numbers, colors as 4. None for anything else.
+pub(crate) fn field_numbers(f: Field, c: &Computed, u: &Units) -> Option<([f32; 4], usize, bool)> {
+    let one = |v: f32| Some(([v, 0.0, 0.0, 0.0], 1, false));
+    let compact = |x: CompactLength| match x.tag() {
+        CompactLength::LENGTH_TAG => one(x.value()),
+        CompactLength::PERCENT_TAG => Some(([x.value() * 100.0, 0.0, 0.0, 0.0], 1, true)),
+        _ => None,
+    };
+    match get(f, c)? {
+        Val::Dim(d) => compact(d.into_raw()),
+        Val::Lpa(d) => compact(d.into_raw()),
+        Val::Lp(d) => compact(d.into_raw()),
+        Val::Num(n) => one(n),
+        Val::Int(n) => one(n as f32),
+        Val::Len(l) => one(l.to_px(u)?),
+        Val::Color(x) | Val::OptColor(Some(x)) => Some(([x.r, x.g, x.b, x.a], 4, false)),
+        _ => None,
+    }
+}
+
+/// Write numbers to a field in the shape it has (the inverse of [`field_numbers`]).
+pub(crate) fn set_field_numbers(f: Field, c: &mut Computed, v: &[f32], percent: bool) {
+    let Some(shape) = get(f, c) else { return };
+    let x = v.first().copied().unwrap_or(0.0);
+    let val = match shape {
+        Val::Dim(_) if percent => Val::Dim(Dimension::percent(x / 100.0)),
+        Val::Dim(_) => Val::Dim(Dimension::length(x)),
+        Val::Lpa(_) if percent => Val::Lpa(LengthPercentageAuto::percent(x / 100.0)),
+        Val::Lpa(_) => Val::Lpa(LengthPercentageAuto::length(x)),
+        Val::Lp(_) if percent => Val::Lp(LengthPercentage::percent(x / 100.0)),
+        Val::Lp(_) => Val::Lp(LengthPercentage::length(x)),
+        Val::Num(_) => Val::Num(x),
+        Val::Int(_) => Val::Int(x.round() as i32),
+        Val::Len(_) => Val::Len(if percent { Length::Percent(x) } else { Length::Px(x) }),
+        Val::Color(_) | Val::OptColor(_) if v.len() >= 4 => {
+            let rgba = Rgba { r: v[0], g: v[1], b: v[2], a: v[3] };
+            if matches!(shape, Val::Color(_)) { Val::Color(rgba) } else { Val::OptColor(Some(rgba)) }
+        }
+        _ => return,
+    };
+    set(f, c, val);
+}
+
 fn mix(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
@@ -1192,6 +1236,9 @@ pub(crate) struct Env<'a> {
     pub media: &'a [bool],
     /// Properties set by `!important` declarations on the element.
     pub important: &'a [Prop],
+    /// Motion's props on the element, and the states its `while*` follow.
+    pub motion: Option<&'a crate::motion::Spec>,
+    pub gestures: crate::motion::Gestures,
 }
 
 /// Animation and transition state of a window's elements, by element key.
@@ -1202,6 +1249,8 @@ pub(crate) struct Animations {
     els: KeyMap<u64, ElState>,
     /// Something is moving: render another frame.
     running: bool,
+    /// Motion's elements (`<motion.div>`), moved by the animation engine.
+    motion: crate::motion::Elements,
 }
 
 impl Animations {
@@ -1210,6 +1259,8 @@ impl Animations {
         self.now = now;
         self.frame += 1;
         self.running = false;
+        self.motion.begin();
+        crate::motion::tick(now);
     }
 
     /// After a layout: forget elements that are gone (or lost their
@@ -1217,6 +1268,8 @@ impl Animations {
     pub(crate) fn end(&mut self) -> bool {
         let frame = self.frame;
         self.els.retain(|_, e| e.seen == frame);
+        self.motion.end();
+        self.running |= crate::motion::active();
         self.running
     }
 
@@ -1227,12 +1280,12 @@ impl Animations {
 
     /// Whether any element has animation state (time passing may matter).
     pub(crate) fn any(&self) -> bool {
-        !self.els.is_empty()
+        !self.els.is_empty() || crate::motion::active()
     }
 
     /// Whether element `key` with cascaded style `base` needs [`apply`](Self::apply).
     pub(crate) fn wants(&self, key: u64, base: &Computed) -> bool {
-        base.anim.is_some() || (!self.els.is_empty() && self.els.contains_key(&key))
+        base.anim.is_some() || (!self.els.is_empty() && self.els.contains_key(&key)) || self.motion.has(key)
     }
 
     /// The animated style of element `key` whose cascaded style is `base`
@@ -1241,7 +1294,7 @@ impl Animations {
         let spec = base.anim.as_deref().filter(|s| s.has_animations() || s.has_transitions());
         if spec.is_none() && !self.els.get(&key).is_some_and(|e| !e.transitions.is_empty()) {
             self.els.remove(&key);
-            return None;
+            return self.apply_motion(key, base, env, None);
         }
         let (now, frame) = (self.now, self.frame);
         let st = self.els.entry(key).or_default();
@@ -1358,6 +1411,19 @@ impl Animations {
             self.els.remove(&key);
         }
         self.running |= running;
+        self.apply_motion(key, base, env, out)
+    }
+
+    /// Motion's values on top of the CSS animations (`out`: their result).
+    fn apply_motion(&mut self, key: u64, base: &Computed, env: &Env, mut out: Option<Computed>) -> Option<Computed> {
+        if let Some(spec) = env.motion {
+            let u = Units { font_size: base.font_size, viewport: env.viewport };
+            let start = out.take();
+            let from = start.as_ref().unwrap_or(base);
+            let mut moved = None;
+            self.motion.apply(key, spec, from, env.gestures, &u, &mut moved);
+            out = moved.or(start);
+        }
         out
     }
 }

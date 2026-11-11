@@ -64,6 +64,7 @@ struct BKMotion {
   BKMotionFn on;
   int events;
   void *data;
+  void (*free_data)(void *data);
   /* tween */
   const BKAnimClass *cls;
   void *obj;
@@ -102,12 +103,12 @@ static struct {
   bool ticked;
   double time_scale;
   double lag_threshold, lag_adjusted;
-  bool reduced;
+  bool reduced, host_clock;
   Driver *drivers; /* open addressing; obj NULL = empty, (void*)1 = deleted */
   int ndrivers, cap_drivers;
   void (*wake)(void *data);
   void *wake_data;
-} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, NULL, 0, 0, NULL, NULL};
+} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL};
 
 /* a motion runs: the host draws frames again */
 static void wake(const BKMotion *m)
@@ -223,6 +224,7 @@ static BKMotion *motion_new(const BKMotionVars *v)
     m->on = v->on;
     m->events = v->events;
     m->data = v->data;
+    m->free_data = v->free_data;
   }
   return m;
 }
@@ -261,6 +263,9 @@ static void motion_free(BKMotion *m)
     MEM_freeN(m->labels[i].name);
   }
   MEM_SAFE_FREE(m->labels);
+  if (m->free_data) {
+    m->free_data(m->call ? m->fn_data : m->data);
+  }
   MEM_freeN(m);
 }
 
@@ -792,15 +797,20 @@ double BK_timeline_label(BKMotion *tl, const char *name, const char *pos)
   return tl && name ? label_add(tl, name, position(tl, pos)) : 0.0;
 }
 
-double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, const char *pos)
+double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, void (*free_data)(void *data),
+                        const char *pos)
 {
   if (!tl || !fn) {
+    if (free_data && data) {
+      free_data(data);
+    }
     return 0.0;
   }
   BKMotion *c = motion_new(NULL);
   c->call = true;
   c->fn = fn;
   c->fn_data = data;
+  c->free_data = free_data;
   const double at = BK_timeline_add(tl, c, pos);
   BK_motion_release(c); /* the timeline holds it */
   return at;
@@ -1186,6 +1196,16 @@ int BK_anim_active(void)
     }
   }
   return 0;
+}
+
+void BK_anim_set_host_clock(int on)
+{
+  G.host_clock = on != 0;
+}
+
+int BK_anim_host_clock(void)
+{
+  return G.host_clock;
 }
 
 void BK_anim_set_reduced_motion(int on)

@@ -210,6 +210,7 @@ typedef struct BKMotionVars {
   BKMotionFn on;        /* events in `events` */
   int events;
   void *data;
+  void (*free_data)(void *data); /* optional: frees `data` with the motion (bindings' closures) */
 } BKMotionVars;
 
 BKMotionVars BK_motion_vars_default(void);
@@ -227,7 +228,8 @@ BKMotion *BK_timeline(const BKMotionVars *vars);
 double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *position);
 /* A label at `position`; and a callback there (gsap's call()). */
 double BK_timeline_label(BKMotion *tl, const char *name, const char *position);
-double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, const char *position);
+double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, void (*free_data)(void *data),
+                        const char *position);
 double BK_timeline_label_time(const BKMotion *tl, const char *name); /* < 0: none */
 
 /* GSAP's stagger: the start offsets of `count` targets (seconds). `from`: "start", "center",
@@ -274,6 +276,11 @@ void BK_motion_release(BKMotion *m);
  * with the same `now` does nothing. */
 int BK_anim_tick(double now);
 int BK_anim_active(void);
+/* Who ticks the clock: the kit's frames (BK_render, with the kit's clock; the default), or
+ * (on) a host with a clock of its own that calls BK_anim_tick itself (Rust's windows, whose
+ * headless clock is virtual): two clocks would fight. */
+void BK_anim_set_host_clock(int on);
+int BK_anim_host_clock(void);
 /* Reduced motion (Motion's reducedMotion "always", the OS setting): transforms and layout
  * jump to their end; opacity and colors still animate. */
 void BK_anim_set_reduced_motion(int on);

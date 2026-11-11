@@ -87,6 +87,8 @@ pub use blenderui_macros::tw;
 /// become HTML attributes. Components: `<Card title="x">..</Card>` builds
 /// `Card { title: "x".into(), children: vec![..] }`.
 pub use blenderui_macros::rsx;
+/// A GSAP vars / Motion target object (`vars!{ x: 100, duration: 1, ease: "power2.out" }`).
+pub use blenderui_macros::vars;
 /// [`rsx!`] under its zopra / Leptos name.
 pub use blenderui_macros::rsx as view;
 
@@ -95,6 +97,7 @@ pub use blenderui_macros::rsx as view;
 pub use blenderui_macros::Props;
 
 pub mod anim;
+pub mod motion;
 pub mod calc;
 pub mod components;
 pub mod effects;

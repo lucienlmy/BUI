@@ -15,6 +15,9 @@
 //! | `{if c { <a/> } else { .. }}`  | `.children(if c { Some(..) } else { .. })` |
 //! | `{match v { p => <a/>, .. }}`  | `.child(match v { p => .., .. })`         |
 //! | `<>..</>`                      | `display: contents` wrapper               |
+//! | `<motion.div ..>`              | `html::div()`: every element takes Motion's props |
+//! | `animate={{ x: 100 }}`         | `.animate(vars!{ x: 100 })` (`{{ }}`: a vars object) |
+//! | `animate="visible"`            | `.animate("visible")` (a variant; also initial, exit, while*) |
 
 use proc_macro::{Delimiter, Group, Spacing, TokenStream, TokenTree};
 
@@ -178,6 +181,13 @@ impl P<'_> {
                     want_piece = true;
                     continue;
                 }
+                // `motion.div`: Motion's elements
+                Some(TokenTree::Punct(p)) if p.as_char() == '.' && s == "motion" && !want_piece => {
+                    s.push('.');
+                    self.i += 1;
+                    want_piece = true;
+                    continue;
+                }
                 Some(TokenTree::Punct(p)) if p.as_char() == ':' && s.ends_with('*') => {
                     s.push(':');
                     self.i += 1;
@@ -203,7 +213,9 @@ impl P<'_> {
             let kids = self.children_until("")?;
             return Ok(fragment(kids));
         }
-        let tag = self.name()?;
+        let written = self.name()?;
+        // `<motion.div>` is `<div>`: every element takes Motion's props
+        let tag = written.strip_prefix("motion.").unwrap_or(&written).to_string();
         // Blender's widget components (`<Button>`, `<NumberSlider>` ...) are
         // elements: their attributes work like on any HTML element
         let blender = BLENDER_COMPONENTS.contains(&tag.as_str());
@@ -252,7 +264,7 @@ impl P<'_> {
                         self.i += 1;
                         match self.peek() {
                             Some(t @ (TokenTree::Literal(_) | TokenTree::Group(_))) => {
-                                let t = t.clone();
+                                let t = vars_object(t)?;
                                 self.i += 1;
                                 Some(t)
                             }
@@ -292,7 +304,7 @@ impl P<'_> {
         if !classes.is_empty() {
             base.extend(ts(&format!(".class({:?})", classes.join(" "))));
         }
-        let kids = self.children_until(&tag)?;
+        let kids = self.children_until(&written)?;
         if component {
             return Ok(component_expr(&tag, fields, kids, key));
         }
@@ -508,7 +520,29 @@ fn bare(name: &str) -> R<Option<String>> {
 }
 
 /// One attribute on an HTML element.
+/// `{{ x: 100 }}`: a vars object (`vars!`); anything else as it is.
+fn vars_object(t: &TokenTree) -> R<TokenTree> {
+    if let TokenTree::Group(g) = t {
+        let inner: Vec<TokenTree> = g.stream().into_iter().collect();
+        if let (Delimiter::Brace, [TokenTree::Group(o)]) = (g.delimiter(), inner.as_slice()) {
+            if o.delimiter() == Delimiter::Brace {
+                return Ok(TokenTree::Group(Group::new(Delimiter::Brace, crate::vars::object(o.stream())?)));
+            }
+        }
+    }
+    Ok(t.clone())
+}
+
+/// Motion's props that take a variant's name as a string.
+const MOTION_TARGETS: &[&str] = &["initial", "animate", "exit", "whileHover", "whileTap", "whileFocus",
+                                  "whileInView", "whileDrag"];
+
 fn attribute(name: &str, value: Option<TokenTree>) -> R<TokenStream> {
+    if let (true, Some(TokenTree::Literal(l))) = (MOTION_TARGETS.contains(&name), &value) {
+        let mut out = ts(&format!(".{}", method_name(name)));
+        out.extend([TokenTree::Group(Group::new(Delimiter::Parenthesis, TokenStream::from(TokenTree::Literal(l.clone()))))]);
+        return Ok(out);
+    }
     let ns = name.split(':').next().unwrap_or("");
     if name.contains(':') && !matches!(ns, "xlink" | "xml" | "xmlns") {
         return variant_attribute(name, value);

@@ -7,6 +7,9 @@
 
 use std::os::raw::{c_char, c_double, c_float, c_int, c_uchar, c_void};
 
+mod anim;
+pub use anim::*;
+
 /// A kit node (widget, frame, canvas ...).
 #[repr(C)]
 pub struct BKNode {

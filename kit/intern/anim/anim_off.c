@@ -29,11 +29,11 @@ const char *BK_anim_prop_name(int prop) { (void)prop; return NULL; }
 int BK_anim_parse_value(const char *text, float r_value[4], int *r_unit, int *r_rel) { (void)text; (void)r_value; *r_unit = 0; *r_rel = 0; return 0; }
 
 BKMotionVars BK_motion_vars_default(void) { BKMotionVars v; memset(&v, 0, sizeof(v)); return v; }
-BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int ntracks, const BKMotionVars *vars) { (void)cls; (void)obj; (void)tracks; (void)ntracks; (void)vars; return NULL; }
-BKMotion *BK_timeline(const BKMotionVars *vars) { (void)vars; return NULL; }
+BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int ntracks, const BKMotionVars *vars) { (void)cls; (void)obj; (void)tracks; (void)ntracks; if (vars && vars->free_data && vars->data) vars->free_data(vars->data); return NULL; }
+BKMotion *BK_timeline(const BKMotionVars *vars) { if (vars && vars->free_data && vars->data) vars->free_data(vars->data); return NULL; }
 double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *position) { (void)tl; (void)child; (void)position; return 0.0; }
 double BK_timeline_label(BKMotion *tl, const char *name, const char *position) { (void)tl; (void)name; (void)position; return 0.0; }
-double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, const char *position) { (void)tl; (void)fn; (void)data; (void)position; return 0.0; }
+double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, void (*free_data)(void *data), const char *position) { (void)tl; (void)fn; (void)position; if (free_data && data) free_data(data); return 0.0; }
 double BK_timeline_label_time(const BKMotion *tl, const char *name) { (void)tl; (void)name; return -1.0; }
 void BK_stagger(const BKStagger *s, int count, double *r_offsets) { (void)s; for (int i = 0; i < count; i++) r_offsets[i] = 0.0; }
 
@@ -69,5 +69,7 @@ void BK_anim_set_time_scale(double scale) { (void)scale; }
 void BK_anim_set_lag_smoothing(double threshold, double adjusted) { (void)threshold; (void)adjusted; }
 void BK_anim_kill_target(void *obj, int prop) { (void)obj; (void)prop; }
 void BK_anim_exit(void) {}
+void BK_anim_set_host_clock(int on) { (void)on; }
+int BK_anim_host_clock(void) { return 0; }
 void BK_anim_set_wake(void (*wake)(void *data), void *data) { (void)wake; (void)data; }
 const BKAnimClass BK_anim_node = {NULL, NULL, NULL, NULL};
