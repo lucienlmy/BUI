@@ -45,7 +45,7 @@ impl Render for Scene {
                     .text_size(px(font))
                     .text_color(rgb(0xffffff))
                     .child(measure::cell_label(i, cfg.t_for(i, t)));
-                if !cfg.motion {
+                if !cfg.animates(i) {
                     return cell.into_any_element();
                 }
                 // colour and opacity, there and back, eased, forever (gpui has no

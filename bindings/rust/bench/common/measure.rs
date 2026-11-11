@@ -33,6 +33,9 @@ pub struct Config {
     /// the framework's own animation system (gpui's `with_animation`,
     /// blenderui's `<motion.div>`): no frame-by-frame code in the app.
     pub motion: bool,
+    /// `--mode spin`: the same loop on one cell, the rest still (a spinner in
+    /// a big UI: what a frame costs when little moves).
+    pub spin: bool,
     pub warmup: f64,
     pub seconds: f64,
     pub width: f32,
@@ -51,6 +54,7 @@ impl Config {
             animate: matches!(get("--mode", "anim").as_str(), "anim" | "one"),
             one: get("--mode", "anim") == "one",
             motion: get("--mode", "anim") == "motion",
+            spin: get("--mode", "anim") == "spin",
             warmup: get("--warmup", "3").parse().unwrap(),
             seconds: get("--seconds", "10").parse().unwrap(),
             width: 1000.0,
@@ -255,6 +259,13 @@ mod platform {
 pub const MOTION_FROM: u32 = 0x4772b3;
 pub const MOTION_TO: u32 = 0xe06c75;
 pub const MOTION_SECONDS: f32 = 1.0;
+/// Whether cell `i` animates through the framework (`motion`: all; `spin`: the first).
+impl Config {
+    pub fn animates(&self, i: usize) -> bool {
+        self.motion || (self.spin && i == 0)
+    }
+}
+
 /// A cell's start offset in the loop (so the cells aren't in step).
 pub fn motion_offset(i: usize) -> f32 {
     (i % 17) as f32 / 17.0
@@ -263,7 +274,7 @@ pub fn motion_offset(i: usize) -> f32 {
 /// Start the measuring thread. `name` labels the JSON line.
 pub fn start(name: &'static str, cfg: &Config) {
     let (warmup, secs, cells, animate) = (cfg.warmup, cfg.seconds, cfg.cells, cfg.animate);
-    let mode = if cfg.motion { "motion" } else if cfg.one { "one" } else if animate { "anim" } else { "idle" };
+    let mode = if cfg.spin { "spin" } else if cfg.motion { "motion" } else if cfg.one { "one" } else if animate { "anim" } else { "idle" };
     let launched = Instant::now();
     std::thread::spawn(move || {
         // time to first frame
