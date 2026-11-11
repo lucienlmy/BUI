@@ -18,6 +18,7 @@ static const char *g_numeric_keys[] = {
   "rows", "cols", "wrap", "readonly", "password",
   "x", "y", "w", "h",
   "html", "editable",
+  "weight", "scroll", "tile", "current", "default",
   NULL
 };
 
@@ -529,6 +530,7 @@ BUI_LUA_ENTRY int luaopen_bui(lua_State *L) {
   /* Module table */
   lua_newtable(L);
   luaL_setfuncs(L, bui_module, 0);
+  luabui_register_anim(L);
 
   /* Version constants */
   lua_pushstring(L, BUI_KIT_VERSION_STRING); lua_setfield(L, -2, "KIT_VERSION");

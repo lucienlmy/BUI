@@ -92,7 +92,8 @@ set(LUABUI_SRC
     src/bui_node.c
     src/bui_context.c
     src/bui_window.c
-    src/bui_image.c)
+    src/bui_image.c
+    src/bui_anim.c)
 
 set(LUABUI_LIBS ${LUA_TARGET} linenoise bui::kit bui::gpu bui::core bui_api)
 
@@ -154,6 +155,11 @@ if(BUI_BUILD_TESTS)
     COMMAND bui-lua ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_theme.lua
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
   set_tests_properties(bui_lua_theme PROPERTIES TIMEOUT 30)
+
+  add_test(NAME bui_lua_anim
+    COMMAND bui-lua ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_anim.lua
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  set_tests_properties(bui_lua_anim PROPERTIES TIMEOUT 30)
 
   # the loadable module: Lua looks for luaopen__bui in _bui.dll / _bui.so
   add_test(NAME bui_lua_module

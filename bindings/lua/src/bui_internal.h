@@ -120,6 +120,13 @@ extern int luabui_host_requested;
 
 void luabui_init_host_callbacks(lua_State *L, BKContext *ctx);
 
+/* A callback's error (on top of the stack) to stderr, popped: errors never unwind through
+ * the kit. */
+void luabui_report_error(lua_State *L);
+
+/* bui.gsap and bui.motion (bui_anim.c) into the module table on top of the stack. */
+void luabui_register_anim(lua_State *L);
+
 /* Install the engine ref hooks against this state (called from luaopen). */
 void luabui_set_ref_state(lua_State *L);
 
