@@ -277,6 +277,9 @@ pub(crate) struct Slot {
     node: usize,
     base: Option<Box<Computed>>,
     layout: bool,
+    /// what its values touch (a redraw skips the rest): x / y, opacity / visibility
+    moves: bool,
+    fades: bool,
     bound: SmallVec<[(i32, super::MotionValue); 2]>,
 }
 
@@ -558,6 +561,8 @@ impl Elements {
         // what a redraw needs (a frame with nothing but moving values)
         s.node = node;
         s.layout = s.props.iter().any(|p| p.cur.is_some() && !paint_only(p));
+        s.moves = s.props.iter().any(|p| matches!(p.id, sys::BK_PROP_X | sys::BK_PROP_Y));
+        s.fades = s.props.iter().any(|p| p.id == sys::BK_PROP_OPACITY || p.fields.contains(&Field::Visibility));
         s.bound.clear();
         if let Some(style) = spec.style() {
             s.bound.extend(style.props.iter().filter_map(|(k, v)| match v {
@@ -612,7 +617,8 @@ impl Elements {
             let st = styles.private_mut(n.style);
             let u = Units { font_size: base.font_size, viewport };
             let (w, h) = (n.bounds.size.width, n.bounds.size.height);
-            let before = (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
+            let at = |st: &Computed| (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
+            let before = if s.moves { at(st) } else { (0.0, 0.0) };
             // back to the base where the values go (not the whole style: a few fields)
             let mut transforms = false;
             for p in &s.props {
@@ -624,10 +630,10 @@ impl Elements {
             for p in &s.props {
                 if let Some(r) = p.cur {
                     write(p, &r, st, &u);
-                    faded |= p.id == sys::BK_PROP_OPACITY || p.fields.iter().any(|f| matches!(f, Field::Visibility));
                 }
             }
-            let after = (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
+            faded |= s.fades;
+            let after = if s.moves { at(st) } else { (0.0, 0.0) };
             if before != after {
                 self.shift.resize(nodes.len(), (0.0, 0.0));
                 self.shift[s.node] = (after.0 - before.0, after.1 - before.1);
