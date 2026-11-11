@@ -90,6 +90,29 @@ one beside React's original, in development and production builds and under
 StrictMode. It fails when a React release adds a hook this package doesn't
 cover yet.
 
+## Motion
+
+`@blender-ui/react/motion` is Motion for React's API on BUI's animation
+engine (Rust and C; nothing runs per frame in JavaScript):
+
+```jsx
+import { motion, useMotionValue, useSpring, useTransform } from '@blender-ui/react/motion'
+
+<motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+            whileHover={{ scale: 1.05 }} transition={{ type: 'spring', stiffness: 400 }} />
+```
+
+- **`motion.div`, `motion.span` ...** are the host elements (every element
+  takes Motion's props: `initial`, `animate`, `exit`, `whileHover`,
+  `whileTap`, `whileFocus`, `transition`, `variants`); `motion.Button`,
+  `motion.NumberSlider` ... are Blender's widgets; `motion.create(C)` is `C`.
+- **Motion values:** `useMotionValue`, `useSpring`, `useTransform`,
+  `useMotionValueEvent`; `style={{ width: mv }}` follows a value without
+  re-rendering.
+- **Functions:** `animate`, `stagger`, `motionValue`; GSAP's API is
+  `@blender-ui/native/gsap`.
+- Not there yet: `AnimatePresence`, `whileInView`, `drag`, `layout`.
+
 ## The renderer
 
 - **Host components are HTML elements.** `className` takes Tailwind classes,

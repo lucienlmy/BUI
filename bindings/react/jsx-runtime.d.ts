@@ -1,7 +1,8 @@
 // With `"jsxImportSource": "@blender-ui/react"` in tsconfig, host elements'
-// props accept signals: `<div style={styleMemo} className={cls}>`.
+// props accept signals: `<div style={styleMemo} className={cls}>`, and
+// Motion's props (`<motion.div animate={{ x: 100 }}>`, any element).
 import type * as React from 'react'
-import type { ReadSignal } from '@blender-ui/native'
+import type { ReadSignal, MotionProps } from '@blender-ui/native'
 export { Fragment, jsx, jsxs } from 'react/jsx-runtime'
 
 type Fixed = 'children' | 'key' | 'ref' | 'dangerouslySetInnerHTML'
@@ -11,7 +12,7 @@ export type Bindable<P> = {
     : K extends 'style' ? P[K] | string | ReadSignal<Exclude<P[K], undefined> | string>
     : P[K] | ReadSignal<Exclude<P[K], undefined>>
 }
-type Intrinsic = { [K in keyof React.JSX.IntrinsicElements]: Bindable<React.JSX.IntrinsicElements[K]> }
+type Intrinsic = { [K in keyof React.JSX.IntrinsicElements]: Bindable<Omit<React.JSX.IntrinsicElements[K], keyof MotionProps>> & MotionProps }
 
 export namespace JSX {
   type ElementType = React.JSX.ElementType
