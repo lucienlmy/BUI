@@ -23,6 +23,7 @@
 mod ease;
 mod element;
 mod pending;
+mod presence;
 mod spec;
 mod styling;
 mod motion_value;
@@ -31,7 +32,8 @@ mod value;
 mod vars;
 
 pub use ease::{Ease, ease};
-pub use spec::{Spec, Target, Variants, When};
+pub use presence::presence;
+pub use spec::{Drag, InView, Layout, Spec, Target, Variants, When};
 pub(crate) use element::{Elements, Gestures};
 pub(crate) use pending::{end_pending, pending};
 pub use motion_value::{MotionValue, use_motion_value, use_spring, use_transform, use_velocity};

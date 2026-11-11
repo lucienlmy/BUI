@@ -1292,6 +1292,11 @@ impl Animations {
         self.motion.redraw(frame, styles, viewport)
     }
 
+    /// After a layout: Motion's in-view states; true when one changed.
+    pub(crate) fn after_layout(&mut self, frame: &crate::layout::Frame, viewport: (f32, f32)) -> bool {
+        self.motion.after_layout(frame, viewport)
+    }
+
     /// The boxes the last redraw changed (lend the list; give it back after).
     pub(crate) fn take_redrawn(&mut self) -> Vec<bool> {
         self.motion.take_dirty()

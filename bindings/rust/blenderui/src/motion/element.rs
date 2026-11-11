@@ -31,6 +31,7 @@ pub(crate) struct Gestures {
     pub hover: bool,
     pub tap: bool,
     pub focus: bool,
+    pub drag: bool,
 }
 
 /// One animated property of an element.
@@ -65,6 +66,33 @@ pub(crate) struct Slot {
     moves: bool,
     fades: bool,
     bound: SmallVec<[(i32, super::MotionValue); 2]>,
+    /// what few elements use (in view, exiting): out of the way of the rest
+    gest: Option<Box<Gest>>,
+}
+
+/// A slot's rarer state.
+#[derive(Default)]
+struct Gest {
+    /// `whileInView`: wanted, when it counts, and whether it is (last layout)
+    view: Option<super::spec::InView>,
+    in_view: bool,
+    /// the presence taking it away (0: none), its exit motions (one handle
+    /// each, to see them end), and whether their end was told
+    exiting: u64,
+    exit_motions: SmallVec<[*mut sys::BKMotion; 2]>,
+    exit_told: bool,
+}
+
+impl Gest {
+    /// Let go of the exit motions' handles (the element stays, or goes).
+    fn end_exit(&mut self) {
+        for m in self.exit_motions.drain(..) {
+            // SAFETY: the handle taken when it started
+            unsafe { sys::BK_motion_release(m) };
+        }
+        self.exiting = 0;
+        self.exit_told = false;
+    }
 }
 
 impl Slot {
@@ -142,6 +170,9 @@ impl Arena {
             // object's motions would be a walk over every motion)
             unsafe { sys::BK_anim_kill_target(obj, p.id) };
         }
+        if let Some(g) = &mut self.at(i).gest {
+            g.end_exit();
+        }
         *self.at(i) = Slot::default();
         self.keys.remove(&key);
         self.live.swap_remove(live as usize);
@@ -161,6 +192,8 @@ pub(crate) struct Elements {
     shift: Vec<(f32, f32)>,
     /// the boxes a redraw changed (its elements and everything under them)
     dirty: Vec<bool>,
+    /// a slot may be exiting (frames look for exits that ended)
+    exits: bool,
 }
 
 impl Drop for Elements {
@@ -182,6 +215,66 @@ impl Elements {
 
     pub(crate) fn begin(&mut self) {
         self.frame += 1;
+    }
+
+    /// Exits that ended (every element a presence takes away has finished
+    /// its exit motions): the presence lets them go.
+    fn check_exits(&mut self) {
+        if !self.exits {
+            return; // nothing is exiting: no walk over the slots
+        }
+        let mut ids: SmallVec<[(u64, bool); 4]> = SmallVec::new();
+        for &i in &self.els.live {
+            let Some(g) = &self.els.chunks[i as usize / CHUNK][i as usize % CHUNK].gest else { continue };
+            if g.exiting == 0 || g.exit_told {
+                continue;
+            }
+            // SAFETY: handles held by the slot
+            let ended = g.exit_motions.iter().all(|&m| unsafe { sys::BK_motion_is_active(m) } == 0);
+            match ids.iter_mut().find(|(id, _)| *id == g.exiting) {
+                Some((_, all)) => *all &= ended,
+                None => ids.push((g.exiting, ended)),
+            }
+        }
+        self.exits = !ids.is_empty();
+        for (id, all) in ids {
+            if all {
+                for k in 0..self.els.live.len() {
+                    let i = self.els.live[k];
+                    if let Some(g) = self.els.at(i).gest.as_mut().filter(|g| g.exiting == id) {
+                        g.exit_told = true;
+                    }
+                }
+                super::presence::done(id);
+            }
+        }
+    }
+
+    /// After a layout: which elements are in view now (`whileInView`); true
+    /// when one changed (its targets change: render again).
+    pub(crate) fn after_layout(&mut self, frame: &crate::layout::Frame, viewport: (f32, f32)) -> bool {
+        let mut changed = false;
+        for k in 0..self.els.live.len() {
+            let i = self.els.live[k];
+            let s = self.els.at(i);
+            let (node, key) = (s.node, s.key);
+            let Some(g) = &mut s.gest else { continue };
+            let Some(v) = g.view else { continue };
+            let Some(n) = frame.nodes.get(node).filter(|n| n.key == key) else { continue };
+            let b = n.bounds;
+            let area = (b.size.width * b.size.height).max(1e-6);
+            let w = (b.origin.x + b.size.width).min(viewport.0) - b.origin.x.max(0.0);
+            let h = (b.origin.y + b.size.height).min(viewport.1) - b.origin.y.max(0.0);
+            let shown = if w > 0.0 && h > 0.0 { w * h / area } else { 0.0 };
+            let inside = if v.amount <= 0.0 { shown > 0.0 } else { shown >= v.amount - 1e-4 };
+            let now = inside || (v.once && g.in_view);
+            if now != g.in_view {
+                g.in_view = now;
+                changed = true;
+            }
+        }
+        self.check_exits();
+        changed
     }
 
     /// Forget elements gone this frame (their motions stop).
@@ -224,10 +317,34 @@ impl Elements {
         };
         let i = found.unwrap_or_else(|| self.els.alloc(key));
         let slot: *mut Slot = self.els.at(i);
-        // targets, later layers over earlier ones (Motion's priority)
+        // SAFETY (this and the short borrows below): no engine call runs while they live.
+        let (in_view, exiting) = {
+            let s = unsafe { &mut *slot };
+            let view = spec.target(When::WhileInView).map(|_| spec.viewport());
+            let exiting = spec.exiting().unwrap_or(0);
+            if view.is_some() || exiting != 0 || s.gest.is_some() {
+                let g = s.gest.get_or_insert_with(Box::default);
+                g.view = view;
+                if g.exiting != exiting {
+                    g.end_exit(); // a new exit, or none: shown again midway
+                    g.exiting = exiting;
+                }
+                self.exits |= exiting != 0;
+                (view.is_some() && g.in_view, exiting)
+            } else {
+                (false, 0)
+            }
+        };
+        // targets, later layers over earlier ones (Motion's priority); taken
+        // away, `exit` alone
         let mut targets: SmallVec<[(&Key, &Value, &Vars); 8]> = SmallVec::new();
-        let layers = [Some(When::Animate), g.focus.then_some(When::WhileFocus), g.hover.then_some(When::WhileHover),
-                      g.tap.then_some(When::WhileTap)];
+        let layers = if exiting != 0 {
+            [Some(When::Exit), None, None, None, None, None]
+        } else {
+            [Some(When::Animate), in_view.then_some(When::WhileInView), g.focus.then_some(When::WhileFocus),
+             g.hover.then_some(When::WhileHover), g.tap.then_some(When::WhileTap),
+             g.drag.then_some(When::WhileDrag)]
+        };
         for w in layers.into_iter().flatten() {
             let Some(vars) = spec.vars(w) else { continue };
             for (k, v) in vars.props.iter() {
@@ -289,7 +406,14 @@ impl Elements {
             let changed = unsafe { &mut *slot }.find(k.id()).is_some_and(|p| !p.last.as_ref().is_some_and(|l| l.same(v)));
             if changed {
                 let t = vars.transition_for(k.id(), &element_t(k.id()));
-                start(slot, k.id(), v.keys(), &t);
+                let m = start(slot, k.id(), v.keys(), &t);
+                if exiting != 0 {
+                    // its end lets the element go
+                    unsafe { &mut *slot }.gest.get_or_insert_with(Box::default).exit_motions.push(m);
+                } else {
+                    // SAFETY: our handle (the global timeline holds it while it runs).
+                    unsafe { sys::BK_motion_release(m) };
+                }
                 if let Some(p) = unsafe { &mut *slot }.find(k.id()) {
                     p.last = Some((*v).clone());
                 }
@@ -300,7 +424,8 @@ impl Elements {
         for i in 0..n {
             let (id, back) = {
                 let p = &unsafe { &*slot }.props[i];
-                let targeted = targets.iter().any(|(k, _, _)| k.id() == p.id);
+                // what an exit leaves out stays where it is
+                let targeted = exiting != 0 || targets.iter().any(|(k, _, _)| k.id() == p.id);
                 (p.id, (!targeted && p.last.is_some() && p.cur.is_some()).then_some(p.base))
             };
             if let Some(b) = back {
@@ -310,7 +435,8 @@ impl Elements {
                 } else {
                     &to
                 };
-                start(slot, id, keys, &element_t(id));
+                // SAFETY: our handle (the global timeline holds it while it runs).
+                unsafe { sys::BK_motion_release(start(slot, id, keys, &element_t(id))) };
                 unsafe { &mut *slot }.props[i].last = None;
             }
         }
@@ -427,6 +553,7 @@ impl Elements {
         if faded {
             crate::layout::inherit(nodes, styles); // boxes keep their opacity times their parents'
         }
+        self.check_exits();
         // what's under a changed box changes with it (opacity, position)
         for j in 0..nodes.len() {
             if let Some(p) = nodes[j].parent {
@@ -462,10 +589,10 @@ impl Elements {
 }
 
 /// A motion of property `id` of the slot to `keys` with transition `t`.
-fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) {
-    let m = tween(&SLOT_CLASS, slot.cast(), &[(id, keys)], t, Flavor::Motion, false, None);
-    // SAFETY: our handle (the global timeline holds it while it runs).
-    unsafe { sys::BK_motion_release(m) };
+/// A motion of property `id` of the slot to `keys` with transition `t`: the
+/// handle is the caller's.
+fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) -> *mut sys::BKMotion {
+    tween(&SLOT_CLASS, slot.cast(), &[(id, keys)], t, Flavor::Motion, false, None)
 }
 
 fn ensure(s: &mut Slot, id: i32, base: &Computed, u: &Units) {

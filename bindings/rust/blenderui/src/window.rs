@@ -1181,8 +1181,9 @@ impl Window {
         // Motion's values alone: redraw (nothing running: no frames, so an
         // idle window costs no CPU)
         let (css, motion) = self.caches.anim.end();
-        // `@container`: sizes changed under a query: render once more
-        let container_changed = self.caches.after_layout(&frame);
+        // `@container`: sizes changed under a query, or an element came into
+        // view (`whileInView`): render once more
+        let container_changed = self.caches.after_layout(&frame) | self.caches.anim.after_layout(&frame, vp);
         self.present(app, frame, None);
         // state of components that didn't render is freed; effects run now
         crate::hooks::end();

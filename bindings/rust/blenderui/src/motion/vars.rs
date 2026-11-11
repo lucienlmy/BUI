@@ -133,7 +133,10 @@ impl Transition {
         v.time_scale = self.time_scale.unwrap_or(1.0);
         v.paused = i32::from(self.paused.unwrap_or(false));
         v.reversed = i32::from(self.reversed.unwrap_or(false));
-        v.immediate = i32::from(self.immediate.unwrap_or(false));
+        // Motion reads where a value starts (and takes it over from the motion
+        // moving it) when the animation starts; GSAP at its first render
+        let starts_now = flavor == Flavor::Motion && v.delay <= 0.0;
+        v.immediate = i32::from(self.immediate.unwrap_or(starts_now));
         if self.overwrite == Some(false) {
             v.overwrite = sys::BK_OVERWRITE_NONE;
         }
