@@ -13,6 +13,11 @@
  * Controls (pause, seek, rate, loop) are the <video> element's; a seek's
  * frame shows as soon as it is decoded, paused or not.
  *
+ * A movie with sound follows the sound instead (Blender's AV-sync): a frame
+ * shows when the sound reaches its time (video.c sets the clock: the audio
+ * device's position, audio/audio.c), and a picture that fell behind (it was
+ * off screen while the sound played on) seeks to where the sound is.
+ *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include <float.h>
@@ -44,6 +49,10 @@ struct BKImPlay {
   bool step_seek;      /* the step out seeks */
   bool loaded, failed, paused, drawn;
   bool finished; /* the last play's last frame shows */
+  const BKImAnimCodec *codec; /* what reads the file (its sound too) */
+  bool sound;                 /* the file has an audio track */
+  double (*clock)(void *data); /* the movie time heard (< 0: none now) */
+  void *clock_data;
 };
 
 BKImPlay *imb_play_new(bool paused, int loops)
@@ -76,6 +85,7 @@ size_t imb_play_bytes(const BKImPlay *p)
 void imb_play_start(BKImPlay *p, BKImAnim *anim, double pts, double dur)
 {
   p->anim = anim;
+  p->codec = imb_anim_backend(anim);
   p->loaded = true;
   p->pts = pts;
   p->dur = dur;
@@ -84,6 +94,7 @@ void imb_play_start(BKImPlay *p, BKImAnim *anim, double pts, double dur)
   p->src_w = info->src_w;
   p->src_h = info->src_h;
   p->duration = info->duration;
+  p->sound = info->sound && p->codec->audio_open;
   if (p->loops_set < 0) {
     p->loops = p->file_loops;
   }
@@ -157,19 +168,59 @@ void imb_play_drawn(BKImPlay *p, double now)
   }
 }
 
-double imb_play_due(const BKImPlay *p)
+/* The sound's time (< 0: none: the frames keep their own time). */
+static double heard(const BKImPlay *p)
+{
+  return p->clock ? p->clock(p->clock_data) : -1.0;
+}
+
+/* The sound's time held against a frame at `pts`: in a looping movie, sound
+ * near the end that hasn't come round yet is from before the start. */
+static double heard_for(const BKImPlay *p, double c, double pts)
+{
+  return p->loops == 0 && p->duration > 0.0 && c - pts > 0.5 * p->duration ? c - p->duration : c;
+}
+
+/* With sound: when the shown frame is over (the sound reached the next one). */
+static double sound_wait(const BKImPlay *p, double c)
+{
+  if (p->next_wrapped) { /* the last frame: until its end, or the sound came round */
+    return p->loops == 0 && c < p->pts ? 0.0 : p->pts + p->dur - c;
+  }
+  return p->next_pts - heard_for(p, c, p->next_pts);
+}
+
+double imb_play_due(const BKImPlay *p, double now)
 {
   if (p->next && p->next_seek) {
     return DBL_MIN; /* now */
   }
-  return p->drawn && !p->finished && !p->paused && p->next ? p->due : 0.0;
+  if (!p->drawn || p->finished || p->paused || !p->next) {
+    return 0.0;
+  }
+  const double c = heard(p);
+  if (c >= 0.0) {
+    const double wait = sound_wait(p, c);
+    return now + BK_CLAMP(wait, 0.0, 0.5); /* looked at again within half a second */
+  }
+  return p->due;
 }
 
 BKImBuf *imb_play_advance(BKImPlay *p, double now)
 {
-  const double due = imb_play_due(p);
+  const double due = imb_play_due(p, now);
   if (due == 0.0 || now < due) {
     return NULL;
+  }
+  const double c = p->next_seek ? -1.0 : heard(p);
+  if (c >= 0.0) {
+    if (sound_wait(p, c) > 0.002) {
+      return NULL; /* the sound isn't there yet */
+    }
+    if (!p->next_wrapped && heard_for(p, c, p->next_pts) - p->next_pts > 0.5) {
+      imb_play_seek(p, heard_for(p, c, p->next_pts)); /* far behind the sound: go where it is */
+      return NULL;
+    }
   }
   if (!p->next_seek && p->next_wrapped && p->loops > 0 && p->plays + 1 >= p->loops) {
     p->finished = true; /* the last frame of the last play stays */
@@ -188,8 +239,9 @@ BKImBuf *imb_play_advance(BKImPlay *p, double now)
   }
   else {
     p->plays += p->next_wrapped;
-    /* keep the beat, unless far behind (paused, slow decodes): restart it */
-    p->due = now - p->due > 0.25 ? now + p->dur / p->rate : p->due + p->dur / p->rate;
+    /* keep the beat, unless far behind (paused, slow decodes, the sound kept
+     * it): restart it */
+    p->due = c >= 0.0 || now - p->due > 0.25 ? now + p->dur / p->rate : p->due + p->dur / p->rate;
   }
   p->drawn = false;
   return frame;
@@ -250,6 +302,17 @@ double imb_play_time(const BKImPlay *p)
 double imb_play_duration(const BKImPlay *p)
 {
   return p->duration;
+}
+
+void imb_play_set_clock(BKImPlay *p, double (*clock)(void *data), void *data)
+{
+  p->clock = clock;
+  p->clock_data = data;
+}
+
+const BKImAnimCodec *imb_play_codec(const BKImPlay *p)
+{
+  return p->sound ? p->codec : NULL;
 }
 
 bool imb_play_size(const BKImPlay *p, int *r_w, int *r_h)

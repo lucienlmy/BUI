@@ -2,7 +2,7 @@
  *
  *   bui_video_bench <clip> <count> <cell_w> <cell_h> [gpu] [seconds]
  *
- * <count> players of <clip> (looping, muted autoplay) on a canvas, each in a
+ * <count> players of <clip> (looping, muted) on a canvas, each in a
  * <cell_w> x <cell_h> box (object-fit: contain), laid out in rows in a
  * headless window, driven like a window loop: the context's frame timer
  * (BKHost.schedule), decoded frames arriving, renders. CPU raster or, with
@@ -185,6 +185,7 @@ int main(int argc, char **argv)
   for (int i = 0; i < n; i++) {
     L.v[i] = BK_video_new(clip);
     BK_video_set_loop(L.v[i], 1);
+    BK_video_set_muted(L.v[i], 1); /* dozens at once: their clock, not their noise */
   }
   show(&L, cw, ch, cols);
   BK_render(L.ctx, L.r, L.w, L.h, 1);

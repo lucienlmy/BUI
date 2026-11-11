@@ -1,6 +1,7 @@
 /* Video: load, play, pause, seek, rate, loop and end through the public API
  * (BK_video_*), drawn on a canvas like an app would; nothing decoded while
- * off screen; malformed files; no allocation per frame once playing; every
+ * off screen; malformed files; no allocation per frame once playing; sound
+ * (clip_audio.mp4: the frames follow it, off screen too); every
  * MEM block back after BK_video_free + BK_image_exit. Exits 77 (skipped)
  * when the build or the machine has no video backend that reads the clip.
  *
@@ -142,7 +143,7 @@ static void test_playback(const char *clip)
   BuiRaster *r = BUI_raster_create(W, H);
   const uint32_t *px = BUI_raster_pixels(r);
 
-  /* loads when first drawn, then plays (muted autoplay) */
+  /* loads when first drawn, then plays (autoplay; this clip has no sound) */
   BKVideo *v = BK_video_new(clip);
   BK_video_set_listener(v, listener, NULL);
   show(canvas, v);
@@ -156,6 +157,7 @@ static void test_playback(const char *clip)
   CHECK(BK_video_size(v, &w, &h) && w == 96 && h == 54);
   CHECK(fabs(BK_video_duration(v) - 2.0) < 0.15);
   CHECK(g_events[BK_VIDEO_PLAYING] == 1);
+  CHECK(!BK_video_has_audio(v) || getenv("BUI_TEST_CLIP")); /* no audio track: no sound */
 
   /* it plays: the picture moves and the time goes on */
   uint64_t last = box_hash(px);
@@ -251,6 +253,79 @@ static void test_playback(const char *clip)
 
   BK_canvas_delete(canvas, -1);
   BK_video_free(v);
+  BK_context_free(ctx);
+  BK_node_free(canvas);
+  BUI_raster_free(r);
+}
+
+static int sounding(void *v)
+{
+  return BK_video_has_audio((BKVideo *)v);
+}
+
+/* Sound: the audio track plays on the default output and the frames follow
+ * it (muted here: the clock follows a muted track too); pause holds it; it
+ * plays on off screen and the picture catches up when it shows again.
+ * Skipped where the machine has no output device. */
+static void test_sound(const char *clip)
+{
+  BKNode *canvas = BK_node_new("canvas");
+  BKContext *ctx = BK_context_new(canvas);
+  BKHost host = {0};
+  host.request = host_request;
+  host.schedule = host_schedule;
+  BK_context_set_host(ctx, &host);
+  BuiRaster *r = BUI_raster_create(W, H);
+
+  BKVideo *v = BK_video_new(clip);
+  CHECK(BK_video_volume(v) == 1.0 && !BK_video_muted(v)); /* sound by default */
+  BK_video_set_volume(v, 2.0);
+  CHECK(BK_video_volume(v) == 1.0);
+  BK_video_set_volume(v, 0.25);
+  CHECK(fabs(BK_video_volume(v) - 0.25) < 1e-6);
+  BK_video_set_muted(v, 1);
+  CHECK(BK_video_muted(v));
+  BK_video_set_loop(v, 1); /* an output can take seconds to wake (Bluetooth): it plays on meanwhile */
+  show(canvas, v);
+  BK_render(ctx, r, W, H, 1);
+  run(ctx, r, 5.0, loaded, v);
+  run(ctx, r, 6.0, sounding, v);
+  if (!BK_video_has_audio(v)) {
+    printf("sound: no audio output here, skipped\n");
+  }
+  else {
+    /* in time with the sound: a second of playing moves the video a second */
+    BK_video_seek(v, 0.0);
+    run(ctx, r, 0.3, NULL, NULL);
+    const double t0 = BK_video_time(v), w0 = now_s();
+    run(ctx, r, 1.0, NULL, NULL);
+    const double moved = BK_video_time(v) - t0, wall = now_s() - w0;
+    printf("sound: %.2f s of video in %.2f s\n", moved, wall);
+    CHECK(fabs(moved - wall) < 0.25);
+
+    /* paused: the sound and the frames hold */
+    BK_video_pause(v);
+    run(ctx, r, 0.15, NULL, NULL);
+    const double held = BK_video_time(v);
+    run(ctx, r, 0.3, NULL, NULL);
+    CHECK(BK_video_time(v) == held);
+
+    /* off screen the sound plays on; shown again, the picture is where it is */
+    BK_video_seek(v, 0.0);
+    BK_video_play(v);
+    run(ctx, r, 0.3, NULL, NULL);
+    BK_canvas_delete(canvas, -1);
+    BK_render(ctx, r, W, H, 1);
+    const double hidden = BK_video_time(v);
+    run(ctx, r, 0.7, NULL, NULL);
+    show(canvas, v);
+    BK_render(ctx, r, W, H, 1);
+    run(ctx, r, 0.3, NULL, NULL);
+    printf("sound: hidden at %.2f s for 0.7 s, shown again at %.2f s\n", hidden, BK_video_time(v));
+    CHECK(BK_video_time(v) - hidden > 0.6);
+  }
+  BK_canvas_delete(canvas, -1);
+  BK_video_free(v); /* with its sound playing */
   BK_context_free(ctx);
   BK_node_free(canvas);
   BUI_raster_free(r);
@@ -362,6 +437,8 @@ int main(void)
   memset(g_events, 0, sizeof(g_events));
   test_playback(clip);
   test_malformed(clip);
+  snprintf(clip, sizeof(clip), "%s/clip_audio.mp4", BUI_TEST_VIDEOS);
+  test_sound(clip);
   BK_image_exit();
   printf("memory: %u blocks, %zu bytes before; %u blocks, %zu bytes after\n", blocks0, bytes0,
          MEM_get_memory_blocks_in_use(), MEM_get_memory_in_use());

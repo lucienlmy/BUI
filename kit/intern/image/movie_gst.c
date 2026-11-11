@@ -9,7 +9,9 @@
  * The pipeline decodes, converts and scales to NV12 at the size drawn:
  *   filesrc ! decodebin ! videoconvert ! videoscale ! capsfilter ! appsink
  * The appsink holds at most two frames and blocks the pipeline when they
- * aren't pulled: a video that isn't shown costs nothing.
+ * aren't pulled: a video that isn't shown costs nothing. Its sound is a
+ * second pipeline, pulled by the audio device's thread (audio/audio.c):
+ *   filesrc ! decodebin ! audioconvert ! audioresample ! float caps ! appsink
  *
  * The few GStreamer types used are mirrored here (stable 1.x ABI:
  * GstBuffer timestamps, GstMapInfo, GstVideoMeta).
@@ -172,15 +174,13 @@ static void gst_close(void *state)
   MEM_freeN(m);
 }
 
-/* The launch line with the path quoted (gst_parse_launch's escapes). */
-static char *pipeline_desc(const char *path)
+/* A launch line reading `path` (quoted with gst_parse_launch's escapes),
+ * then `tail` (from the closing quote on). */
+static char *pipeline_desc(const char *path, const char *tail)
 {
-  static const char head[] = "filesrc location=\"", tail[] =
-      "\" ! decodebin ! videoconvert ! videoscale ! capsfilter name=size "
-      "caps=video/x-raw,format=NV12 ! appsink name=sink sync=false max-buffers=2 "
-      "enable-last-sample=false";
-  const size_t n = strlen(path);
-  char *s = (char *)MEM_mallocN(sizeof(head) + 2 * n + sizeof(tail), "gst pipeline");
+  static const char head[] = "filesrc location=\"";
+  const size_t n = strlen(path), tail_n = strlen(tail) + 1;
+  char *s = (char *)MEM_mallocN(sizeof(head) + 2 * n + tail_n, "gst pipeline");
   char *p = s;
   memcpy(p, head, sizeof(head) - 1);
   p += sizeof(head) - 1;
@@ -190,8 +190,20 @@ static char *pipeline_desc(const char *path)
     }
     *p++ = path[i];
   }
-  memcpy(p, tail, sizeof(tail));
+  memcpy(p, tail, tail_n);
   return s;
+}
+
+/* The pipeline of a launch line, and its appsink ("sink"). */
+static GstElement *pipeline_open(const char *desc, GstElement **r_sink)
+{
+  void *err = NULL;
+  GstElement *pipeline = G.parse_launch(desc, &err);
+  if (err) {
+    G.error_free(err);
+  }
+  *r_sink = pipeline ? G.bin_get_by_name(pipeline, "sink") : NULL;
+  return pipeline;
 }
 
 static void *gst_open(const char *path, const uint8_t *mem, size_t size, BKImAnimInfo *r_info)
@@ -203,14 +215,12 @@ static void *gst_open(const char *path, const uint8_t *mem, size_t size, BKImAni
     return NULL;
   }
   GstMovie *m = (GstMovie *)MEM_callocN(sizeof(GstMovie), "GstMovie");
-  char *desc = pipeline_desc(path);
-  void *err = NULL;
-  m->pipeline = G.parse_launch(desc, &err);
+  char *desc = pipeline_desc(path,
+                             "\" ! decodebin ! videoconvert ! videoscale ! capsfilter name=size "
+                             "caps=video/x-raw,format=NV12 ! appsink name=sink sync=false "
+                             "max-buffers=2 enable-last-sample=false");
+  m->pipeline = pipeline_open(desc, &m->sink);
   MEM_freeN(desc);
-  if (err) {
-    G.error_free(err);
-  }
-  m->sink = m->pipeline ? G.bin_get_by_name(m->pipeline, "sink") : NULL;
   m->size = m->pipeline ? G.bin_get_by_name(m->pipeline, "size") : NULL;
   /* preroll (paused): the first frame tells the size; no decoder, an error */
   int st = 0;
@@ -253,6 +263,7 @@ static void *gst_open(const char *path, const uint8_t *mem, size_t size, BKImAni
   r_info->src_w = pn > 0 && pd > 0 && pn != pd ? (int)((double)w * pn / pd + 0.5) : w;
   r_info->src_h = h;
   r_info->loops = 1;
+  r_info->sound = true; /* decodebin doesn't say here: the sound pipeline finds out */
   return m;
 }
 
@@ -360,9 +371,111 @@ static size_t gst_bytes(const void *state)
   return sizeof(*m) + (size_t)m->w * m->h * 3; /* the appsink's two frames (an estimate) */
 }
 
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Sound: a second pipeline, float at the device's rate and channels
+ * \{ */
+
+typedef struct GstSound {
+  GstElement *pipeline, *sink;
+  int channels;
+  bool playing;
+  float *buf; /* the last block */
+  size_t cap; /* floats */
+} GstSound;
+
+static void gst_audio_close(void *state)
+{
+  GstSound *s = (GstSound *)state;
+  if (s->pipeline) {
+    G.set_state(s->pipeline, GST_STATE_NULL);
+  }
+  if (s->sink) {
+    G.object_unref(s->sink);
+  }
+  if (s->pipeline) {
+    G.object_unref(s->pipeline);
+  }
+  if (s->buf) {
+    MEM_freeN(s->buf);
+  }
+  MEM_freeN(s);
+}
+
+static void *gst_audio_open(const char *path, int rate, int channels, int *r_rate, int *r_channels)
+{
+  pthread_once(&G.once, load);
+  if (!path || !G.ok) {
+    return NULL;
+  }
+  char tail[256];
+  snprintf(tail, sizeof(tail),
+           "\" ! decodebin ! audioconvert ! audioresample ! "
+           "audio/x-raw,format=F32LE,layout=interleaved,rate=%d,channels=%d ! "
+           "appsink name=sink sync=false max-buffers=8 enable-last-sample=false",
+           rate, channels);
+  char *desc = pipeline_desc(path, tail);
+  GstSound *s = (GstSound *)MEM_callocN(sizeof(GstSound), "GstSound");
+  s->pipeline = pipeline_open(desc, &s->sink);
+  MEM_freeN(desc);
+  /* preroll: a file without sound never fills the sink (or fails at once) */
+  int st = 0;
+  if (!s->sink || G.set_state(s->pipeline, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE ||
+      G.get_state(s->pipeline, &st, NULL, 3 * GST_SECOND) == GST_STATE_CHANGE_FAILURE ||
+      st != GST_STATE_PAUSED)
+  {
+    gst_audio_close(s);
+    return NULL;
+  }
+  s->channels = channels;
+  *r_rate = rate; /* the caps above: audioresample and audioconvert make it so */
+  *r_channels = channels;
+  return s;
+}
+
+static int gst_audio_read(void *state, const float **r_data, double *r_pts)
+{
+  GstSound *s = (GstSound *)state;
+  if (!s->playing) {
+    s->playing = G.set_state(s->pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE;
+  }
+  GstSample *sample = G.pull_sample(s->sink, 2 * GST_SECOND);
+  if (!sample) {
+    return G.is_eos(s->sink) ? 0 : -1;
+  }
+  GstBufferX *buf = G.sample_get_buffer(sample);
+  GstMapInfoX map;
+  int frames = -1;
+  if (buf && G.buffer_map(buf, &map, GST_MAP_READ)) {
+    const size_t n = map.size / sizeof(float);
+    if (n > s->cap) {
+      if (s->buf) {
+        MEM_freeN(s->buf);
+      }
+      s->buf = (float *)MEM_mallocN(sizeof(float) * n, "GstSound block");
+      s->cap = n;
+    }
+    memcpy(s->buf, map.data, n * sizeof(float));
+    frames = (int)(n / (size_t)s->channels);
+    *r_pts = buf->pts != GST_NONE ? (double)buf->pts / GST_SECOND : -1.0;
+    G.buffer_unmap(buf, &map);
+  }
+  G.mini_object_unref(sample);
+  *r_data = s->buf;
+  return frames;
+}
+
+static bool gst_audio_seek(void *state, double t)
+{
+  GstSound *s = (GstSound *)state;
+  return G.seek_simple(s->pipeline, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT,
+                       (int64_t)(t * GST_SECOND)) != 0;
+}
+
 const BKImAnimCodec imb_movie_gst = {
     "gstreamer", true, imb_is_a_movie, gst_open, gst_output, gst_next, gst_seek, gst_bytes,
-    gst_close};
+    gst_close, gst_audio_open, gst_audio_read, gst_audio_seek, gst_audio_close};
 
 /** \} */
 

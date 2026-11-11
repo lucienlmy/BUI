@@ -8,7 +8,9 @@
  * mfplat.dll, mfreadwrite.dll, d3d11.dll and ole32.dll are loaded on first
  * use: Windows "N" editions (no Media Feature Pack) start normally and just
  * have no video. The reader is free-threaded (COM MTA): one step at a time
- * runs on whichever worker takes it.
+ * runs on whichever worker takes it. The sound is a second reader on the
+ * audio track, float out of the OS decoder (its resampler makes the device's
+ * rate), pulled by the audio device's thread (audio/audio.c).
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
@@ -156,6 +158,7 @@ typedef struct MFMovie {
 } MFMovie;
 
 #  define VIDEO ((DWORD)MF_SOURCE_READER_FIRST_VIDEO_STREAM)
+#  define AUDIO ((DWORD)MF_SOURCE_READER_FIRST_AUDIO_STREAM)
 
 static void mf_close(void *state)
 {
@@ -211,16 +214,19 @@ static wchar_t *wide_path(const char *path)
   return w;
 }
 
-static IMFSourceReader *open_reader(const char *path)
+/* A reader of `path`: for frames (`video`: DXVA, the video processor) or for sound. */
+static IMFSourceReader *open_reader(const char *path, bool video)
 {
   IMFAttributes *attr = NULL;
   IMFSourceReader *reader = NULL;
   wchar_t *wpath = wide_path(path);
   if (wpath && SUCCEEDED(MF.create_attributes(&attr, 4))) {
-    IMFAttributes_SetUINT32(attr, &MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
-    IMFAttributes_SetUINT32(attr, &MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
-    if (MF.manager) {
-      IMFAttributes_SetUnknown(attr, &MF_SOURCE_READER_D3D_MANAGER, (IUnknown *)MF.manager);
+    if (video) {
+      IMFAttributes_SetUINT32(attr, &MF_SOURCE_READER_ENABLE_ADVANCED_VIDEO_PROCESSING, TRUE);
+      IMFAttributes_SetUINT32(attr, &MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+      if (MF.manager) {
+        IMFAttributes_SetUnknown(attr, &MF_SOURCE_READER_D3D_MANAGER, (IUnknown *)MF.manager);
+      }
     }
     if (FAILED(MF.create_reader(wpath, attr, &reader))) {
       reader = NULL;
@@ -239,8 +245,13 @@ static void *mf_open(const char *path, const uint8_t *mem, size_t size, BKImAnim
     return NULL;
   }
   MFMovie *m = (MFMovie *)MEM_callocN(sizeof(MFMovie), "MFMovie");
-  m->reader = open_reader(path);
+  m->reader = open_reader(path, true);
   IMFMediaType *native = NULL;
+  if (m->reader && SUCCEEDED(IMFSourceReader_GetNativeMediaType(m->reader, AUDIO, 0, &native))) {
+    r_info->sound = true;
+    IMFMediaType_Release(native);
+    native = NULL;
+  }
   if (!m->reader ||
       FAILED(IMFSourceReader_SetStreamSelection(m->reader, (DWORD)MF_SOURCE_READER_ALL_STREAMS,
                                                 FALSE)) ||
@@ -402,15 +413,20 @@ static int mf_next(void *state, BKImBuf *dst, double *r_pts, double *r_dur)
   return -1;
 }
 
-static bool mf_seek(void *state, double t)
+/* Frames and sound: the reader goes to `t` (the keyframe or block before it). */
+static bool seek_reader(IMFSourceReader *reader, double t)
 {
-  MFMovie *m = (MFMovie *)state;
   PROPVARIANT pos;
   memset(&pos, 0, sizeof(pos));
   pos.vt = VT_I8;
   pos.hVal.QuadPart = (LONGLONG)(t * 1e7);
   static const GUID time_format = {0}; /* GUID_NULL: 100 ns units */
-  return SUCCEEDED(IMFSourceReader_SetCurrentPosition(m->reader, &time_format, &pos));
+  return SUCCEEDED(IMFSourceReader_SetCurrentPosition(reader, &time_format, &pos));
+}
+
+static bool mf_seek(void *state, double t)
+{
+  return seek_reader(((MFMovie *)state)->reader, t);
 }
 
 static size_t mf_bytes(const void *state)
@@ -421,8 +437,141 @@ static size_t mf_bytes(const void *state)
   return sizeof(*m) + (size_t)m->w * m->h * 3;
 }
 
-const BKImAnimCodec imb_movie_mf = {
-    "mf", true, imb_is_a_movie, mf_open, mf_output, mf_next, mf_seek, mf_bytes, mf_close};
+/** \} */
+
+/* -------------------------------------------------------------------- */
+/** \name Sound: a second reader on the audio track, float out of the OS decoder
+ * \{ */
+
+typedef struct MFSound {
+  IMFSourceReader *reader;
+  int channels;
+  float *buf; /* the last block (frames x channels) */
+  size_t cap; /* floats */
+} MFSound;
+
+static void mf_audio_close(void *state)
+{
+  MFSound *s = (MFSound *)state;
+  if (s->reader) {
+    IMFSourceReader_Release(s->reader);
+  }
+  if (s->buf) {
+    MEM_freeN(s->buf);
+  }
+  MEM_freeN(s);
+}
+
+/* Float out, at `rate` and `channels` when they are given (the reader's
+ * resampler), else at the track's own. */
+static bool set_audio_output(IMFSourceReader *reader, int rate, int channels)
+{
+  IMFMediaType *t = NULL;
+  if (FAILED(MF.create_media_type(&t))) {
+    return false;
+  }
+  IMFMediaType_SetGUID(t, &MF_MT_MAJOR_TYPE, &MFMediaType_Audio);
+  IMFMediaType_SetGUID(t, &MF_MT_SUBTYPE, &MFAudioFormat_Float);
+  if (rate > 0) {
+    IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, (UINT32)channels);
+    IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_SAMPLES_PER_SECOND, (UINT32)rate);
+    IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_BITS_PER_SAMPLE, 32);
+    IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_BLOCK_ALIGNMENT, (UINT32)(4 * channels));
+    IMFMediaType_SetUINT32(t, &MF_MT_AUDIO_AVG_BYTES_PER_SECOND, (UINT32)(4 * channels * rate));
+  }
+  const HRESULT hr = IMFSourceReader_SetCurrentMediaType(reader, AUDIO, NULL, t);
+  IMFMediaType_Release(t);
+  return SUCCEEDED(hr);
+}
+
+static void *mf_audio_open(const char *path, int rate, int channels, int *r_rate, int *r_channels)
+{
+  if (!path || !mf_ready()) {
+    return NULL;
+  }
+  MFSound *s = (MFSound *)MEM_callocN(sizeof(MFSound), "MFSound");
+  s->reader = open_reader(path, false);
+  IMFMediaType *t = NULL;
+  UINT32 r = 0, c = 0;
+  if (!s->reader ||
+      FAILED(IMFSourceReader_SetStreamSelection(s->reader, (DWORD)MF_SOURCE_READER_ALL_STREAMS,
+                                                FALSE)) ||
+      FAILED(IMFSourceReader_SetStreamSelection(s->reader, AUDIO, TRUE)) || /* no audio track */
+      !(set_audio_output(s->reader, rate, channels) || set_audio_output(s->reader, 0, 0)) ||
+      FAILED(IMFSourceReader_GetCurrentMediaType(s->reader, AUDIO, &t)))
+  {
+    mf_audio_close(s);
+    return NULL;
+  }
+  IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &r);
+  IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, &c);
+  IMFMediaType_Release(t);
+  s->channels = (int)c;
+  *r_rate = (int)r;
+  *r_channels = (int)c;
+  return s;
+}
+
+static int mf_audio_read(void *state, const float **r_data, double *r_pts)
+{
+  MFSound *s = (MFSound *)state;
+  for (int gaps = 0; gaps < 64; gaps++) {
+    DWORD stream = 0, flags = 0;
+    LONGLONG ts = 0;
+    IMFSample *sample = NULL;
+    if (FAILED(IMFSourceReader_ReadSample(s->reader, AUDIO, 0, &stream, &flags, &ts, &sample))) {
+      return -1;
+    }
+    if (flags & (MF_SOURCE_READERF_ENDOFSTREAM | MF_SOURCE_READERF_ERROR)) {
+      if (sample) {
+        IMFSample_Release(sample);
+      }
+      return (flags & MF_SOURCE_READERF_ERROR) ? -1 : 0;
+    }
+    if (!sample) {
+      continue; /* a stream tick */
+    }
+    IMFMediaBuffer *buf = NULL;
+    BYTE *p = NULL;
+    DWORD len = 0;
+    int frames = -1;
+    if (SUCCEEDED(IMFSample_ConvertToContiguousBuffer(sample, &buf)) &&
+        SUCCEEDED(IMFMediaBuffer_Lock(buf, &p, NULL, &len)))
+    {
+      const size_t n = len / sizeof(float);
+      if (n > s->cap) {
+        if (s->buf) {
+          MEM_freeN(s->buf);
+        }
+        s->buf = (float *)MEM_mallocN(sizeof(float) * n, "MFSound block");
+        s->cap = n;
+      }
+      memcpy(s->buf, p, n * sizeof(float));
+      frames = (int)(n / (size_t)s->channels);
+      IMFMediaBuffer_Unlock(buf);
+    }
+    if (buf) {
+      IMFMediaBuffer_Release(buf);
+    }
+    IMFSample_Release(sample);
+    if (frames == 0) {
+      continue;
+    }
+    *r_data = s->buf;
+    *r_pts = (double)ts / 1e7;
+    return frames;
+  }
+  return -1;
+}
+
+static bool mf_audio_seek(void *state, double t)
+{
+  return seek_reader(((MFSound *)state)->reader, t);
+}
+
+const BKImAnimCodec imb_movie_mf = {"mf", true, imb_is_a_movie, mf_open, mf_output, mf_next,
+                                    mf_seek, mf_bytes, mf_close, mf_audio_open, mf_audio_read,
+                                    mf_audio_seek, mf_audio_close};
 
 /** \} */
 

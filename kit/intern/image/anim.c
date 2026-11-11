@@ -157,6 +157,11 @@ const BKImAnimInfo *imb_anim_info(const BKImAnim *a)
   return &a->info;
 }
 
+const BKImAnimCodec *imb_anim_backend(const BKImAnim *a)
+{
+  return a->codec;
+}
+
 int imb_anim_frames(const BKImAnim *a)
 {
   return a->frames;

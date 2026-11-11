@@ -513,8 +513,9 @@ double bk_image_next_due(BKContext *ctx)
   if (!bk_animations_enabled()) {
     return 0.0;
   }
+  const double now = bk_time();
   for (const Entry *e = C.playing; e; e = e->play_next) {
-    const double d = imb_play_due(e->play);
+    const double d = imb_play_due(e->play, now);
     for (int i = 0; d > 0.0 && i < e->nwaiters; i++) {
       if (e->waiters[i].ctx == ctx && (due == 0.0 || d < due)) {
         due = d;
@@ -697,6 +698,11 @@ const BKImBuf *bk_image_entry_get(BKImEntry *e, const BKImageFit *target, const 
 BKImPlay *bk_image_entry_play(BKImEntry *e)
 {
   return e->play;
+}
+
+const char *bk_image_entry_path(const BKImEntry *e)
+{
+  return bk_image_source_path(e->source);
 }
 
 void bk_image_entry_changed(BKImEntry *e)

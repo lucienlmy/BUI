@@ -104,6 +104,7 @@ static void *avf_open(const char *path, const uint8_t *mem, size_t size, BKImAni
 #  pragma clang diagnostic ignored "-Wdeprecated-declarations" /* the synchronous API */
     NSArray<AVAssetTrack *> *tracks = [m->asset tracksWithMediaType:AVMediaTypeVideo];
     m->track = tracks.count ? [tracks[0] retain] : nil;
+    r_info->sound = [m->asset tracksWithMediaType:AVMediaTypeAudio].count > 0;
     const CGSize natural = m->track ? m->track.naturalSize : CGSizeZero;
     const double duration = m->asset ? CMTimeGetSeconds(m->asset.duration) : 0.0;
     const float fps = m->track ? m->track.nominalFrameRate : 0.0f;
@@ -203,7 +204,158 @@ static size_t avf_bytes(const void *state)
   return sizeof(*m) + (size_t)m->w * m->h * 3; /* decoded frames queued (an estimate) */
 }
 
+/* -------------------------------------------------------------------- */
+/** \name Sound: a second reader on the audio track, float PCM at the device's format
+ * \{ */
+
+typedef struct AvfSound {
+  AVURLAsset *asset;   /* retained */
+  AVAssetTrack *track; /* retained */
+  AVAssetReader *reader;
+  AVAssetReaderTrackOutput *out;
+  int rate, channels;
+  double start;
+  float *buf; /* the last block */
+  size_t cap; /* floats */
+} AvfSound;
+
+static void sound_drop(AvfSound *s)
+{
+  if (s->reader) {
+    [s->reader cancelReading];
+    [s->reader release];
+    s->reader = nil;
+  }
+  s->out = nil;
+}
+
+static void avf_audio_close(void *state)
+{
+  AvfSound *s = (AvfSound *)state;
+  @autoreleasepool {
+    sound_drop(s);
+    [s->track release];
+    [s->asset release];
+  }
+  if (s->buf) {
+    MEM_freeN(s->buf);
+  }
+  MEM_freeN(s);
+}
+
+/* A reader from s->start, interleaved float at s->rate and s->channels. */
+static bool sound_start(AvfSound *s)
+{
+  sound_drop(s);
+  NSError *err = nil;
+  AVAssetReader *r = [[AVAssetReader alloc] initWithAsset:s->asset error:&err];
+  if (!r) {
+    return false;
+  }
+  NSDictionary *settings = @{
+    AVFormatIDKey : @(kAudioFormatLinearPCM),
+    AVLinearPCMIsFloatKey : @YES,
+    AVLinearPCMBitDepthKey : @32,
+    AVLinearPCMIsNonInterleaved : @NO,
+    AVLinearPCMIsBigEndianKey : @NO,
+    AVSampleRateKey : @(s->rate),
+    AVNumberOfChannelsKey : @(s->channels),
+  };
+  AVAssetReaderTrackOutput *out = [AVAssetReaderTrackOutput
+      assetReaderTrackOutputWithTrack:s->track
+                       outputSettings:settings];
+  if (![r canAddOutput:out]) {
+    [r release];
+    return false;
+  }
+  [r addOutput:out];
+  r.timeRange = CMTimeRangeMake(CMTimeMakeWithSeconds(s->start, 48000), kCMTimePositiveInfinity);
+  if (![r startReading]) {
+    [r release];
+    return false;
+  }
+  s->reader = r;
+  s->out = out;
+  return true;
+}
+
+static void *avf_audio_open(const char *path, int rate, int channels, int *r_rate, int *r_channels)
+{
+  if (!path) {
+    return NULL;
+  }
+  AvfSound *s = (AvfSound *)MEM_callocN(sizeof(AvfSound), "AvfSound");
+  s->rate = rate;
+  s->channels = channels;
+  bool ok = false;
+  @autoreleasepool {
+    NSURL *url = [NSURL fileURLWithPath:[NSString stringWithUTF8String:path]];
+    s->asset = url ? [[AVURLAsset alloc] initWithURL:url options:nil] : nil;
+#  pragma clang diagnostic push
+#  pragma clang diagnostic ignored "-Wdeprecated-declarations" /* the synchronous API */
+    NSArray<AVAssetTrack *> *tracks = [s->asset tracksWithMediaType:AVMediaTypeAudio];
+#  pragma clang diagnostic pop
+    s->track = tracks.count ? [tracks[0] retain] : nil;
+    ok = s->track && sound_start(s); /* no audio track: no sound */
+  }
+  if (!ok) {
+    avf_audio_close(s);
+    return NULL;
+  }
+  *r_rate = rate; /* the output settings: AVFoundation converts */
+  *r_channels = channels;
+  return s;
+}
+
+static int avf_audio_read(void *state, const float **r_data, double *r_pts)
+{
+  AvfSound *s = (AvfSound *)state;
+  int frames = -1;
+  @autoreleasepool {
+    if (!s->reader && !sound_start(s)) {
+      return -1;
+    }
+    CMSampleBufferRef sb = [s->out copyNextSampleBuffer];
+    if (!sb) {
+      return s->reader.status == AVAssetReaderStatusCompleted ? 0 : -1;
+    }
+    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sb);
+    const size_t len = block ? CMBlockBufferGetDataLength(block) : 0;
+    const size_t n = len / sizeof(float);
+    if (n > s->cap) {
+      if (s->buf) {
+        MEM_freeN(s->buf);
+      }
+      s->buf = (float *)MEM_mallocN(sizeof(float) * n, "AvfSound block");
+      s->cap = n;
+    }
+    if (block && CMBlockBufferCopyDataBytes(block, 0, n * sizeof(float), s->buf) == kCMBlockBufferNoErr)
+    {
+      const CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
+      *r_pts = CMTIME_IS_NUMERIC(pts) ? CMTimeGetSeconds(pts) : -1.0;
+      *r_data = s->buf;
+      frames = (int)(n / (size_t)s->channels);
+    }
+    CFRelease(sb);
+  }
+  return frames;
+}
+
+static bool avf_audio_seek(void *state, double t)
+{
+  AvfSound *s = (AvfSound *)state;
+  s->start = t; /* readers start at a time: audio.c drops what comes before it */
+  bool ok;
+  @autoreleasepool {
+    ok = sound_start(s);
+  }
+  return ok;
+}
+
+/** \} */
+
 const BKImAnimCodec imb_movie_avf = {"avfoundation", true, imb_is_a_movie, avf_open, avf_output,
-                                     avf_next, avf_seek, avf_bytes, avf_close};
+                                     avf_next, avf_seek, avf_bytes, avf_close, avf_audio_open,
+                                     avf_audio_read, avf_audio_seek, avf_audio_close};
 
 #endif /* BUI_VIDEO_AVF */

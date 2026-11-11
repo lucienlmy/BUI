@@ -407,13 +407,17 @@ void BK_anim_free(BKAnim *anim);
  * streamed from the file at
  * the size it is drawn, frames in one GPU texture updated in place (NV12:
  * YCbCr converted in the shader; the CPU raster converts what it draws).
- * It loads when first drawn and plays only while it shows: off screen,
- * clipped, in a hidden window, nothing is decoded. Muted (no audio yet).
+ * It loads when first drawn; its frames are decoded only while it shows (off
+ * screen, clipped, in a hidden window: none). Its sound plays on the default
+ * output (WASAPI, CoreAudio, PulseAudio / PipeWire) and the frames follow it;
+ * the sound plays on off screen, and the picture catches up when it shows
+ * again. At a rate other than 1 the sound pauses.
  * UI-thread API; the state listener runs on the UI thread. */
 typedef struct BKVideo BKVideo;
 enum { BK_VIDEO_LOADING = 0, BK_VIDEO_PLAYING, BK_VIDEO_PAUSED, BK_VIDEO_ENDED, BK_VIDEO_ERROR };
-/* Autoplays (a muted autoplay, as browsers allow); BK_video_pause before the
- * first draw shows the first frame instead. NULL for an empty src. */
+/* Autoplays with sound (BK_video_set_muted first for a silent autoplay);
+ * BK_video_pause before the first draw shows the first frame instead. NULL
+ * for an empty src. */
 BKVideo *BK_video_new(const char *src);
 void BK_video_free(BKVideo *v);
 void BK_video_play(BKVideo *v); /* an ended video starts over */
@@ -423,8 +427,17 @@ void BK_video_set_rate(BKVideo *v, double rate); /* playback speed, 1/16 .. 16 *
 void BK_video_set_loop(BKVideo *v, int loop);
 /* An image file shown until the first frame (HTML poster); NULL: none. */
 void BK_video_set_poster(BKVideo *v, const char *src);
-/* Blender-style controls over it (play/pause, scrubber, time) in "video" nodes. */
+/* Blender-style controls over it (play/pause, scrubber, time, and mute when it
+ * has sound) in "video" nodes. */
 void BK_video_set_controls(BKVideo *v, int on);
+/* Sound: muted (the clock still follows it), and the volume (0 .. 1). */
+void BK_video_set_muted(BKVideo *v, int muted);
+int BK_video_muted(const BKVideo *v);
+void BK_video_set_volume(BKVideo *v, double volume);
+double BK_video_volume(const BKVideo *v);
+/* Its sound plays (the file has an audio track this system decodes, and an
+ * output device): 0 until it has started. */
+int BK_video_has_audio(const BKVideo *v);
 int BK_video_state(const BKVideo *v);        /* BK_VIDEO_* */
 double BK_video_time(const BKVideo *v);      /* seconds */
 double BK_video_duration(const BKVideo *v);  /* seconds; 0 until loaded or unknown */
