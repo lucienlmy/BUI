@@ -16,5 +16,10 @@ sys.path.insert(0, os.path.join(HERE, "..", "bindings", "python"))
 
 from bui.components import App, Video  # noqa: E402
 
-clip = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "tests", "videos", "clip_audio.mp4")
+if len(sys.argv) > 1:
+    clip = " ".join(sys.argv[1:])  # a path with spaces may arrive split into words
+    if not os.path.isfile(clip):
+        sys.exit(f"no such video file: {clip}\n(quote a path with spaces)")
+else:
+    clip = os.path.join(HERE, "..", "tests", "videos", "clip_audio.mp4")
 App("Video with sound", (400, 260), Video(clip, controls=True, loop=True)).run()

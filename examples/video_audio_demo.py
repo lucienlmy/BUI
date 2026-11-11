@@ -28,11 +28,21 @@ import bui  # noqa: E402
 from bui.components import (App, Button, Checkbox, Label, NumberSlider, Panel, Row,  # noqa: E402
                             Video)
 
-CLIP = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "..", "tests", "videos", "clip_audio.mp4")
+
+def clip_path():
+    """The clip: the command line (a path with spaces may arrive split into words: joined back), or the test clip."""
+    if len(sys.argv) > 1:
+        path = " ".join(sys.argv[1:])
+        if not os.path.isfile(path):
+            sys.exit(f"no such video file: {path}\n(quote a path with spaces)")
+        return path
+    return os.path.join(HERE, "..", "tests", "videos", "clip_audio.mp4")
+
 
 
 def build():
-    video = Video(CLIP, controls=True, loop=True, fit="contain")
+    """The app and a function that refreshes its status line."""
+    video = Video(clip_path(), controls=True, loop=True, fit="contain")
     player = video.player
     status = Label("")
 
@@ -65,7 +75,7 @@ def build():
     def hide(on):
         video.set("visible", not on)
 
-    return App(
+    app = App(
         "BUI: video with sound", (460, 560),
         video,
         status,
@@ -78,14 +88,15 @@ def build():
               NumberSlider("Speed", 1.0, min=0.25, max=4.0, on_change=set_speed),
               Checkbox("Hide video (the sound plays on)", False, on_change=hide)),
     )
+    return app, refresh
 
 
 if __name__ == "__main__":
-    app = build()
+    app, refresh = build()
     window = app.open()
 
     def tick():  # the time moves and the sound starts without a state change
-        app.root.children[1].set("text", status_text())
+        refresh()
         window.after(250, tick)
 
     window.after(250, tick)
