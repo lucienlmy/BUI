@@ -10,7 +10,8 @@ endif()
 
 message(STATUS "BUI: building buipy Python bindings for Python ${Python3_VERSION}")
 
-Python3_add_library(buipy MODULE WITH_SOABI src/buipy_module.c src/buipy_kit.c src/buipy_video.c)
+Python3_add_library(buipy MODULE WITH_SOABI src/buipy_module.c src/buipy_kit.c src/buipy_video.c
+                   src/buipy_anim.c)
 target_link_libraries(buipy PRIVATE bui_api bui_gpu bui_kit)
 
 # ($<0:> keeps multi-config generators from adding a Release/ subdirectory.)
