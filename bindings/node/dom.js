@@ -15,7 +15,11 @@ const { isSignal, effect, unowned, memo } = require('./signals')
 // Keep in sync with bindings/rust/blenderui-node/src/lib.rs.
 const OP = { CREATE: 0, TEXT: 1, SET_ATTR: 2, REMOVE_ATTR: 3, APPEND: 4, INSERT: 5, REMOVE: 6, SET_TEXT: 7, LISTEN: 8, FREE: 9, MOTION: 10 }
 // Motion's props (keep in sync with MotionProp::parse, bindings/rust/blenderui-jsview/src/motion.rs)
-const MOTION_PROPS = { initial: 0, animate: 1, exit: 2, whileHover: 3, whileTap: 4, whileFocus: 5, transition: 6, style: 7, variants: 8 }
+const MOTION_PROPS = {
+  initial: 0, animate: 1, exit: 2, whileHover: 3, whileTap: 4, whileFocus: 5, transition: 6, style: 7, variants: 8,
+  whileInView: 9, whileDrag: 10, viewport: 11, drag: 12, dragConstraints: 13, dragElastic: 14, dragMomentum: 15,
+  dragSnapToOrigin: 16, layout: 17
+}
 const EVENT_BITS = {
   click: 1, mousedown: 2, mouseup: 4, mousemove: 8, mouseenter: 16, mouseleave: 16,
   wheel: 32, keydown: 64, keyup: 128, change: 256, input: 512,
@@ -583,8 +587,12 @@ class Element extends Node {
 
   /**
    * One of Motion's props: `initial`, `animate`, `exit`, `whileHover`,
-   * `whileTap`, `whileFocus` (an object of values, a variant's name, or
-   * false), `transition`, `variants`, `style` (motion values); null removes it.
+   * `whileTap`, `whileFocus`, `whileInView`, `whileDrag` (an object of
+   * values, a variant's name, or false), `transition`, `variants`, `style`
+   * (motion values), `viewport` ({ once, amount }), `drag` (true, "x", "y"),
+   * `dragConstraints` ({ left, right, top, bottom }), `dragElastic`,
+   * `dragMomentum`, `dragSnapToOrigin`, `layout` (true, "position", "size");
+   * null removes it.
    */
   setMotion (name, value) {
     const which = MOTION_PROPS[name]

@@ -39,7 +39,7 @@ pub use ease::{Ease, ease};
 pub use presence::presence;
 pub use scroll::{Scroll, use_element_scroll, use_scroll};
 pub(crate) use scroll::update as update_scroll;
-pub use spec::{Drag, InView, Layout, Spec, Target, Variants, When};
+pub use spec::{Drag, DragConstraints, InView, Layout, Spec, Target, Variants, When};
 pub(crate) use element::{Elements, Gestures};
 pub(crate) use pending::{end_pending, pending};
 pub use object::{Any, DynTarget, DynVars, events, variants};

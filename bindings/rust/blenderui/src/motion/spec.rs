@@ -159,6 +159,35 @@ impl From<&str> for Drag {
     }
 }
 
+/// A drag's bounds: left, right, top, bottom (pixels; a side left out: none).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DragConstraints(pub [f32; 4]);
+
+impl From<[f32; 4]> for DragConstraints {
+    fn from(c: [f32; 4]) -> DragConstraints {
+        DragConstraints(c)
+    }
+}
+
+impl From<Vars> for DragConstraints {
+    fn from(v: Vars) -> DragConstraints {
+        let mut c = [f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY];
+        for (k, val) in v.props.iter() {
+            let i = match k.name().to_bytes() {
+                b"left" => 0,
+                b"right" => 1,
+                b"top" => 2,
+                b"bottom" => 3,
+                _ => continue,
+            };
+            if let Some(r) = val.read() {
+                c[i] = r.v[0];
+            }
+        }
+        DragConstraints(c)
+    }
+}
+
 /// Motion's `layout`: what of a change of its box animates (`true`: where
 /// and how big; `"position"`; `"size"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -368,23 +397,11 @@ impl Div {
     }
 
     /// Where a drag may go, in pixels from where it started: `{{ left: -100,
-    /// right: 100, top: 0, bottom: 0 }}` (past them, `drag_elastic` gives).
+    /// right: 100, top: 0, bottom: 0 }}` or `[left, right, top, bottom]`
+    /// (past them, `drag_elastic` gives).
     #[must_use]
-    pub fn drag_constraints(mut self, v: Vars) -> Div {
-        let mut c = [f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY];
-        for (k, val) in v.props.iter() {
-            let i = match k.name().to_bytes() {
-                b"left" => 0,
-                b"right" => 1,
-                b"top" => 2,
-                b"bottom" => 3,
-                _ => continue,
-            };
-            if let Some(r) = val.read() {
-                c[i] = r.v[0];
-            }
-        }
-        self.motion_mut().drag_mut().constraints = Some(c);
+    pub fn drag_constraints(mut self, c: impl Into<DragConstraints>) -> Div {
+        self.motion_mut().drag_mut().constraints = Some(c.into().0);
         self
     }
 

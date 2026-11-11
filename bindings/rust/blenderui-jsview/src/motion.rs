@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Weak};
 
 use blenderui::motion::{
-    Any, DynTarget, DynVars, Events, MotionValue, Targets, Timeline, Transition, Tween, Value, Vars, When, animate,
+    Any, Drag, DynTarget, DynVars, Events, InView, Layout, MotionValue, Targets, Timeline, Transition, Tween, Value, Vars, When, animate,
     gsap,
 };
 use blenderui::prelude::*;
@@ -315,11 +315,34 @@ pub enum MotionProp {
     Transition(DynVars),
     Style(DynVars),
     Variants(Vec<(&'static str, DynVars)>),
+    Viewport(InView),
+    Drag(Drag),
+    DragConstraints([f32; 4]),
+    DragElastic(f32),
+    DragMomentum(bool),
+    DragSnapToOrigin(bool),
+    Layout(Layout),
     /// the prop is gone (`which` as in [`MotionProp::parse`])
     Clear(i32),
 }
 
+/// The targets by `which`: 0 .. 5, then 9 whileInView, 10 whileDrag.
 const WHEN: [When; 6] = [When::Initial, When::Animate, When::Exit, When::WhileHover, When::WhileTap, When::WhileFocus];
+
+fn num(v: &Any) -> Option<f32> {
+    match v {
+        Any::Num(n) => Some(*n as f32),
+        Any::Bool(b) => Some(f32::from(u8::from(*b))),
+        _ => None,
+    }
+}
+
+fn flag(v: &Any, name: &str) -> Result<bool, String> {
+    match v {
+        Any::Bool(b) => Ok(*b),
+        _ => Err(format!("`{name}` takes true or false")),
+    }
+}
 
 impl MotionProp {
     /// Prop `which` (0 initial, 1 animate, 2 exit, 3 whileHover, 4 whileTap,
@@ -344,16 +367,74 @@ impl MotionProp {
                 _ => return Err("a motion `style` takes an object".into()),
             }),
             8 => MotionProp::Variants(blenderui::motion::variants(v)?),
+            9 => MotionProp::Target(When::WhileInView, DynTarget::parse(v)?),
+            10 => MotionProp::Target(When::WhileDrag, DynTarget::parse(v)?),
+            11 => MotionProp::Viewport(match v {
+                Any::Map(m) => {
+                    let mut r = InView::default();
+                    for (k, x) in m {
+                        match (k.as_str(), x) {
+                            ("once", x) => r.once = flag(x, "viewport.once")?,
+                            ("amount", Any::Str(s)) if s == "all" => r.amount = 1.0,
+                            ("amount", Any::Str(s)) if s == "some" => r.amount = 0.0,
+                            ("amount", x) => r.amount = num(x).ok_or("`viewport.amount` takes a number, \"some\" or \"all\"")?.clamp(0.0, 1.0),
+                            ("margin" | "root", _) => return Err(format!("`viewport.{k}` isn't supported")),
+                            _ => return Err(format!("no viewport option `{k}`")),
+                        }
+                    }
+                    r
+                }
+                _ => return Err("`viewport` takes an object".into()),
+            }),
+            12 => MotionProp::Drag(match v {
+                Any::Bool(b) => Drag::from(*b),
+                Any::Str(s) if s == "x" || s == "y" => Drag::from(s.as_str()),
+                _ => return Err("`drag` takes true, \"x\" or \"y\"".into()),
+            }),
+            13 => MotionProp::DragConstraints(match v {
+                Any::Map(m) => {
+                    let mut c = [f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY];
+                    for (k, x) in m {
+                        let i = match k.as_str() {
+                            "left" => 0,
+                            "right" => 1,
+                            "top" => 2,
+                            "bottom" => 3,
+                            _ => return Err(format!("no dragConstraints side `{k}`")),
+                        };
+                        c[i] = num(x).ok_or_else(|| format!("dragConstraints.{k} takes a number"))?;
+                    }
+                    c
+                }
+                _ => return Err("`dragConstraints` takes { left, right, top, bottom } (pixels)".into()),
+            }),
+            14 => MotionProp::DragElastic(num(v).ok_or("`dragElastic` takes a number")?.clamp(0.0, 1.0)),
+            15 => MotionProp::DragMomentum(flag(v, "dragMomentum")?),
+            16 => MotionProp::DragSnapToOrigin(flag(v, "dragSnapToOrigin")?),
+            17 => MotionProp::Layout(match v {
+                Any::Bool(true) => Layout::Both,
+                Any::Str(s) if s == "position" || s == "size" => Layout::from(s.as_str()),
+                _ => return Err("`layout` takes true, \"position\" or \"size\"".into()),
+            }),
             _ => return Err(format!("no Motion prop {which}")),
         })
     }
 
     fn which(&self) -> i32 {
         match self {
+            MotionProp::Target(When::WhileInView, _) => 9,
+            MotionProp::Target(When::WhileDrag, _) => 10,
             MotionProp::Target(w, _) => WHEN.iter().position(|x| x == w).map_or(-1, |i| i as i32),
             MotionProp::Transition(_) => 6,
             MotionProp::Style(_) => 7,
             MotionProp::Variants(_) => 8,
+            MotionProp::Viewport(_) => 11,
+            MotionProp::Drag(_) => 12,
+            MotionProp::DragConstraints(_) => 13,
+            MotionProp::DragElastic(_) => 14,
+            MotionProp::DragMomentum(_) => 15,
+            MotionProp::DragSnapToOrigin(_) => 16,
+            MotionProp::Layout(_) => 17,
             MotionProp::Clear(w) => *w,
         }
     }
@@ -369,7 +450,9 @@ impl MotionProp {
                     v.resolve(find);
                 }
             }
-            MotionProp::Clear(_) => {}
+            MotionProp::Viewport(_) | MotionProp::Drag(_) | MotionProp::DragConstraints(_) | MotionProp::DragElastic(_)
+            | MotionProp::DragMomentum(_) | MotionProp::DragSnapToOrigin(_) | MotionProp::Layout(_)
+            | MotionProp::Clear(_) => {}
         }
     }
 }
@@ -398,7 +481,16 @@ impl NodeMotion {
                     When::WhileHover => d.while_hover(t.target()),
                     When::WhileTap => d.while_tap(t.target()),
                     When::WhileFocus => d.while_focus(t.target()),
+                    When::WhileInView => d.while_in_view(t.target()),
+                    When::WhileDrag => d.while_drag(t.target()),
                 },
+                MotionProp::Viewport(v) => d.viewport(*v),
+                MotionProp::Drag(g) => d.drag(*g),
+                MotionProp::DragConstraints(c) => d.drag_constraints(*c),
+                MotionProp::DragElastic(e) => d.drag_elastic(*e),
+                MotionProp::DragMomentum(m) => d.drag_momentum(*m),
+                MotionProp::DragSnapToOrigin(s) => d.drag_snap_to_origin(*s),
+                MotionProp::Layout(l) => d.layout(*l),
                 MotionProp::Transition(v) => d.transition(v.vars()),
                 MotionProp::Style(v) => d.motion_style(v.vars()),
                 MotionProp::Variants(vs) => d.variants(vs.iter().map(|(n, v)| (*n, v.vars())).collect::<Vec<_>>()),
