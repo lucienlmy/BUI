@@ -142,7 +142,7 @@ class NodeEditor(Component):
                  on_links: Optional[Callable[[list], None]] = None,
                  on_delete: Optional[Callable[[list], None]] = None, **kw):
         super().__init__(**{k: v for k, v in kw.items()
-                            if k in ("description", "enabled", "visible", "weight", "fill")})
+                            if k in Component.KWARGS})
         self.on_links, self.on_delete = on_links, on_delete
         self._nodes: list = []
         for n in nodes:
