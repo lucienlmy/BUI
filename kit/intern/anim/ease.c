@@ -42,12 +42,21 @@ static struct {
 
 static float lut_eval(const float *y, float t);
 
+/* cos(t pi / 2) for t in 0 .. 1 without a library call (sine eases, every frame): its series
+ * in t^2 to the 10th power (error below 1e-6). */
+static inline float cos_quarter(float t)
+{
+  const float x = t * t;
+  return 1.0f + x * (-1.2337005501f + x * (0.2536695079f + x * (-0.0208634807f + x * (0.0009192602f +
+                                                                                        x * -0.0000252020f))));
+}
+
 /* 2^x without a library call (expo eases, every frame): the power of two in the exponent
  * bits, 2^fraction from a polynomial (relative error about 2e-7). x in -126 .. 126. */
 static inline float fast_exp2(float x)
 {
   x = BK_CLAMP(x, -126.0f, 126.0f);
-  const float fi = floorf(x), f = x - fi;
+  const float fi = (float)((int)(x + 126.0f) - 126), f = x - fi; /* floor, without a call */
   const float p = 1.0f + f * (0.6931472f + f * (0.2402265f + f * (0.0555041f + f * (0.0096181f + f * 0.0013334f))));
   union { uint32_t u; float f; } b = {(uint32_t)((int)fi + 127) << 23};
   return b.f * p;
@@ -220,7 +229,7 @@ static float base_in(const BKEase *e, float t)
       return r;
     }
     case BK_EASE_SINE:
-      return 1.0f - cosf(t * PI_F * 0.5f);
+      return 1.0f - (t >= 0.0f && t <= 1.0f ? cos_quarter(t) : cosf(t * PI_F * 0.5f));
     case BK_EASE_EXPO:
       return t <= 0.0f ? 0.0f : fast_exp2(10.0f * (t - 1.0f));
     case BK_EASE_CIRC:
@@ -234,7 +243,7 @@ static float base_in(const BKEase *e, float t)
       const float s = period / (2.0f * PI_F) * asinf(1.0f / a);
       const float u = 1.0f - t;
       const float out = u >= 1.0f ? 1.0f :
-                                    a * powf(2.0f, -10.0f * u) * sinf((u - s) * 2.0f * PI_F / period) + 1.0f;
+                                    a * fast_exp2(-10.0f * u) * sinf((u - s) * 2.0f * PI_F / period) + 1.0f;
       return 1.0f - out;
     }
     case BK_EASE_BOUNCE:
