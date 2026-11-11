@@ -98,39 +98,94 @@ impl<const N: usize> From<[(&'static str, Vars); N]> for Variants {
     }
 }
 
-/// An element's motion (Motion's props).
-#[derive(Debug, Default)]
-pub struct Spec {
-    pub initial: Option<Target>,
-    pub animate: Option<Target>,
-    pub exit: Option<Target>,
-    pub while_hover: Option<Target>,
-    pub while_tap: Option<Target>,
-    pub while_focus: Option<Target>,
-    /// the element's transition, with Motion's per-property ones
-    pub transition: Option<Vars>,
-    pub variants: Option<Variants>,
-    /// `style={{ x: mv }}`: values (MotionValues) read every frame
-    pub style: Option<Vars>,
+/// Which of Motion's target props.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum When {
+    Initial,
+    Animate,
+    Exit,
+    WhileHover,
+    WhileTap,
+    WhileFocus,
 }
 
+#[derive(Debug)]
+enum Entry {
+    Target(When, Target),
+    Transition(Vars),
+    Style(Vars),
+    Variants(Variants),
+}
+
+impl Entry {
+    /// Entries of one kind replace each other.
+    fn same(&self, o: &Entry) -> bool {
+        match (self, o) {
+            (Entry::Target(a, _), Entry::Target(b, _)) => a == b,
+            _ => std::mem::discriminant(self) == std::mem::discriminant(o),
+        }
+    }
+}
+
+/// An element's motion (Motion's props): only the ones given, in place (an
+/// element with `animate` alone stores just that, with no allocation of its own).
+#[derive(Debug, Default)]
+pub struct Spec(SmallVec<[Entry; 1]>);
+
 impl Spec {
-    fn vars<'s>(&'s self, t: Option<&'s Target>) -> Option<&'s Vars> {
-        match t? {
+    fn set(&mut self, e: Entry) {
+        match self.0.iter_mut().find(|x| x.same(&e)) {
+            Some(x) => *x = e,
+            None => self.0.push(e),
+        }
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The target given for `w`.
+    #[must_use]
+    pub fn target(&self, w: When) -> Option<&Target> {
+        self.0.iter().find_map(|e| match e {
+            Entry::Target(x, t) if *x == w => Some(t),
+            _ => None,
+        })
+    }
+
+    /// The element's transition (with Motion's per-property ones).
+    #[must_use]
+    pub fn transition(&self) -> Option<&Vars> {
+        self.0.iter().find_map(|e| if let Entry::Transition(v) = e { Some(v) } else { None })
+    }
+
+    /// `style={{ x: mv }}`: values read every frame.
+    #[must_use]
+    pub fn style(&self) -> Option<&Vars> {
+        self.0.iter().find_map(|e| if let Entry::Style(v) = e { Some(v) } else { None })
+    }
+
+    fn variants(&self) -> Option<&Variants> {
+        self.0.iter().find_map(|e| if let Entry::Variants(v) = e { Some(v) } else { None })
+    }
+
+    /// The values of target `w` (a variant's, by name).
+    fn vars(&self, w: When) -> Option<&Vars> {
+        match self.target(w)? {
             Target::Vars(v) => Some(v),
-            Target::Variant(name) => self.variants.as_deref()?.iter().find(|(n, _)| *n == name).map(|(_, v)| v),
+            Target::Variant(name) => self.variants()?.iter().find(|(n, _)| *n == name).map(|(_, v)| v),
             Target::Off => None,
         }
     }
 }
 
 macro_rules! spec_setters {
-    ($($(#[$doc:meta])* $method:ident => $field:ident),*) => {
+    ($($(#[$doc:meta])* $method:ident => $when:ident),*) => {
         impl Div {$(
             $(#[$doc])*
             #[must_use]
             pub fn $method(mut self, target: impl Into<Target>) -> Div {
-                self.motion_mut().$field = Some(target.into());
+                self.motion_mut().set(Entry::Target(When::$when, target.into()));
                 self
             }
         )*}
@@ -138,29 +193,29 @@ macro_rules! spec_setters {
 }
 spec_setters!(
     /// Where it starts when it appears (`false`: at its `animate` values).
-    initial => initial,
+    initial => Initial,
     /// What it animates to; changing it animates again.
-    animate => animate,
+    animate => Animate,
     /// What it animates to when it goes away (in an `AnimatePresence`).
-    exit => exit,
+    exit => Exit,
     /// On top of `animate` while the pointer is over it.
-    while_hover => while_hover,
+    while_hover => WhileHover,
     /// On top while it is pressed.
-    while_tap => while_tap,
+    while_tap => WhileTap,
     /// On top while it has focus.
-    while_focus => while_focus
+    while_focus => WhileFocus
 );
 
 impl Div {
     fn motion_mut(&mut self) -> &mut Spec {
-        self.rare_mut().motion.get_or_insert_with(Box::default)
+        &mut self.rare_mut().motion
     }
 
     /// The default transition of its motions (Motion's `transition`:
     /// `{{ type: "spring", x: { duration: 1 } }}`).
     #[must_use]
     pub fn transition(mut self, t: impl Into<Vars>) -> Div {
-        self.motion_mut().transition = Some(t.into());
+        self.motion_mut().set(Entry::Transition(t.into()));
         self
     }
 
@@ -168,14 +223,14 @@ impl Div {
     /// (Motion's `style={{ x: mv }}`).
     #[must_use]
     pub fn motion_style(mut self, v: Vars) -> Div {
-        self.motion_mut().style = Some(v);
+        self.motion_mut().set(Entry::Style(v));
         self
     }
 
     /// Named targets: `animate="visible"` picks one.
     #[must_use]
     pub fn variants(mut self, v: impl Into<Variants>) -> Div {
-        self.motion_mut().variants = Some(v.into());
+        self.motion_mut().set(Entry::Variants(v.into()));
         self
     }
 }
@@ -212,6 +267,14 @@ struct PropState {
 pub(crate) struct Slot {
     props: SmallVec<[PropState; 4]>,
     seen: u64,
+    /// After the last full frame: the element's box, its style before the
+    /// moving values (they go over it again on redraws), whether a moving
+    /// value changes layout (then a redraw can't do), and the MotionValues
+    /// its `style` binds.
+    node: usize,
+    base: Option<Box<Computed>>,
+    layout: bool,
+    bound: SmallVec<[(i32, super::MotionValue); 2]>,
 }
 
 impl Slot {
@@ -250,6 +313,8 @@ static SLOT_CLASS: sys::BKAnimClass = sys::BKAnimClass { get: Some(slot_get), se
 pub(crate) struct Elements {
     els: KeyMap<u64, Box<Slot>>,
     frame: u64,
+    /// scratch: each box's move on a redraw
+    shift: Vec<(f32, f32)>,
 }
 
 impl Drop for Elements {
@@ -262,8 +327,12 @@ impl Drop for Elements {
 
 /// The engine stops writing to a slot going away.
 fn forget(mut slot: Box<Slot>) {
-    // SAFETY: the slot is still alive here.
-    unsafe { sys::BK_anim_kill_target((&raw mut *slot).cast(), -1) };
+    let obj: *mut c_void = (&raw mut *slot).cast();
+    for p in &slot.props {
+        // SAFETY: the slot is still alive here; per property is a hash lookup
+        // (all of an object's motions would be a walk over every motion)
+        unsafe { sys::BK_anim_kill_target(obj, p.id) };
+    }
 }
 
 impl Elements {
@@ -290,7 +359,7 @@ impl Elements {
     /// start the motions its targets (and imperative motions for it) need, and
     /// lay the moving values over `out`.
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn apply(&mut self, key: u64, el: &ElData, spec: Option<&Spec>, base: &Computed, g: Gestures, u: &Units,
+    pub(crate) fn apply(&mut self, key: u64, node: usize, el: &ElData, spec: Option<&Spec>, base: &Computed, g: Gestures, u: &Units,
                         out: &mut Option<Computed>) {
         let frame = self.frame;
         let first = !self.els.contains_key(&key);
@@ -308,10 +377,10 @@ impl Elements {
         let slot: *mut Slot = &raw mut **self.els.entry(key).or_default();
         // targets, later layers over earlier ones (Motion's priority)
         let mut targets: SmallVec<[(&Key, &Value, &Vars); 8]> = SmallVec::new();
-        let layers = [Some(spec.animate.as_ref()), g.focus.then_some(spec.while_focus.as_ref()),
-                      g.hover.then_some(spec.while_hover.as_ref()), g.tap.then_some(spec.while_tap.as_ref())];
-        for t in layers.into_iter().flatten() {
-            let Some(vars) = spec.vars(t) else { continue };
+        let layers = [Some(When::Animate), g.focus.then_some(When::WhileFocus), g.hover.then_some(When::WhileHover),
+                      g.tap.then_some(When::WhileTap)];
+        for w in layers.into_iter().flatten() {
+            let Some(vars) = spec.vars(w) else { continue };
             for (k, v) in vars.props.iter() {
                 match targets.iter_mut().find(|(o, _, _)| o.id() == k.id()) {
                     Some(slot) => *slot = (*k, v, vars),
@@ -321,7 +390,7 @@ impl Elements {
         }
         let none = Transition::default();
         // the element's transition for a property (its own, else the element's)
-        let element_t = |id: i32| spec.transition.as_ref().map_or_else(Transition::default, |v| v.transition_for(id, &none));
+        let element_t = |id: i32| spec.transition().map_or_else(Transition::default, |v| v.transition_for(id, &none));
         {
             // SAFETY: no engine call runs while this borrow lives.
             let s = unsafe { &mut *slot };
@@ -333,7 +402,7 @@ impl Elements {
                 p.base = base_of(p, base, u);
             }
             // `style={{ x: mv }}`: values read every frame
-            if let Some(style) = &spec.style {
+            if let Some(style) = spec.style() {
                 for (k, v) in style.props.iter() {
                     ensure(s, k.id(), base, u);
                     if let (Some(p), Some(r)) = (s.find(k.id()), v.read().filter(|r| !r.current)) {
@@ -343,7 +412,7 @@ impl Elements {
             }
             if first {
                 // where it starts: `initial`, or (initial={false}) where it goes
-                match &spec.initial {
+                match spec.target(When::Initial) {
                     Some(Target::Off) => {
                         for (k, v, _) in &targets {
                             if let (Some(p), Some(r)) = (s.find(k.id()), v.read()) {
@@ -352,8 +421,8 @@ impl Elements {
                             }
                         }
                     }
-                    t => {
-                        if let Some(init) = spec.vars(t.as_ref()) {
+                    _ => {
+                        if let Some(init) = spec.vars(When::Initial) {
                             for (k, v) in init.props.iter() {
                                 ensure(s, k.id(), base, u);
                                 if let (Some(p), Some(r)) = (s.find(k.id()), v.read()) {
@@ -368,7 +437,7 @@ impl Elements {
         // start a motion for each target that changed
         for (k, v, vars) in &targets {
             // SAFETY: as above, for this check only.
-            let changed = unsafe { &mut *slot }.find(k.id()).is_some_and(|p| p.last.as_ref() != Some(*v));
+            let changed = unsafe { &mut *slot }.find(k.id()).is_some_and(|p| !p.last.as_ref().is_some_and(|l| l.same(v)));
             if changed {
                 let t = vars.transition_for(k.id(), &element_t(k.id()));
                 start(slot, k.id(), v.keys(), &t);
@@ -418,12 +487,97 @@ impl Elements {
             }
         }));
         // lay the values over the style
-        let s = unsafe { &*slot };
+        let s = unsafe { &mut *slot };
         for p in &s.props {
             if let Some(r) = p.cur {
                 write(p, &r, out.get_or_insert_with(|| base.clone()), u);
             }
         }
+        // what a redraw needs (a frame with nothing but moving values)
+        s.node = node;
+        s.layout = s.props.iter().any(|p| p.cur.is_some() && !paint_only(p));
+        s.bound.clear();
+        if let Some(style) = spec.style() {
+            s.bound.extend(style.props.iter().filter_map(|(k, v)| match v {
+                Value::Motion(m) => Some((k.id(), *m)),
+                _ => None,
+            }));
+        }
+        // an element with animated properties owns its style (redraws change
+        // it in place), even before its first value arrives
+        if s.props.is_empty() {
+            s.base = None;
+        } else {
+            out.get_or_insert_with(|| base.clone());
+            match &mut s.base {
+                Some(b) => (**b).clone_from(base),
+                None => s.base = Some(Box::new(base.clone())),
+            }
+        }
+    }
+
+    /// A frame where only moving values changed (no render, cascade or
+    /// layout): each element's values go over its style again, and boxes
+    /// moved by `x` / `y` move with their contents. False when that can't do
+    /// (a moving value changes layout, or the frame isn't the one the slots
+    /// know): the window then renders as usual.
+    pub(crate) fn redraw(&mut self, frame: &mut crate::layout::Frame, styles: &mut crate::layout::StyleStore,
+                         viewport: (f32, f32)) -> bool {
+        if self.els.values().any(|s| s.layout && s.base.is_some()) {
+            return false;
+        }
+        let nodes = &mut frame.nodes;
+        let mut moved = false;
+        for (key, s) in &mut self.els {
+            let Some(base) = &s.base else { continue };
+            let Some(n) = nodes.get(s.node).filter(|n| n.key == *key) else { return false };
+            for &(id, mv) in &s.bound {
+                if let Some(p) = s.props.iter_mut().find(|p| p.id == id) {
+                    p.cur = Some(mv.read());
+                }
+            }
+            let st = styles.private_mut(n.style);
+            let u = Units { font_size: base.font_size, viewport };
+            let (w, h) = (n.bounds.size.width, n.bounds.size.height);
+            let before = (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
+            st.clone_from(base);
+            for p in &s.props {
+                if let Some(r) = p.cur {
+                    write(p, &r, st, &u);
+                }
+            }
+            let after = (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
+            if before != after {
+                self.shift.resize(nodes.len(), (0.0, 0.0));
+                self.shift[s.node] = (after.0 - before.0, after.1 - before.1);
+                moved = true;
+            }
+        }
+        if moved {
+            // a box moves with every box under it (parents come before children)
+            for j in 0..nodes.len() {
+                let own = self.shift[j];
+                let up = nodes[j].parent.map_or((0.0, 0.0), |p| self.shift[p]);
+                let d = (own.0 + up.0, own.1 + up.1);
+                self.shift[j] = d;
+                if d != (0.0, 0.0) {
+                    let b = &mut nodes[j].bounds;
+                    b.origin.x += d.0;
+                    b.origin.y += d.1;
+                    // a clip made inside the moved subtree moves with it
+                    let inner = nodes[j].parent.is_some_and(|p| self.shift[p] == d && own == (0.0, 0.0));
+                    let parent_clip = nodes[j].parent.and_then(|p| nodes[p].clip);
+                    if let (true, Some(c)) = (inner, &mut nodes[j].clip) {
+                        if parent_clip != Some(*c) {
+                            c.origin.x += d.0;
+                            c.origin.y += d.1;
+                        }
+                    }
+                }
+            }
+            self.shift.clear();
+        }
+        true
     }
 }
 
@@ -524,6 +678,21 @@ fn ensure(s: &mut Slot, id: i32, base: &Computed, u: &Units) {
         let mut p = PropState { id, fields: fields_for(id), cur: None, base: Read::default(), last: None };
         p.base = base_of(&p, base, u);
         s.props.push(p);
+    }
+}
+
+/// Whether property `p` only changes how things look, not where they are
+/// (transforms, opacity, colors, shadows, filters): a redraw can do it.
+fn paint_only(p: &PropState) -> bool {
+    use Field::{Accent, Backdrop, Background, BorderColor, BoxShadow, Color, DecorationColor, Filter, Opacity,
+                OutlineColor, Rotate, Scale, TextShadow, Transform, Translate, Visibility};
+    match p.id {
+        sys::BK_PROP_X | sys::BK_PROP_Y | sys::BK_PROP_Z | sys::BK_PROP_SCALE | sys::BK_PROP_SCALE_X
+        | sys::BK_PROP_SCALE_Y | sys::BK_PROP_ROTATE | sys::BK_PROP_ROTATE_X | sys::BK_PROP_ROTATE_Y
+        | sys::BK_PROP_SKEW_X | sys::BK_PROP_SKEW_Y => true,
+        _ => p.fields.iter().all(|f| matches!(f, Opacity | Color | Background | BorderColor(_) | OutlineColor
+            | DecorationColor | Accent | BoxShadow | TextShadow | Filter | Backdrop | Rotate | Scale | Transform
+            | Translate | Visibility)),
     }
 }
 

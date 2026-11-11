@@ -189,6 +189,16 @@ impl Value {
         }
     }
 
+    /// Equal values: the same `static` (a literal object's, every render) at
+    /// once, else by value.
+    pub(crate) fn same(&self, o: &Value) -> bool {
+        match (self, o) {
+            (Value::Keys(Cow::Borrowed(a)), Value::Keys(Cow::Borrowed(b))) if std::ptr::eq(*a, *b) => true,
+            (Value::Text(Cow::Borrowed(a)), Value::Text(Cow::Borrowed(b))) if std::ptr::eq(*a, *b) => true,
+            _ => self == o,
+        }
+    }
+
     /// The keyframes (one for a plain value).
     pub(crate) fn keys(&self) -> &[Value] {
         match self {

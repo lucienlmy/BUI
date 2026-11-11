@@ -120,6 +120,12 @@ impl std::ops::Index<StyleId> for StyleStore {
 }
 
 impl StyleStore {
+    /// A style one element owns (an animated one's private copy, never in
+    /// the cache), to change in place.
+    pub(crate) fn private_mut(&mut self, id: StyleId) -> &mut Computed {
+        &mut self.styles[id.0 as usize]
+    }
+
     /// Before building a frame: drop everything when the store has grown
     /// large (ids from the previous frame are not used after this).
     fn begin_frame(&mut self) {
@@ -889,7 +895,11 @@ impl<'a> Builder<'a> {
         if !self.anim.wants(key, &self.styles[style]) && div.motion().is_none() && !crate::motion::pending() {
             return style;
         }
-        let important: smallvec::SmallVec<[Prop; 8]> = {
+        // `!important` holds against CSS animations only (not Motion's values,
+        // nor transitions): looked up only for elements that have some
+        let important: smallvec::SmallVec<[Prop; 8]> = if self.styles[style].anim.is_none() {
+            smallvec::SmallVec::new()
+        } else {
             let (ua, au) = self.matched_rules(i);
             self.declared(i, div, &ua, &au).iter().filter(|d| d.important).map(|d| d.prop).collect()
         };
@@ -902,6 +912,7 @@ impl<'a> Builder<'a> {
             media: &self.au_media,
             important: &important,
             el: self.els.last().expect("the element being laid out"),
+            node: i,
             motion: div.motion(),
             gestures: crate::motion::Gestures {
                 hover: self.state.hovered.contains(&key),

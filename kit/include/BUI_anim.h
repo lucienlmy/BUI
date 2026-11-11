@@ -194,7 +194,7 @@ typedef void (*BKMotionFn)(BKMotion *m, int event, void *data);
 
 typedef struct BKMotionVars {
   double duration;      /* seconds (0.5); springs and inertia compute theirs */
-  double delay;         /* seconds before it starts */
+  double delay;         /* seconds before it starts (negative: it starts that far in) */
   int repeat;           /* -1 forever */
   double repeat_delay;
   int yoyo;
@@ -290,7 +290,8 @@ void BK_anim_set_time_scale(double scale);
 /* GSAP's lagSmoothing: a frame later than `threshold` seconds counts as `adjusted` (0.5,
  * 0.033), so a stall doesn't jump animations to their end; threshold 0 turns it off. */
 void BK_anim_set_lag_smoothing(double threshold, double adjusted);
-/* Stop and forget every motion of `obj` (it is going away), or with prop >= 0 just that one. */
+/* Stop and forget every motion of `obj` (it is going away), or with prop >= 0 just that one
+ * (found at once: per property is the fast way to forget a target). */
 void BK_anim_kill_target(void *obj, int prop);
 /* Called when a motion starts or resumes, so the host draws frames again (the kit sets it
  * to request a frame from every context; a host with its own loop sets its own). */

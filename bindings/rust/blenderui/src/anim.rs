@@ -1238,6 +1238,8 @@ pub(crate) struct Env<'a> {
     pub important: &'a [Prop],
     /// The element, its Motion props, and the states its `while*` follow.
     pub el: &'a crate::layout::ElData,
+    /// its box in the frame
+    pub node: usize,
     pub motion: Option<&'a crate::motion::Spec>,
     pub gestures: crate::motion::Gestures,
 }
@@ -1265,24 +1267,33 @@ impl Animations {
     }
 
     /// After a layout: forget elements that are gone (or lost their
-    /// animations). True when another frame is needed.
-    pub(crate) fn end(&mut self) -> bool {
+    /// animations). Whether CSS animations and transitions (they need full
+    /// frames) and Motion's values (redraws do) still move.
+    pub(crate) fn end(&mut self) -> (bool, bool) {
         let frame = self.frame;
         self.els.retain(|_, e| e.seen == frame);
         self.motion.end();
         crate::motion::end_pending();
-        self.running |= crate::motion::active();
-        self.running
+        (self.running, crate::motion::active())
+    }
+
+    /// A frame of Motion's values alone (see [`Elements::redraw`](crate::motion::Elements)):
+    /// false when a full render is needed.
+    pub(crate) fn redraw_motion(&mut self, frame: &mut crate::layout::Frame, styles: &mut crate::layout::StyleStore,
+                                viewport: (f32, f32)) -> bool {
+        crate::motion::tick();
+        self.motion.redraw(frame, styles, viewport)
     }
 
     /// Whether anything is animating (as of the last layout).
     pub(crate) fn running(&self) -> bool {
-        self.running
+        self.running || crate::motion::active()
     }
 
-    /// Whether any element has animation state (time passing may matter).
+    /// Whether any element has CSS animation state (time passing may matter;
+    /// Motion's values: [`crate::motion::active`]).
     pub(crate) fn any(&self) -> bool {
-        !self.els.is_empty() || crate::motion::active()
+        !self.els.is_empty()
     }
 
     /// Whether element `key` with cascaded style `base` needs [`apply`](Self::apply).
@@ -1423,7 +1434,7 @@ impl Animations {
             let start = out.take();
             let from = start.as_ref().unwrap_or(base);
             let mut moved = None;
-            self.motion.apply(key, env.el, env.motion, from, env.gestures, &u, &mut moved);
+            self.motion.apply(key, env.node, env.el, env.motion, from, env.gestures, &u, &mut moved);
             out = moved.or(start);
         }
         out

@@ -28,7 +28,7 @@ mod value;
 mod vars;
 
 pub use ease::{Ease, ease};
-pub use element::{Spec, Target, Variants};
+pub use element::{Spec, Target, Variants, When};
 pub(crate) use element::{Elements, Gestures, end_pending, pending};
 pub use motion_value::{MotionValue, use_motion_value, use_spring, use_transform, use_velocity};
 pub use tween::{Targets, Timeline, Tween, animate, gsap};
@@ -85,14 +85,19 @@ pub(crate) fn tick() {
 }
 
 /// A motion is about to start: the engine runs on this thread's clock (not
-/// the kit's frames) and catches up with it, so the motion starts now even
-/// after an idle stretch without frames.
+/// the kit's frames). After an idle stretch without frames it catches up
+/// first, so the motion starts now; while motions run, frames keep its time
+/// (a motion starts at this frame's time, as GSAP's do), and a tick per new
+/// motion would be quadratic.
 pub(crate) fn sync() {
     if !USED.replace(true) {
         // SAFETY: plain value.
         unsafe { sys::BK_anim_set_host_clock(1) };
     }
-    tick();
+    // SAFETY: no arguments.
+    if unsafe { sys::BK_anim_active() } == 0 {
+        tick();
+    }
 }
 
 /// Whether anything is animating (windows keep rendering frames).

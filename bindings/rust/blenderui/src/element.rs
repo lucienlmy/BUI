@@ -93,7 +93,7 @@ pub(crate) struct Rare {
     /// Runs before layout with the window and app (see [`Div::defer`]).
     pub deferred: Option<Deferred>,
     /// Motion's props (`initial`, `animate`, `whileHover` ...).
-    pub motion: Option<Box<crate::motion::Spec>>,
+    pub motion: crate::motion::Spec,
 }
 
 /// Styles for interaction states (`.hover(|s| ...)` ...).
@@ -163,7 +163,7 @@ impl Div {
 
     /// Motion's props, when it has any.
     pub(crate) fn motion(&self) -> Option<&crate::motion::Spec> {
-        self.rare.as_ref()?.motion.as_deref()
+        self.rare.as_ref().map(|r| &r.motion).filter(|m| !m.is_empty())
     }
 
     /// Set what this replaced element shows (the last source given wins).

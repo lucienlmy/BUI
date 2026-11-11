@@ -609,7 +609,7 @@ impl App {
         }
         for id in 0..self.windows.len() {
             let Some(w) = self.windows[id].as_deref_mut() else { continue };
-            if !w.dirty {
+            if !w.dirty && !w.motion_frame {
                 continue;
             }
             match w.native {
@@ -626,7 +626,7 @@ impl App {
                 }
                 Some(_) => {}
                 None => {
-                    self.with_window(id, |w, app| w.rebuild(app));
+                    self.with_window(id, |w, app| w.update(app));
                 }
             }
         }
@@ -686,6 +686,8 @@ impl App {
             w.clock.advance(d);
             if w.caches.anim.any() {
                 w.dirty = true;
+            } else if crate::motion::active() {
+                w.request_motion_frame();
             }
         }
         self.flush();
@@ -799,15 +801,22 @@ unsafe extern "C" fn on_emit(data: *mut c_void, node: *mut sys::BKNode, kind: c_
     with_running_app(|app| app.flush());
 }
 
+static FRAMES_PRESENTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Frames drawn by every window so far (full renders and redraws of moving
+/// values alike): a frame counter for benchmarks and overlays, readable from
+/// any thread.
+pub fn frames_presented() -> u64 {
+    FRAMES_PRESENTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 unsafe extern "C" fn on_timer(data: *mut c_void, _win: *mut sys::BKWindow, _id: c_int) {
     let id = data as usize;
     let ran = with_running_app(|app| {
         app.drain();
         app.with_window(id, |w, app| {
             w.timer_pending = false;
-            if w.dirty {
-                w.rebuild(app);
-            }
+            w.update(app);
         });
         app.flush();
     });
@@ -831,9 +840,7 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
         app.drain();
         app.with_window(id, |w, app| {
             w.frame_pending = false;
-            if w.dirty {
-                w.rebuild(app);
-            }
+            w.update(app);
         });
         app.flush();
     });
@@ -912,6 +919,8 @@ pub struct Window {
     timer_pending: bool,
     frame_pending: bool,
     animation_frame: bool,
+    /// The next frame is Motion's values alone: a redraw (no render or layout).
+    motion_frame: bool,
     /// CSS animation time (virtual in headless windows).
     clock: crate::anim::Clock,
     vsync: bool,
@@ -969,6 +978,7 @@ impl Window {
                 timer_pending: false,
                 frame_pending: false,
                 animation_frame: false,
+                motion_frame: false,
                 clock: crate::anim::Clock::new(!headless),
                 vsync: true,
                 closed: false,
@@ -1167,11 +1177,62 @@ impl Window {
         self.caches.anim.begin(self.clock.now());
         let frame = layout(root, vp, &self.state, &mut self.caches, recycle,
                            &mut |key, spec| widgets.ensure(canvas, key, spec, scale));
-        // CSS animations / transitions still moving: render again next frame
-        // (nothing running: no frames, so an idle window costs no CPU)
-        let animating = self.caches.anim.end();
+        // CSS animations / transitions still moving: render again next frame;
+        // Motion's values alone: redraw (nothing running: no frames, so an
+        // idle window costs no CPU)
+        let (css, motion) = self.caches.anim.end();
         // `@container`: sizes changed under a query: render once more
         let container_changed = self.caches.after_layout(&frame);
+        self.present(app, frame);
+        // state of components that didn't render is freed; effects run now
+        crate::hooks::end();
+        if container_changed {
+            self.dirty = true;
+        }
+        if css {
+            self.request_animation_frame();
+        } else if motion {
+            self.request_motion_frame();
+        }
+    }
+
+    /// A frame of Motion's values alone: the last frame's elements, with
+    /// their values set again and painted (no render, cascade or layout).
+    fn redraw(&mut self, app: &mut App) {
+        self.motion_frame = false;
+        let Some(mut frame) = self.frame.take() else { return };
+        let vp = self.viewport();
+        if !self.caches.anim.redraw_motion(&mut frame, &mut self.caches.styles, vp) {
+            self.frame = Some(frame);
+            self.dirty = true;
+            return self.rebuild(app);
+        }
+        self.present(app, frame);
+        if crate::motion::active() {
+            self.request_motion_frame();
+        }
+    }
+
+    /// Draw again on the next display refresh, for Motion's values alone.
+    fn request_motion_frame(&mut self) {
+        self.motion_frame = true;
+        self.animation_frame = true;
+    }
+
+    /// Render the window when it needs it: in full, or a redraw.
+    fn update(&mut self, app: &mut App) {
+        if self.dirty {
+            self.rebuild(app);
+        } else if self.motion_frame {
+            self.redraw(app);
+        }
+    }
+
+    /// Paint `frame` and show it (the widgets placed, the hover updated).
+    fn present(&mut self, app: &mut App, frame: Frame) {
+        FRAMES_PRESENTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let vp = self.viewport();
+        let (canvas, scale) = (self.canvas, self.scale);
         let p = &mut self.painter;
         p.reset();
         {
@@ -1205,14 +1266,6 @@ impl Window {
         self.update_hover(app, false);
         drop(_rest);
         prof::frame_done();
-        // state of components that didn't render is freed; effects run now
-        crate::hooks::end();
-        if container_changed {
-            self.dirty = true;
-        }
-        if animating {
-            self.request_animation_frame();
-        }
     }
 
     // -- events ------------------------------------------------------------------------------

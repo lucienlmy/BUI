@@ -3686,7 +3686,8 @@ bool bk_animations_enabled(void)
 
 int BK_animating(BKContext *ctx)
 {
-  return ctx->nanim > 0 || bk_custom_animating(ctx) || BK_anim_active();
+  /* motions need frames from the kit only when it runs their clock (else the host draws them) */
+  return ctx->nanim > 0 || bk_custom_animating(ctx) || (!BK_anim_host_clock() && BK_anim_active());
 }
 
 void bk_anim_start(BKNode *n)

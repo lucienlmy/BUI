@@ -610,12 +610,14 @@ static BKMotion *root(void)
   return G.root;
 }
 
-/* children are kept in order of start */
 static void link_child(BKMotion *tl, BKMotion *c)
 {
+  /* a timeline's children in order of start (its calls and labels follow it); the global
+   * timeline's in order of arrival: thousands of motions start at once, sorting would be
+   * quadratic, and nothing there depends on the order */
   const double s = start_in_parent(c);
   BKMotion *after = tl->last;
-  while (after && start_in_parent(after) > s) {
+  while (after && tl != G.root && start_in_parent(after) > s) {
     after = after->prev;
   }
   c->parent = tl;
@@ -919,7 +921,7 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
   if (v->kind != BK_MOTION_TWEEN_KIND) {
     resolve(m); /* physics: the duration comes from the distance */
   }
-  start_now(m, BK_MAX(0.0, v->delay));
+  start_now(m, v->delay); /* a negative delay starts it partway (Motion) */
   if (v->immediate || (m->dur == 0.0 && v->delay <= 0.0)) {
     render(m, local_at(m, G.root_time), true);
   }
@@ -1265,9 +1267,26 @@ static void kill_target(BKMotion *tl, void *obj, int prop)
 
 void BK_anim_kill_target(void *obj, int prop)
 {
-  if (G.root && obj) {
-    kill_target(G.root, obj, prop);
+  if (!G.root || !obj) {
+    return;
   }
+  /* one property: the motion driving it, from the drivers hash (no walk over every motion) */
+  Driver *d = prop >= 0 ? driver_find(obj, prop) : NULL;
+  if (d && d->m) {
+    BKMotion *m = d->m;
+    const int ti = d->track;
+    driver_drop(m, ti);
+    m->tracks[ti].killed = true;
+    bool any = false;
+    for (int i = 0; i < m->ntracks; i++) {
+      any |= !m->tracks[i].killed;
+    }
+    if (!any) {
+      BK_motion_kill(m);
+    }
+    return;
+  }
+  kill_target(G.root, obj, prop); /* every property, or motions made without overwrite */
 }
 
 void bk_motion_exit(void)
