@@ -304,6 +304,11 @@ void BK_anim_set_wake(void (*wake)(void *data), void *data);
  * "backgroundColor" (a frame's "bg") and any number BK_set_num takes, by its name. A node
  * being freed stops its motions. */
 extern const BKAnimClass BK_anim_node;
+/* Whether node `node` (a BKNode *) has property `prop` as `n` numbers (4: a color), so a
+ * binding can name a property a node lacks when the motion is made (transforms and opacity
+ * aren't kit properties). */
+struct BKNode;
+int BK_anim_node_has(struct BKNode *node, int prop, int n);
 /* Free every motion and the pools (tests and exit; motions you hold become invalid). */
 void BK_anim_exit(void);
 

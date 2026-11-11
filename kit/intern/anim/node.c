@@ -53,3 +53,17 @@ static void node_set(void *obj, int prop, const float *value, int n, int unit)
 }
 
 const BKAnimClass BK_anim_node = {node_get, node_set, NULL, NULL};
+
+int BK_anim_node_has(BKNode *node, int prop, int n)
+{
+  const char *k = key(prop);
+  if (!node || !k) {
+    return 0;
+  }
+  float c[4];
+  if (n == 4) {
+    return BK_get_color(node, k, c);
+  }
+  /* a number the node doesn't have can't be read apart from a 0: writing it back tells */
+  return BK_set_num(node, k, BK_get_num(node, k));
+}

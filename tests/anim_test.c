@@ -500,6 +500,8 @@ static void test_kit_nodes(void)
   step(0.25);
   float got[4];
   CHECK(BK_get_color(frame, "bg", got) && got[0] > 0.0f && got[0] < 1.0f);
+  CHECK(BK_anim_node_has(slider, BK_anim_prop("value"), 1) && BK_anim_node_has(frame, BK_PROP_BACKGROUND_COLOR, 4));
+  CHECK(!BK_anim_node_has(slider, BK_PROP_OPACITY, 1) && !BK_anim_node_has(slider, BK_PROP_X, 1));
   BK_node_free(slider); /* its motion stops: nothing writes to freed memory */
   BK_node_free(frame);
   CHECK(!BK_motion_is_active(m) && !BK_motion_is_active(c));

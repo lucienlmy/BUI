@@ -74,3 +74,4 @@ void BK_anim_set_clock(double (*now)(void)) { (void)now; }
 int BK_anim_host_clock(void) { return 0; }
 void BK_anim_set_wake(void (*wake)(void *data), void *data) { (void)wake; (void)data; }
 const BKAnimClass BK_anim_node = {NULL, NULL, NULL, NULL};
+int BK_anim_node_has(struct BKNode *node, int prop, int n) { (void)node; (void)prop; (void)n; return 0; }
