@@ -2,6 +2,16 @@
  * float samples at the mixer's rate and channels: the stream needs no
  * conversion (AUTOCONVERTPCM covers a mixer that isn't float).
  *
+ * The stream is opened RAW (AUDCLIENT_STREAMOPTIONS_RAW: the system's effects chain is skipped).
+ * Opening a stream through an effects chain (Realtek's, Dolby, Nahimic, "audio
+ * enhancements") took 1.4 to 1.9 s here, while the same call takes half a second RAW, and every
+ * other Windows audio API (waveOut, DirectSound, XAudio2, miniaudio) goes through the same chain.
+ * The cost is that the effects aren't applied to a video's sound; BUI_AUDIO_EFFECTS=1 keeps them.
+ *
+ * Only about two device periods of sound are queued ahead of the speakers (not the whole buffer):
+ * what is queued still plays after a pause, and a short queue keeps that short. The stream's thread
+ * runs at the "Audio" priority class of the multimedia scheduler so the short queue doesn't run dry.
+ *
  * Everything runs on the stream's thread: opening the default output, the
  * fill loop, and reopening when that output goes away (headphones unplugged,
  * the default changed); the position goes on from where it was, so the clock
@@ -38,7 +48,11 @@ static const IID k_IID_IAudioClock = {
 static const GUID k_SUBTYPE_IEEE_FLOAT = {
     0x00000003, 0x0000, 0x0010, {0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}};
 
+static const IID k_IID_IAudioClient2 = {
+    0x726778cd, 0xf60a, 0x4eda, {0x82, 0xde, 0xe4, 0x76, 0x10, 0xcd, 0x78, 0xaa}};
+
 typedef HRESULT(WINAPI *CoInitializeExFn)(LPVOID, DWORD);
+typedef HANDLE(WINAPI *AvSetMmThreadCharacteristicsFn)(LPCWSTR, LPDWORD);
 typedef HRESULT(WINAPI *CoCreateInstanceFn)(REFCLSID, LPUNKNOWN, DWORD, REFIID, LPVOID *);
 typedef void(WINAPI *CoTaskMemFreeFn)(LPVOID);
 static struct {
@@ -46,6 +60,8 @@ static struct {
   CoInitializeExFn co_init;
   CoCreateInstanceFn create;
   CoTaskMemFreeFn task_free;
+  AvSetMmThreadCharacteristicsFn mmcss; /* avrt.dll: NULL without it */
+  bool effects;                         /* BUI_AUDIO_EFFECTS: keep the system's effects (not RAW) */
 } COM = {INIT_ONCE_STATIC_INIT};
 
 static BOOL CALLBACK com_load(PINIT_ONCE once, PVOID param, PVOID *ctx)
@@ -57,6 +73,12 @@ static BOOL CALLBACK com_load(PINIT_ONCE once, PVOID param, PVOID *ctx)
   COM.co_init = ole ? (CoInitializeExFn)(void *)GetProcAddress(ole, "CoInitializeEx") : NULL;
   COM.create = ole ? (CoCreateInstanceFn)(void *)GetProcAddress(ole, "CoCreateInstance") : NULL;
   COM.task_free = ole ? (CoTaskMemFreeFn)(void *)GetProcAddress(ole, "CoTaskMemFree") : NULL;
+  HMODULE avrt = LoadLibraryW(L"avrt.dll");
+  COM.mmcss = avrt ? (AvSetMmThreadCharacteristicsFn)(void *)GetProcAddress(
+                         avrt, "AvSetMmThreadCharacteristicsW") :
+                     NULL;
+  char flag[8];
+  COM.effects = GetEnvironmentVariableA("BUI_AUDIO_EFFECTS", flag, sizeof(flag)) > 0 && flag[0] != '0';
   return TRUE;
 }
 
@@ -78,6 +100,7 @@ typedef struct Stream {
   IAudioClient *client;
   IAudioRenderClient *render;
   UINT32 frames; /* its buffer */
+  UINT32 target; /* the sound kept queued ahead (frames): about two device periods */
 } Stream;
 
 static void stream_close(BKAudioDevice *d, Stream *s)
@@ -133,7 +156,19 @@ static bool stream_open(BKAudioDevice *d, Stream *s)
                         channels == 2 ? (SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT) :
                                         SPEAKER_FRONT_CENTER;
     fmt.SubFormat = k_SUBTYPE_IEEE_FLOAT;
-    const REFERENCE_TIME buffer = 500000; /* 50 ms: the shortest a video's sound waits */
+    const REFERENCE_TIME buffer = 500000; /* 50 ms: room, not what is queued (feed) */
+    if (!COM.effects) {
+      IAudioClient2 *c2 = NULL;
+      if (SUCCEEDED(IAudioClient_QueryInterface(s->client, &k_IID_IAudioClient2, (void **)&c2))) {
+        AudioClientProperties props;
+        memset(&props, 0, sizeof(props));
+        props.cbSize = sizeof(props);
+        props.eCategory = AudioCategory_Media;
+        props.Options = AUDCLNT_STREAMOPTIONS_RAW; /* not supported by every driver: then as before */
+        IAudioClient2_SetClientProperties(c2, &props);
+        IAudioClient2_Release(c2);
+      }
+    }
     ok = SUCCEEDED(IAudioClient_Initialize(
              s->client, AUDCLNT_SHAREMODE_SHARED,
              AUDCLNT_STREAMFLAGS_EVENTCALLBACK | AUDCLNT_STREAMFLAGS_AUTOCONVERTPCM |
@@ -146,6 +181,14 @@ static bool stream_open(BKAudioDevice *d, Stream *s)
          SUCCEEDED(IAudioClient_GetService(s->client, &k_IID_IAudioClock, (void **)&clock));
     d->rate = (int)fmt.Format.nSamplesPerSec;
     d->channels = channels;
+    REFERENCE_TIME period = 0;
+    IAudioClient_GetDevicePeriod(s->client, &period, NULL);
+    /* two periods (at least 20 ms), within the buffer */
+    const double seconds = period > 100000 ? 2.0 * (double)period / 1e7 : 0.021;
+    s->target = (UINT32)((seconds < 0.020 ? 0.020 : seconds) * (double)d->rate);
+    if (s->target > s->frames) {
+      s->target = s->frames;
+    }
   }
   if (ok) {
     UINT64 freq = 0;
@@ -182,7 +225,7 @@ static bool feed(BKAudioDevice *d, Stream *s)
   if (FAILED(IAudioClient_GetCurrentPadding(s->client, &padding))) {
     return false;
   }
-  const UINT32 room = s->frames - padding;
+  const UINT32 room = padding < s->target ? s->target - padding : 0; /* up to the target only */
   if (room == 0) {
     return true;
   }
@@ -198,6 +241,10 @@ static DWORD WINAPI stream_thread(LPVOID param)
 {
   BKAudioDevice *d = (BKAudioDevice *)param;
   COM.co_init(NULL, COINIT_MULTITHREADED);
+  if (COM.mmcss) {
+    DWORD task = 0;
+    COM.mmcss(L"Audio", &task); /* not going back: the thread ends with the stream */
+  }
   Stream s;
   memset(&s, 0, sizeof(s));
   while (!d->stop) {
