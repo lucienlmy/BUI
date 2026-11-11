@@ -292,11 +292,21 @@ pub struct Painter {
     text: Vec<u8>,
     clip: Option<Bounds<f32>>,
     opacity: f32,
+    /// Retained painting (frames where only moving values changed): each
+    /// box's items (start, end; u32::MAX when it painted none), each item's
+    /// index in the canvas (-1: none), the text size after the full paint,
+    /// and the items repainted since (only they go to the canvas).
+    ranges: Vec<(u32, u32)>,
+    slots: Vec<i32>,
+    text_full: usize,
+    changed: Vec<u32>,
+    retained: bool,
+    partial: bool,
 }
 
 impl Painter {
     pub(crate) fn new() -> Painter {
-        Painter { items: Vec::new(), text: Vec::new(), clip: None, opacity: 1.0 }
+        Painter { opacity: 1.0, ..Painter::default() }
     }
 
     /// Empty for the next frame, keeping the buffers.
@@ -305,6 +315,45 @@ impl Painter {
         self.text.clear();
         self.clip = None;
         self.opacity = 1.0;
+        self.ranges.clear();
+        self.retained = false;
+        self.partial = false;
+    }
+
+    /// Paint again only the boxes marked in `dirty` (with what they paint
+    /// over: nothing, their items stay in place). False when that can't be
+    /// done (the last paint had layers, a box paints a different number of
+    /// items now, the text grew too much): paint the frame in full instead.
+    pub(crate) fn repaint(&mut self, frame: &Frame, styles: &StyleStore, tc: &mut TextCache, dirty: &[bool],
+                          vp: (f32, f32), app: &crate::window::App) -> bool {
+        if !self.retained || self.ranges.len() != frame.nodes.len() || self.text.len() > 2 * self.text_full + 4096 {
+            return false;
+        }
+        self.changed.clear();
+        for (i, _) in dirty.iter().enumerate().filter(|(_, d)| **d) {
+            let (start, end) = self.ranges[i];
+            let n = &frame.nodes[i];
+            let at = self.items.len();
+            if n.visible && n.opacity > 0.0 {
+                self.opacity = n.opacity;
+                self.clip = n.clip;
+                paint_node(frame, styles, tc, i, self, vp, app);
+            }
+            let painted = (self.items.len() - at) as u32;
+            let had = if start == u32::MAX { 0 } else { end - start };
+            if painted != had {
+                return false;
+            }
+            for k in 0..painted {
+                self.items.swap((start + k) as usize, at + k as usize);
+                self.changed.push(start + k);
+            }
+            self.items.truncate(at);
+        }
+        self.opacity = 1.0;
+        self.clip = None;
+        self.partial = true;
+        true
     }
 
     fn push(&mut self, kind: Kind, coords: Coords, fill: Rgba) {
@@ -513,16 +562,40 @@ impl Painter {
         Some(ci)
     }
 
-    /// Replace the canvas display list with these items, scaled to device pixels.
-    pub(crate) fn flush(&self, canvas: *mut sys::BKNode, scale: f32) {
+    /// Replace the canvas display list with these items, scaled to device
+    /// pixels (after a [`repaint`](Self::repaint): only the items it changed).
+    pub(crate) fn flush(&mut self, canvas: *mut sys::BKNode, scale: f32) {
         let mut coords: Vec<f32> = Vec::new();
+        if std::mem::take(&mut self.partial) {
+            let partial_ok = self.changed.iter().all(|&k| {
+                let slot = self.slots[k as usize];
+                let Some(mut ci) = self.build_item(&self.items[k as usize], scale, &mut coords, None) else {
+                    return slot < 0;
+                };
+                if slot < 0 {
+                    return false; // it shows now: indices shift, send everything
+                }
+                ci.coords = coords.as_ptr();
+                // SAFETY: as below
+                unsafe { sys::BK_canvas_put_item(canvas, slot, &ci) };
+                true
+            });
+            if partial_ok {
+                return;
+            }
+        }
+        self.slots.clear();
         let mut count: i32 = 0;
         for it in &self.items {
-            let Some(mut ci) = self.build_item(it, scale, &mut coords, None) else { continue };
+            let Some(mut ci) = self.build_item(it, scale, &mut coords, None) else {
+                self.slots.push(-1);
+                continue;
+            };
             ci.coords = coords.as_ptr();
             // SAFETY: every pointer in `ci` outlives the call; the kit copies
             // them into the slot's existing buffers.
             unsafe { sys::BK_canvas_put_item(canvas, count, &ci) };
+            self.slots.push(count);
             count += 1;
         }
         // SAFETY: `canvas` is a live kit canvas node owned by the window.
@@ -626,6 +699,9 @@ pub(crate) fn paint_frame(frame: &Frame, styles: &StyleStore, tc: &mut TextCache
     }
     let has_effects = frame.nodes.iter().any(|n| styles[n.style].effects.is_some());
     if !has_effects {
+        // each box's items, for redraws that paint only what moved
+        p.ranges.clear();
+        p.ranges.resize(frame.nodes.len(), (u32::MAX, 0));
         for i in order {
             let n = &frame.nodes[i];
             if !n.visible || n.opacity <= 0.0 {
@@ -633,8 +709,12 @@ pub(crate) fn paint_frame(frame: &Frame, styles: &StyleStore, tc: &mut TextCache
             }
             p.opacity = n.opacity;
             p.clip = n.clip;
+            let start = p.items.len() as u32;
             paint_node(frame, styles, tc, i, p, vp, app);
+            p.ranges[i] = (start, p.items.len() as u32);
         }
+        p.retained = true;
+        p.text_full = p.text.len();
     } else {
         let mut cx = LayerCx { frame, styles, tc, vp, scale, app, done: vec![false; frame.nodes.len()] };
         paint_list(&mut cx, &order, p, None, 1.0);

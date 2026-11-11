@@ -1292,6 +1292,15 @@ impl Animations {
         self.motion.redraw(frame, styles, viewport)
     }
 
+    /// The boxes the last redraw changed (lend the list; give it back after).
+    pub(crate) fn take_redrawn(&mut self) -> Vec<bool> {
+        self.motion.take_dirty()
+    }
+
+    pub(crate) fn give_redrawn(&mut self, v: Vec<bool>) {
+        self.motion.give_dirty(v);
+    }
+
     /// Whether anything is animating (as of the last layout).
     pub(crate) fn running(&self) -> bool {
         self.running || crate::motion::active()

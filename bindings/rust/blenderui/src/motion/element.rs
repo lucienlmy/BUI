@@ -372,6 +372,8 @@ pub(crate) struct Elements {
     frame: u64,
     /// scratch: each box's move on a redraw
     shift: Vec<(f32, f32)>,
+    /// the boxes a redraw changed (its elements and everything under them)
+    dirty: Vec<bool>,
 }
 
 impl Drop for Elements {
@@ -383,6 +385,14 @@ impl Drop for Elements {
 }
 
 impl Elements {
+    pub(crate) fn take_dirty(&mut self) -> Vec<bool> {
+        std::mem::take(&mut self.dirty)
+    }
+
+    pub(crate) fn give_dirty(&mut self, v: Vec<bool>) {
+        self.dirty = v;
+    }
+
     pub(crate) fn begin(&mut self) {
         self.frame += 1;
     }
@@ -586,6 +596,8 @@ impl Elements {
         let nodes = &mut frame.nodes;
         let mut moved = false;
         let mut faded = false;
+        self.dirty.clear();
+        self.dirty.resize(nodes.len(), false);
         for &i in live.iter() {
             let (c, o) = at(i);
             let s = &mut chunks[c][o];
@@ -596,6 +608,7 @@ impl Elements {
                     p.cur = Some(mv.read());
                 }
             }
+            self.dirty[s.node] = true;
             let st = styles.private_mut(n.style);
             let u = Units { font_size: base.font_size, viewport };
             let (w, h) = (n.bounds.size.width, n.bounds.size.height);
@@ -623,6 +636,12 @@ impl Elements {
         }
         if faded {
             crate::layout::inherit(nodes, styles); // boxes keep their opacity times their parents'
+        }
+        // what's under a changed box changes with it (opacity, position)
+        for j in 0..nodes.len() {
+            if let Some(p) = nodes[j].parent {
+                self.dirty[j] |= self.dirty[p];
+            }
         }
         if moved {
             // a box moves with every box under it (parents come before children)

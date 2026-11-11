@@ -1183,7 +1183,7 @@ impl Window {
         let (css, motion) = self.caches.anim.end();
         // `@container`: sizes changed under a query: render once more
         let container_changed = self.caches.after_layout(&frame);
-        self.present(app, frame);
+        self.present(app, frame, None);
         // state of components that didn't render is freed; effects run now
         crate::hooks::end();
         if container_changed {
@@ -1207,7 +1207,10 @@ impl Window {
             self.dirty = true;
             return self.rebuild(app);
         }
-        self.present(app, frame);
+        // the boxes the values changed: only they are painted again
+        let dirty = self.caches.anim.take_redrawn();
+        self.present(app, frame, Some(&dirty));
+        self.caches.anim.give_redrawn(dirty);
         if crate::motion::active() {
             self.request_motion_frame();
         }
@@ -1229,15 +1232,19 @@ impl Window {
     }
 
     /// Paint `frame` and show it (the widgets placed, the hover updated).
-    fn present(&mut self, app: &mut App, frame: Frame) {
+    /// `dirty`: a redraw's boxes to paint again (the rest kept), when it can.
+    fn present(&mut self, app: &mut App, frame: Frame, dirty: Option<&[bool]>) {
         FRAMES_PRESENTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let vp = self.viewport();
         let (canvas, scale) = (self.canvas, self.scale);
         let p = &mut self.painter;
-        p.reset();
         {
             let _s = span(Phase::Paint);
-            paint_frame(&frame, &self.caches.styles, &mut self.caches.text, p, vp, self.scale, app);
+            let kept = dirty.is_some_and(|d| p.repaint(&frame, &self.caches.styles, &mut self.caches.text, d, vp, app));
+            if !kept {
+                p.reset();
+                paint_frame(&frame, &self.caches.styles, &mut self.caches.text, p, vp, self.scale, app);
+            }
         }
         {
             let _s = span(Phase::Flush);
