@@ -537,9 +537,11 @@ impl Elements {
                          viewport: (f32, f32)) -> bool {
         let Arena { chunks, live, .. } = &mut self.els;
         let at = |i: u32| (i as usize / CHUNK, i as usize % CHUNK);
+        // a layout value moving now (also one whose first value came after the last full frame)
         if live.iter().any(|&i| {
             let (c, o) = at(i);
-            chunks[c][o].layout && chunks[c][o].base.is_some()
+            let s = &chunks[c][o];
+            s.base.is_some() && (s.layout || s.props.iter().any(|p| p.cur.is_some() && !paint_only(p)))
         }) {
             return false;
         }

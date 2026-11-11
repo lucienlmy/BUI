@@ -7,16 +7,18 @@ use super::value::{Key, Value};
 use super::vars::{Flavor, Transition};
 use crate::layout::ElData;
 
-/// One compound selector: tag, `#id`, `.class`es, all matching.
+/// One compound selector: tag, `#id`, `.class`es, `[attr]` / `[attr=value]`s,
+/// all matching.
 #[derive(Debug, Default)]
 struct Compound {
     tag: Option<Box<str>>,
     id: Option<Box<str>>,
     classes: SmallVec<[Box<str>; 2]>,
+    attrs: SmallVec<[(Box<str>, Option<Box<str>>); 1]>,
 }
 
-/// The elements of an imperative motion: `"#id"`, `".a.b"`, `"div.card"`, a
-/// comma-separated list (any matching).
+/// The elements of an imperative motion: `"#id"`, `".a.b"`, `"div.card"`,
+/// `"[data-x]"`, `"[data-x=\"1\"]"`, a comma-separated list (any matching).
 #[derive(Debug, Default)]
 pub(crate) struct Selector(SmallVec<[Compound; 1]>);
 
@@ -25,13 +27,23 @@ impl Selector {
         Selector(s.split(',').map(|part| {
             let mut c = Compound::default();
             let mut rest = part.trim();
-            let tag_end = rest.find(['#', '.']).unwrap_or(rest.len());
+            let tag_end = rest.find(['#', '.', '[']).unwrap_or(rest.len());
             if tag_end > 0 && &rest[..tag_end] != "*" {
                 c.tag = Some(rest[..tag_end].into());
             }
             rest = &rest[tag_end..];
             while let Some(kind) = rest.chars().next() {
-                let end = rest[1..].find(['#', '.']).map_or(rest.len(), |i| i + 1);
+                if kind == '[' {
+                    let end = rest.find(']').unwrap_or(rest.len());
+                    let inner = &rest[1..end];
+                    c.attrs.push(match inner.split_once('=') {
+                        Some((n, v)) => (n.trim().into(), Some(v.trim().trim_matches(['"', '\'']).into())),
+                        None => (inner.trim().into(), None),
+                    });
+                    rest = rest.get(end + 1..).unwrap_or("");
+                    continue;
+                }
+                let end = rest[1..].find(['#', '.', '[']).map_or(rest.len(), |i| i + 1);
                 let name: Box<str> = rest[1..end].into();
                 if kind == '#' {
                     c.id = Some(name);
@@ -50,6 +62,7 @@ impl Selector {
             c.tag.as_deref().is_none_or(|t| t == el.tag)
                 && c.id.as_deref().is_none_or(|id| attr("id") == Some(id))
                 && c.classes.iter().all(|cl| attr("class").is_some_and(|v| v.split_whitespace().any(|x| x == &**cl)))
+                && c.attrs.iter().all(|(n, v)| attr(n).is_some_and(|a| v.as_deref().is_none_or(|v| v == a)))
         })
     }
 }
@@ -62,6 +75,8 @@ pub(crate) struct Pending {
     pub transition: Transition,
     pub from: bool,
     pub flavor: Flavor,
+    /// what keeps `timeline` from ending empty until the elements are found
+    pub hold: super::Tween,
     pub timeline: super::Tween,
     pub matched: usize,
 }
@@ -86,8 +101,16 @@ pub(crate) fn pending() -> bool {
     PENDING.with(|c| with_pending(c, |v| !v.is_empty()))
 }
 
-/// After a layout: the waiting motions found their elements (or none).
+/// Whether motion `m` waits for a layout to find its elements.
+pub(crate) fn waits(m: *mut blenderui_sys::BKMotion) -> bool {
+    PENDING.with(|c| with_pending(c, |v| v.iter().any(|p| p.timeline.raw() == m)))
+}
+
+/// After a layout: the waiting motions found their elements (or none), and
+/// their timelines start (and take their places in timelines).
 pub(crate) fn end_pending() {
-    let done = PENDING.with(std::cell::Cell::take);
-    drop(done);
+    for p in PENDING.with(std::cell::Cell::take) {
+        p.hold.kill();
+    }
+    super::tween::run_deferred();
 }

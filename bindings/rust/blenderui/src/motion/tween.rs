@@ -223,6 +223,7 @@ fn start(targets: Targets, vars: Vars, from: bool, flavor: Flavor) -> Tween {
                     transition: each,
                     from,
                     flavor,
+                    hold: hold(&tl),
                     timeline: tl.clone(),
                     matched: 0,
                 }),
@@ -231,6 +232,21 @@ fn start(targets: Targets, vars: Vars, from: bool, flavor: Flavor) -> Tween {
             tl
         }
     }
+}
+
+/// A selector's elements are found at the next layout: until then its
+/// timeline holds this (nothing, for ever) so it doesn't end empty.
+fn hold(tl: &Tween) -> Tween {
+    static NOTHING: sys::BKAnimClass = sys::BKAnimClass { get: None, set: None, retain: None, release: None };
+    // SAFETY: plain values; a tween of no tracks never reads its object.
+    let h = unsafe {
+        let mut v = sys::BK_motion_vars_default();
+        v.duration = 1e9;
+        Tween::from_raw(sys::BK_tween(&raw const NOTHING, std::ptr::null_mut(), std::ptr::null(), 0, &raw const v))
+    };
+    // SAFETY: both alive; the timeline takes it.
+    unsafe { sys::BK_timeline_add(tl.raw(), h.raw(), c"0".as_ptr()) };
+    h
 }
 
 /// GSAP's API: `gsap::to("#box", vars!{ x: 100, duration: 1 })`.
@@ -299,11 +315,20 @@ impl Timeline {
         Timeline(Tween::from_raw(unsafe { sys::BK_timeline(&raw const v) }))
     }
 
-    fn place(&self, t: &Tween, position: &str) -> &Self {
-        let pos = CString::new(position).unwrap_or_default();
-        // SAFETY: both alive.
-        unsafe { sys::BK_timeline_add(self.0.raw(), t.raw(), pos.as_ptr()) };
+    /// Do `op` now, or (this timeline waits for elements) after the layout
+    /// that finds them, in order.
+    fn then(&self, op: Deferred, waits: bool) -> &Self {
+        if waits || DEFERRED.with(|d| with_deferred(d, |v| v.iter().any(|(tl, _)| tl.raw() == self.0.raw()))) {
+            DEFERRED.with(|d| with_deferred(d, |v| v.push((self.0.clone(), op))));
+        } else {
+            op.run(&self.0);
+        }
         self
+    }
+
+    fn place(&self, t: &Tween, position: &str) -> &Self {
+        // a selector's elements are found at the next layout: until then it has no length
+        self.then(Deferred::Place(t.clone(), CString::new(position).unwrap_or_default()), super::pending::waits(t.raw()))
     }
 
     /// `tl.to(targets, vars, position)`.
@@ -330,14 +355,35 @@ impl Timeline {
 
     pub fn add_label(&self, name: &str, position: &str) -> &Self {
         let (n, p) = (CString::new(name).unwrap_or_default(), CString::new(position).unwrap_or_default());
-        // SAFETY: a live timeline.
-        unsafe { sys::BK_timeline_label(self.0.raw(), n.as_ptr(), p.as_ptr()) };
-        self
+        self.then(Deferred::Label(n, p), false)
     }
 
     /// Run `f` when the playhead passes `position` (GSAP's `call()`).
     pub fn call(&self, f: impl FnMut() + 'static, position: &str) -> &Self {
-        unsafe extern "C" fn run(_m: *mut sys::BKMotion, _ev: i32, data: *mut std::ffi::c_void) {
+        self.then(Deferred::Call(Box::new(Box::new(f)), CString::new(position).unwrap_or_default()), false)
+    }
+
+    /// When label `name` is (seconds), if it exists (once the elements of
+    /// selectors placed before it are found).
+    #[must_use]
+    pub fn label_time(&self, name: &str) -> Option<f64> {
+        let n = CString::new(name).unwrap_or_default();
+        // SAFETY: a live timeline.
+        let t = unsafe { sys::BK_timeline_label_time(self.0.raw(), n.as_ptr()) };
+        (t >= 0.0).then_some(t)
+    }
+}
+
+/// A timeline's placement, label or call.
+enum Deferred {
+    Place(Tween, CString),
+    Label(CString, CString),
+    Call(Box<Box<dyn FnMut()>>, CString),
+}
+
+impl Deferred {
+    fn run(self, tl: &Tween) {
+        unsafe extern "C" fn call(_m: *mut sys::BKMotion, _ev: i32, data: *mut std::ffi::c_void) {
             // SAFETY: the box handed over below, alive while the call is.
             let f = unsafe { &mut *data.cast::<Box<dyn FnMut()>>() };
             f();
@@ -346,20 +392,34 @@ impl Timeline {
             // SAFETY: the box handed over below.
             drop(unsafe { Box::from_raw(data.cast::<Box<dyn FnMut()>>()) });
         }
-        let data: Box<Box<dyn FnMut()>> = Box::new(Box::new(f));
-        let p = CString::new(position).unwrap_or_default();
-        // SAFETY: the timeline takes the closure (and frees it).
-        unsafe { sys::BK_timeline_call(self.0.raw(), Some(run), Box::into_raw(data).cast(), Some(free), p.as_ptr()) };
-        self
+        // SAFETY (all three): a live timeline (and child); the timeline takes the closure (and frees it).
+        match self {
+            Deferred::Place(t, p) => unsafe { sys::BK_timeline_add(tl.raw(), t.raw(), p.as_ptr()); },
+            Deferred::Label(n, p) => unsafe { sys::BK_timeline_label(tl.raw(), n.as_ptr(), p.as_ptr()); },
+            Deferred::Call(f, p) => unsafe {
+                sys::BK_timeline_call(tl.raw(), Some(call), Box::into_raw(f).cast(), Some(free), p.as_ptr());
+            },
+        }
     }
+}
 
-    /// When label `name` is (seconds), if it exists.
-    #[must_use]
-    pub fn label_time(&self, name: &str) -> Option<f64> {
-        let n = CString::new(name).unwrap_or_default();
-        // SAFETY: a live timeline.
-        let t = unsafe { sys::BK_timeline_label_time(self.0.raw(), n.as_ptr()) };
-        (t >= 0.0).then_some(t)
+thread_local! {
+    /// Timelines' operations waiting for a layout to find their selectors' elements.
+    static DEFERRED: std::cell::Cell<Vec<(Tween, Deferred)>> = const { std::cell::Cell::new(Vec::new()) };
+}
+
+fn with_deferred<R>(c: &std::cell::Cell<Vec<(Tween, Deferred)>>, f: impl FnOnce(&mut Vec<(Tween, Deferred)>) -> R) -> R {
+    let mut v = c.take();
+    let r = f(&mut v);
+    c.set(v);
+    r
+}
+
+/// After a layout found the selectors' elements: the timelines' waiting
+/// operations, in the order they were made.
+pub(crate) fn run_deferred() {
+    for (tl, op) in DEFERRED.with(std::cell::Cell::take) {
+        op.run(&tl);
     }
 }
 
