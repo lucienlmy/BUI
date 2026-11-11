@@ -13,6 +13,14 @@
       "default": "./index.js"
     },
     "./signals": "./signals.js",
+    "./gsap": {
+      "types": "./gsap.d.ts",
+      "default": "./gsap.js"
+    },
+    "./motion": {
+      "types": "./motion.d.ts",
+      "default": "./motion.js"
+    },
     "./host": {
       "types": "./host.d.ts",
       "default": "./host.js"
@@ -30,7 +38,13 @@
     "globals.js",
     "bundle.js",
     "signals.js",
+    "anim.js",
+    "gsap.js",
+    "motion.js",
+    "waapi.js",
     "index.d.ts",
+    "gsap.d.ts",
+    "motion.d.ts",
     "host.d.ts",
     "globals.d.ts",
     "cli.js",

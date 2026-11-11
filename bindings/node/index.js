@@ -40,6 +40,7 @@ function loadAddon () {
 const signals = require('./signals')
 const dom = require('./dom')
 const { OP, HTMLElement, TextNode, Comment, DocumentFragment, createElement } = dom
+const { Motions } = require('./anim')
 
 const LAYERS = ['background', 'bottom', 'top', 'overlay']
 const EDGES = ['top', 'bottom', 'left', 'right']
@@ -75,6 +76,7 @@ class Window {
     this._ops = []
     this._strings = []
     this._stringIds = new Map()
+    this._motion = [] // [which, value, ...]: the Motion props of this tick's MOTION ops
     this._scheduled = false
     this._on = { close: new Set(), focus: new Set(), blur: new Set() }
     this._frameCallbacks = new Map()
@@ -116,11 +118,13 @@ class Window {
     if (this._ops.length === 0) return
     const ops = this.closed ? null : Int32Array.from(this._ops)
     const strings = this._strings
+    const motion = this._motion.length > 0 ? this._motion : undefined
     this._ops.length = 0 // the array keeps its capacity for the next tick
     this._strings = []
     this._stringIds.clear()
+    if (motion) this._motion = []
     // while animating, changes render on the next vsync (one rebuild per frame)
-    if (ops) this.app.native.commit(this.id, ops, strings, this._inFrame || this._framePending)
+    if (ops) this.app.native.commit(this.id, ops, strings, this._inFrame || this._framePending, motion)
   }
 
   /**
@@ -213,6 +217,12 @@ class Window {
     queueMicrotask(() => this.flush())
   }
 
+  /** A Motion prop of node `id` (read by the addon when this tick is sent). */
+  _motionOp (id, which, value) {
+    this._op(OP.MOTION, id, which, this._motion.length / 2)
+    this._motion.push(which, value)
+  }
+
   _s (str) {
     let i = this._stringIds.get(str)
     if (i === undefined) {
@@ -253,9 +263,21 @@ class App {
     this.native = new native.NativeApp(
       { gpu: options.gpu, slug: options.slug, headless: options.headless, theme: options.theme },
       raw => this._event(raw))
+    /** Its animations (gsap, motion, `el.animate`): the newest App's take selectors. */
+    this.motions = new Motions(this)
   }
 
   get headless () { return this.native.headless }
+
+  /** Move the animation clock `ms` forward; headless, every window renders
+   *  that frame (tests step animations frame-exactly). Resolves once the
+   *  step's callbacks (onUpdate ...) have run. */
+  advanceClock (ms) {
+    for (const w of this.windows.values()) w.flush()
+    const step = new Promise((resolve) => (this._clock ??= []).push(resolve))
+    this.native.advanceClock(ms)
+    return step
+  }
 
   /** Open a window: `{ title, width, height, resizable, gpu }`. */
   window (options) {
@@ -315,6 +337,7 @@ class App {
   quit () {
     if (this._quit) return
     this._quit = true
+    this.motions.close()
     for (const w of [...this.windows.values()]) {
       w.flush()
       w._closed()
@@ -323,6 +346,8 @@ class App {
   }
 
   _event (raw) {
+    if (raw.kind === 'motion') return this.motions._event(raw)
+    if (raw.kind === 'clock') return this._clock?.shift()?.()
     const win = this.windows.get(raw.window)
     if (!win) return
     if (raw.kind === 'close') {
@@ -344,6 +369,7 @@ class App {
     this.windows.delete(win.id)
     if (this.quitOnLastWindowClosed && this.windows.size === 0 && !this._quit) {
       this._quit = true
+      this.motions.close()
       this.native.quit()
     }
   }

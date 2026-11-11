@@ -13,7 +13,9 @@
 const { isSignal, effect, unowned, memo } = require('./signals')
 
 // Keep in sync with bindings/rust/blenderui-node/src/lib.rs.
-const OP = { CREATE: 0, TEXT: 1, SET_ATTR: 2, REMOVE_ATTR: 3, APPEND: 4, INSERT: 5, REMOVE: 6, SET_TEXT: 7, LISTEN: 8, FREE: 9 }
+const OP = { CREATE: 0, TEXT: 1, SET_ATTR: 2, REMOVE_ATTR: 3, APPEND: 4, INSERT: 5, REMOVE: 6, SET_TEXT: 7, LISTEN: 8, FREE: 9, MOTION: 10 }
+// Motion's props (keep in sync with MotionProp::parse, bindings/rust/blenderui-jsview/src/motion.rs)
+const MOTION_PROPS = { initial: 0, animate: 1, exit: 2, whileHover: 3, whileTap: 4, whileFocus: 5, transition: 6, style: 7, variants: 8 }
 const EVENT_BITS = {
   click: 1, mousedown: 2, mouseup: 4, mousemove: 8, mouseenter: 16, mouseleave: 16,
   wheel: 32, keydown: 64, keyup: 128, change: 256, input: 512,
@@ -557,13 +559,41 @@ class Element extends Node {
     const x = (this._x ??= {})
     return (x.style ??= new Style(this))
   }
-  /** A CSS declaration string, or an object (`{ backgroundColor: 'red', width: 40 }`). */
+  /** A CSS declaration string, or an object (`{ backgroundColor: 'red', width: 40 }`);
+   *  its motion values (`{ x: mv }`) are read each frame by the engine. */
   set style (v) {
-    if (v == null) return this.removeAttribute('style')
+    if (v == null) {
+      if (this._x?.motion?.style) this.setMotion('style', null)
+      return this.removeAttribute('style')
+    }
     if (typeof v === 'string' || isSignal(v)) return this.setAttribute('style', v)
+    let motion = null
+    for (const k in v) if (isMotionValue(v[k])) (motion ??= {})[k] = v[k]
+    if (motion !== null || this._x?.motion?.style) {
+      this.setMotion('style', motion)
+      if (motion !== null) {
+        v = { ...v }
+        for (const k in motion) delete v[k]
+      }
+    }
     // an object: plain values, or some signals (`{ color: colorSignal }`), then bound
     for (const k in v) if (isSignal(v[k])) return this.setAttribute('style', memo(() => styleText(v)))
     this.setAttribute('style', styleText(v))
+  }
+
+  /**
+   * One of Motion's props: `initial`, `animate`, `exit`, `whileHover`,
+   * `whileTap`, `whileFocus` (an object of values, a variant's name, or
+   * false), `transition`, `variants`, `style` (motion values); null removes it.
+   */
+  setMotion (name, value) {
+    const which = MOTION_PROPS[name]
+    if (which === undefined) throw new TypeError(`blenderui: no Motion prop '${name}'`)
+    const m = ((this._x ??= {}).motion ??= {})
+    if (value == null) delete m[name]
+    else m[name] = value
+    const w = this.ownerWindow
+    if (w !== null) w._motionOp(this.id, which, value ?? null)
   }
 
   get textContent () { return super.textContent }
@@ -604,6 +634,8 @@ class Element extends Node {
     const a = this._attrs
     if (a !== null) for (let i = 0; i < a.length; i += 2) win._op(OP.SET_ATTR, this.id, win._s(a[i]), win._s(a[i + 1]))
     if (this._bits !== 0) win._op(OP.LISTEN, this.id, this._bits)
+    const m = this._x?.motion
+    if (m) for (const k in m) win._motionOp(this.id, MOTION_PROPS[k], m[k])
   }
 
   _clone () {
@@ -646,13 +678,10 @@ class Element extends Node {
     e.currentTarget = null
   }
 
-  /** Web Animations aren't run: the animation finishes at once (as React's
-   *  `<ViewTransition>` commits without animating). */
-  animate () {
-    const a = { playState: 'finished', currentTime: 0, onfinish: null, cancel () {}, finish () {}, pause () {}, play () {} }
-    a.finished = Promise.resolve(a)
-    queueMicrotask(() => a.onfinish?.())
-    return a
+  /** Web Animations: `animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: 'ease-out' })`,
+   *  run by the engine; returns an `Animation` (play, pause, cancel, finish, `finished`). */
+  animate (keyframes, options) {
+    return require('./waapi').animate(this, keyframes, options)
   }
 
   /** Layout box `{ x, y, width, height }` in logical pixels (or null). */
@@ -714,6 +743,9 @@ for (const [prop, attr] of [['type', 'type'], ['name', 'name'], ['placeholder', 
 const UNITLESS = new Set(['opacity', 'z-index', 'flex', 'flex-grow', 'flex-shrink', 'order', 'font-weight',
   'line-height', 'zoom', 'aspect-ratio', 'grid-row', 'grid-column', 'scale'])
 
+/** A motion value (anim.js's; the addon finds it by the same property). */
+function isMotionValue (v) { return v != null && typeof v === 'object' && v.__buiMotionValue !== undefined }
+
 /** `{ backgroundColor: 'red', width: 40 }` -> `background-color: red; width: 40px` */
 function styleText (o) {
   let s = ''
@@ -773,6 +805,6 @@ class Document {
 const document = new Document()
 
 module.exports = {
-  OP, EVENT_BITS, BUTTONS, BLENDER_COMPONENTS, BuiEvent, Node, TextNode, Comment, DocumentFragment, Element, HTMLElement, Document,
-  document, createElement, styleText,
+  OP, MOTION_PROPS, EVENT_BITS, BUTTONS, BLENDER_COMPONENTS, BuiEvent, Node, TextNode, Comment, DocumentFragment, Element, HTMLElement, Document,
+  document, createElement, styleText, isMotionValue,
 }

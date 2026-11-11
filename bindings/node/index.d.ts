@@ -1,4 +1,7 @@
 // Types for @blender-ui/native.
+import type { MotionProps, MotionValue } from './motion'
+export type { MotionProps } from './motion'
+
 export interface AppOptions {
   /** Draw on the GPU: Direct3D 11 on Windows, OpenGL 3.3 on Linux. */
   gpu?: boolean
@@ -142,7 +145,40 @@ export interface ClassList {
   contains (name: string): boolean
 }
 
-type StyleValue = string | Record<string, string | number | null | undefined>
+/** A style object's values; motion values (`{ x: mv }`) are read by the engine each frame. */
+type StyleValue = string | Record<string, string | number | MotionValue<any> | null | undefined>
+
+/** A Web Animations keyframe: property values, `offset` (0..1) and `easing`. */
+export interface Keyframe { offset?: number | null, easing?: string, [property: string]: string | number | null | undefined }
+export interface KeyframeAnimationOptions {
+  /** ms */
+  duration?: number
+  /** ms */
+  delay?: number
+  /** any ease name (CSS, GSAP, Motion, Blender) */
+  easing?: string
+  iterations?: number
+  direction?: 'normal' | 'reverse' | 'alternate' | 'alternate-reverse'
+  fill?: 'none' | 'forwards' | 'backwards' | 'both' | 'auto'
+  playbackRate?: number
+}
+/** A Web Animations `Animation`, run by the engine. */
+export interface Animation {
+  readonly playState: 'running' | 'paused' | 'finished' | 'idle'
+  readonly pending: boolean
+  /** ms */
+  currentTime: number
+  playbackRate: number
+  readonly finished: Promise<Animation>
+  onfinish: ((event: { type: 'finish', target: Animation }) => void) | null
+  oncancel: ((event: { type: 'cancel', target: Animation }) => void) | null
+  play (): void
+  pause (): void
+  reverse (): void
+  finish (): void
+  cancel (): void
+  updatePlaybackRate (rate: number): void
+}
 
 export class Element extends Node {
   readonly tagName: string
@@ -167,8 +203,11 @@ export class Element extends Node {
   removeEventListener (type: EventType | (string & {}), listener: (event: BuiEvent) => void, options?: unknown): void
   /** Run the listeners for `event.type` here (and up, if it bubbles). */
   dispatchEvent (event: { type: string, bubbles?: boolean }): boolean
-  /** Web Animations aren't run: the animation finishes at once. */
-  animate (keyframes?: unknown, options?: unknown): { onfinish: (() => void) | null, cancel (): void, finished: Promise<unknown> }
+  /** Web Animations, run by the engine: `animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: 'ease-out' })`.
+   *  The values stay where it ends (as `fill: 'forwards'`). */
+  animate (keyframes: Keyframe[] | Record<string, unknown> | null, options?: number | KeyframeAnimationOptions): Animation
+  /** One of Motion's props (`MotionProps`); null removes it. */
+  setMotion<K extends keyof MotionProps> (name: K, value: MotionProps[K] | null): void
   getBoundingClientRect (): Promise<{ x: number, y: number, width: number, height: number } | null>
 }
 
@@ -241,6 +280,10 @@ export class App {
   setThemeColor (key: string, color: string | [number, number, number, number?]): Promise<void>
   /** One number of the active theme: 'button.roundness', 'button.border.width', 'button.corners.top_left', ... */
   setThemeValue (key: string, value: number | boolean): Promise<void>
+  /** Move the animation clock `ms` forward; headless, every window renders that
+   *  frame (tests step animations frame-exactly). Resolves once the step's
+   *  callbacks have run. */
+  advanceClock (ms: number): Promise<void>
   quit (): void
 }
 
