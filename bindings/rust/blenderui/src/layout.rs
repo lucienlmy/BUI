@@ -2498,21 +2498,26 @@ fn place_folded_text(nodes: &mut [BoxNode], i: usize, k: usize, b: Bounds<f32>, 
     nodes[k].bounds = tb;
 }
 
-/// Inherited opacity / visibility (parents precede children in the arena),
-/// and bounds of boxes without a layout node (inline elements): the union of
-/// their pieces (children follow parents, so a reverse pass sees them first).
-fn finish(nodes: &mut [BoxNode], styles: &StyleStore, acc: &mut Vec<Option<Bounds<f32>>>) {
+/// Opacity and visibility as boxes inherit them (parents precede children in
+/// the arena): after layout, and on redraws that change them.
+pub(crate) fn inherit(nodes: &mut [BoxNode], styles: &StyleStore) {
     for i in 0..nodes.len() {
-        let (po, pv, pc) = match nodes[i].parent {
-            Some(p) => (nodes[p].opacity, nodes[p].visible, nodes[p].clip),
-            None => (1.0, true, None),
-        };
+        let (po, pv) = nodes[i].parent.map_or((1.0, true), |p| (nodes[p].opacity, nodes[p].visible));
         let st = &styles[nodes[i].style];
         let own = matches!(nodes[i].content, Content::Element | Content::Widget(_) | Content::Replaced(_));
         nodes[i].opacity = if own { po * st.opacity } else { po };
         nodes[i].visible = pv && st.visible;
+    }
+}
+
+/// Inherited opacity / visibility (parents precede children in the arena),
+/// and bounds of boxes without a layout node (inline elements): the union of
+/// their pieces (children follow parents, so a reverse pass sees them first).
+fn finish(nodes: &mut [BoxNode], styles: &StyleStore, acc: &mut Vec<Option<Bounds<f32>>>) {
+    inherit(nodes, styles);
+    for i in 0..nodes.len() {
         if nodes[i].taffy.is_none() {
-            nodes[i].clip = pc;
+            nodes[i].clip = nodes[i].parent.and_then(|p| nodes[p].clip);
         }
     }
     acc.clear();

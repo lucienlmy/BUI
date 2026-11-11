@@ -923,6 +923,13 @@ pub(crate) fn field_numbers(f: Field, c: &Computed, u: &Units) -> Option<([f32; 
     }
 }
 
+/// Field `f` of `to` as in `from`.
+pub(crate) fn copy_field(f: Field, from: &Computed, to: &mut Computed) {
+    if let Some(v) = get(f, from) {
+        set(f, to, v);
+    }
+}
+
 /// Write numbers to a field in the shape it has (the inverse of [`field_numbers`]).
 pub(crate) fn set_field_numbers(f: Field, c: &mut Computed, v: &[f32], percent: bool) {
     let Some(shape) = get(f, c) else { return };

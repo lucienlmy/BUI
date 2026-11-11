@@ -17,7 +17,7 @@ use blenderui_sys as sys;
 
 use super::value::{Key, Read, Value};
 use super::vars::{Flavor, Transition, Vars, tween};
-use crate::anim::{Field, field_numbers, fields_of, set_field_numbers};
+use crate::anim::{Field, copy_field, field_numbers, fields_of, set_field_numbers};
 use crate::element::Div;
 use crate::layout::ElData;
 use crate::geometry::{Length, Units};
@@ -267,6 +267,9 @@ struct PropState {
 pub(crate) struct Slot {
     props: SmallVec<[PropState; 4]>,
     seen: u64,
+    /// its element's key, and where it is in the live list
+    key: u64,
+    live: u32,
     /// After the last full frame: the element's box, its style before the
     /// moving values (they go over it again on redraws), whether a moving
     /// value changes layout (then a redraw can't do), and the MotionValues
@@ -308,10 +311,64 @@ unsafe extern "C" fn slot_set(obj: *mut c_void, prop: i32, value: *const f32, n:
 static SLOT_CLASS: sys::BKAnimClass = sys::BKAnimClass { get: Some(slot_get), set: Some(slot_set), retain: None,
                                                          release: None };
 
+const CHUNK: usize = 64;
+
+/// The slots: in chunks of 64 (a slot never moves: the engine holds its
+/// address), the live ones listed densely (a frame walks them in memory
+/// order; one that goes is swapped with the last), freed ones reused.
+#[derive(Default)]
+struct Arena {
+    chunks: Vec<Box<[Slot; CHUNK]>>,
+    keys: KeyMap<u64, u32>,
+    live: Vec<u32>,
+    free: Vec<u32>,
+}
+
+impl Arena {
+    fn at(&mut self, i: u32) -> &mut Slot {
+        &mut self.chunks[i as usize / CHUNK][i as usize % CHUNK]
+    }
+
+    fn alloc(&mut self, key: u64) -> u32 {
+        let i = self.free.pop().unwrap_or_else(|| {
+            let n = (self.chunks.len() * CHUNK) as u32;
+            self.chunks.push(Box::new(std::array::from_fn(|_| Slot::default())));
+            self.free.extend((n + 1..n + CHUNK as u32).rev());
+            n
+        });
+        let live = self.live.len() as u32;
+        self.live.push(i);
+        self.keys.insert(key, i);
+        let s = self.at(i);
+        s.key = key;
+        s.live = live;
+        i
+    }
+
+    /// The engine stops writing to slot `i`; it's free.
+    fn release(&mut self, i: u32) {
+        let s = self.at(i);
+        let (key, live) = (s.key, s.live);
+        let obj: *mut c_void = (&raw mut *s).cast();
+        for p in &s.props {
+            // SAFETY: the slot is alive; per property is a hash lookup (all of an
+            // object's motions would be a walk over every motion)
+            unsafe { sys::BK_anim_kill_target(obj, p.id) };
+        }
+        *self.at(i) = Slot::default();
+        self.keys.remove(&key);
+        self.live.swap_remove(live as usize);
+        if let Some(&moved) = self.live.get(live as usize) {
+            self.at(moved).live = live;
+        }
+        self.free.push(i);
+    }
+}
+
 /// Every motion element of a window, by element key.
 #[derive(Default)]
 pub(crate) struct Elements {
-    els: KeyMap<u64, Box<Slot>>,
+    els: Arena,
     frame: u64,
     /// scratch: each box's move on a redraw
     shift: Vec<(f32, f32)>,
@@ -319,19 +376,9 @@ pub(crate) struct Elements {
 
 impl Drop for Elements {
     fn drop(&mut self) {
-        for (_, s) in self.els.drain() {
-            forget(s);
+        while let Some(&i) = self.els.live.last() {
+            self.els.release(i);
         }
-    }
-}
-
-/// The engine stops writing to a slot going away.
-fn forget(mut slot: Box<Slot>) {
-    let obj: *mut c_void = (&raw mut *slot).cast();
-    for p in &slot.props {
-        // SAFETY: the slot is still alive here; per property is a hash lookup
-        // (all of an object's motions would be a walk over every motion)
-        unsafe { sys::BK_anim_kill_target(obj, p.id) };
     }
 }
 
@@ -343,16 +390,19 @@ impl Elements {
     /// Forget elements gone this frame (their motions stop).
     pub(crate) fn end(&mut self) {
         let frame = self.frame;
-        let gone: SmallVec<[u64; 4]> = self.els.iter().filter(|(_, s)| s.seen != frame).map(|(k, _)| *k).collect();
-        for k in gone {
-            if let Some(s) = self.els.remove(&k) {
-                forget(s);
+        let mut k = 0;
+        while k < self.els.live.len() {
+            let i = self.els.live[k];
+            if self.els.at(i).seen == frame {
+                k += 1;
+            } else {
+                self.els.release(i); /* the last takes its place */
             }
         }
     }
 
     pub(crate) fn has(&self, key: u64) -> bool {
-        self.els.contains_key(&key)
+        self.els.keys.contains_key(&key)
     }
 
     /// Element `el` (`key`) with motion `spec` and style `base` this frame:
@@ -362,7 +412,8 @@ impl Elements {
     pub(crate) fn apply(&mut self, key: u64, node: usize, el: &ElData, spec: Option<&Spec>, base: &Computed, g: Gestures, u: &Units,
                         out: &mut Option<Computed>) {
         let frame = self.frame;
-        let first = !self.els.contains_key(&key);
+        let found = self.els.keys.get(&key).copied();
+        let first = found.is_none();
         if first && spec.is_none() && !PENDING.with(|p| with_pending(p, |ps| ps.iter().any(|p| p.selector.matches(el)))) {
             return; // nothing animates it
         }
@@ -374,7 +425,8 @@ impl Elements {
                 &empty
             }
         };
-        let slot: *mut Slot = &raw mut **self.els.entry(key).or_default();
+        let i = found.unwrap_or_else(|| self.els.alloc(key));
+        let slot: *mut Slot = self.els.at(i);
         // targets, later layers over earlier ones (Motion's priority)
         let mut targets: SmallVec<[(&Key, &Value, &Vars); 8]> = SmallVec::new();
         let layers = [Some(When::Animate), g.focus.then_some(When::WhileFocus), g.hover.then_some(When::WhileHover),
@@ -523,14 +575,22 @@ impl Elements {
     /// know): the window then renders as usual.
     pub(crate) fn redraw(&mut self, frame: &mut crate::layout::Frame, styles: &mut crate::layout::StyleStore,
                          viewport: (f32, f32)) -> bool {
-        if self.els.values().any(|s| s.layout && s.base.is_some()) {
+        let Arena { chunks, live, .. } = &mut self.els;
+        let at = |i: u32| (i as usize / CHUNK, i as usize % CHUNK);
+        if live.iter().any(|&i| {
+            let (c, o) = at(i);
+            chunks[c][o].layout && chunks[c][o].base.is_some()
+        }) {
             return false;
         }
         let nodes = &mut frame.nodes;
         let mut moved = false;
-        for (key, s) in &mut self.els {
+        let mut faded = false;
+        for &i in live.iter() {
+            let (c, o) = at(i);
+            let s = &mut chunks[c][o];
             let Some(base) = &s.base else { continue };
-            let Some(n) = nodes.get(s.node).filter(|n| n.key == *key) else { return false };
+            let Some(n) = nodes.get(s.node).filter(|n| n.key == s.key) else { return false };
             for &(id, mv) in &s.bound {
                 if let Some(p) = s.props.iter_mut().find(|p| p.id == id) {
                     p.cur = Some(mv.read());
@@ -540,10 +600,18 @@ impl Elements {
             let u = Units { font_size: base.font_size, viewport };
             let (w, h) = (n.bounds.size.width, n.bounds.size.height);
             let before = (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
-            st.clone_from(base);
+            // back to the base where the values go (not the whole style: a few fields)
+            let mut transforms = false;
+            for p in &s.props {
+                transforms |= restore(p, base, st);
+            }
+            if transforms {
+                restore_transforms(base, st);
+            }
             for p in &s.props {
                 if let Some(r) = p.cur {
                     write(p, &r, st, &u);
+                    faded |= p.id == sys::BK_PROP_OPACITY || p.fields.iter().any(|f| matches!(f, Field::Visibility));
                 }
             }
             let after = (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
@@ -552,6 +620,9 @@ impl Elements {
                 self.shift[s.node] = (after.0 - before.0, after.1 - before.1);
                 moved = true;
             }
+        }
+        if faded {
+            crate::layout::inherit(nodes, styles); // boxes keep their opacity times their parents'
         }
         if moved {
             // a box moves with every box under it (parents come before children)
@@ -771,6 +842,48 @@ fn radians(v: f32, unit: i32) -> f32 {
     }
 }
 
+/// Put back in `st` what property `p` writes, from `base`; true for the
+/// transform functions (restored together by [`restore_transforms`]).
+fn restore(p: &PropState, base: &Computed, st: &mut Computed) -> bool {
+    match p.id {
+        sys::BK_PROP_X => st.translate.0 = base.translate.0,
+        sys::BK_PROP_Y => st.translate.1 = base.translate.1,
+        sys::BK_PROP_OPACITY => st.opacity = base.opacity,
+        sys::BK_PROP_COLOR => st.color = base.color,
+        sys::BK_PROP_BACKGROUND_COLOR => st.background = base.background,
+        sys::BK_PROP_SCALE | sys::BK_PROP_SCALE_X | sys::BK_PROP_SCALE_Y | sys::BK_PROP_ROTATE | sys::BK_PROP_SKEW_X
+        | sys::BK_PROP_SKEW_Y => return true,
+        _ => {
+            for &f in p.fields {
+                copy_field(f, base, st);
+            }
+        }
+    }
+    false
+}
+
+/// The transform parts Motion writes (scale, rotate, skews), as in `base`.
+fn restore_transforms(base: &Computed, st: &mut Computed) {
+    match (&base.effects, &mut st.effects) {
+        (Some(b), Some(s)) => {
+            s.scale2 = b.scale2;
+            s.rotate = b.rotate;
+            s.transform.clone_from(&b.transform);
+        }
+        (None, Some(s)) => {
+            s.scale2 = None;
+            s.rotate = 0.0;
+            s.transform.clear();
+        }
+        _ => {}
+    }
+}
+
+fn rgba(v: &[f32; 4]) -> crate::color::Rgba {
+    let c = |x: f32| x.clamp(0.0, 1.0);
+    crate::color::Rgba { r: c(v[0]), g: c(v[1]), b: c(v[2]), a: c(v[3]) }
+}
+
 /// Lay value `r` of property `p` over style `c`.
 fn write(p: &PropState, r: &Read, c: &mut Computed, u: &Units) {
     let v = r.v[0];
@@ -789,6 +902,10 @@ fn write(p: &PropState, r: &Read, c: &mut Computed, u: &Units) {
         sys::BK_PROP_ROTATE => c.effects_mut().rotate += radians(v, r.unit),
         sys::BK_PROP_SKEW_X => c.effects_mut().transform.push(crate::effects::TransformFn::Skew(radians(v, r.unit), 0.0)),
         sys::BK_PROP_SKEW_Y => c.effects_mut().transform.push(crate::effects::TransformFn::Skew(0.0, radians(v, r.unit))),
+        // the common ones straight into their field (the generic way builds a value first)
+        sys::BK_PROP_OPACITY => c.opacity = v.clamp(0.0, 1.0),
+        sys::BK_PROP_COLOR if r.n == 4 => c.color = rgba(&r.v),
+        sys::BK_PROP_BACKGROUND_COLOR if r.n == 4 => c.background = rgba(&r.v),
         _ => {
             let pct = r.unit == sys::BK_UNIT_PERCENT;
             for &f in p.fields {

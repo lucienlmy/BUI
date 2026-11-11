@@ -22,6 +22,11 @@ impl Render for Page {
                 // no `initial`: its first value comes a frame after it appears
                 <motion.div id="d" style="position: absolute; left: 0; top: 50px; width: 50px; height: 50px; background: #ff0000"
                     animate={{ backgroundColor: "#0000ff", transition: { duration: 1, ease: "none" } }} />
+                // opacity on a redraw: half faded white over white stays white, so over black
+                <div style="position: absolute; left: 150px; top: 0; width: 50px; height: 50px; background: black">
+                    <motion.div style="width: 50px; height: 50px; background: white" initial={{ opacity: 1 }}
+                        animate={{ opacity: 0, transition: { duration: 1, ease: "none" } }} />
+                </div>
             </body>
         }
     }
@@ -57,6 +62,8 @@ fn moving_values_redraw() {
         // halfway: purple, moved 50 px right (the left 50 px are background now)
         let mid = pixel(cx, w, 60, 25);
         assert!(near(mid, (128, 0, 128)) || near(mid, (127, 0, 127)), "halfway: {mid:?}");
+        let o = pixel(cx, w, 175, 25);
+        assert!(o.0.abs_diff(128) <= 6 && o.1.abs_diff(128) <= 6, "opacity halfway on a redraw: {o:?}");
         let d = pixel(cx, w, 10, 75);
         assert!(near(d, (128, 0, 128)) || near(d, (127, 0, 127)), "without initial, halfway too: {d:?}");
         assert!(!near(pixel(cx, w, 10, 25), (255, 0, 0)) && !near(pixel(cx, w, 10, 25), mid), "moved off its start: {:?}", pixel(cx, w, 10, 25));
