@@ -34,7 +34,9 @@ typedef struct Track {
   bool killed : 1;   /* another motion took the property */
   bool has_last : 1;
   float last[4];
-  float *values;   /* nkeys * n: resolved when the tween starts */
+  float *values;   /* nkeys * n: resolved when the tween starts (in `kv` when they fit) */
+  float kv[8];     /* small keyframes (from -> to of a color, 3 keys of 2 numbers ...): in the
+                    * track's own cache lines, not elsewhere in the block */
   BKEase *eases;   /* nkeys - 1 per segment, or NULL: the tween's ease */
   float *times;    /* nkeys, 0 .. 1 */
   uint8_t *current; /* per key: the value at the start */
@@ -64,6 +66,7 @@ struct BKMotion {
   double ts;
   double dur;      /* one iteration */
   double rdelay;
+  double inv_dur, inv_cycle; /* 1 / dur, 1 / (dur + rdelay) (0 for 0): no division per frame */
   double t;        /* the total time last rendered */
   double it_time;  /* the time in its iteration then: its children's parent time */
   BKMotion *parent;
@@ -217,15 +220,23 @@ int BK_anim_available(void)
   return 1;
 }
 
+/* every change of a motion's duration goes through here (the inverses follow it) */
+static void set_dur(BKMotion *m, double dur)
+{
+  m->dur = dur;
+  m->inv_dur = dur > 0.0 ? 1.0 / dur : 0.0;
+  m->inv_cycle = dur + m->rdelay > 0.0 ? 1.0 / (dur + m->rdelay) : 0.0;
+}
+
 /* a motion with `extra` zeroed bytes after it (a tween's tracks and keyframes: one block) */
 static BKMotion *motion_alloc(const BKMotionVars *v, size_t extra)
 {
   BKMotion *m = (BKMotion *)MEM_callocN(sizeof(BKMotion) + extra, "BKMotion");
   m->refs = 1;
   m->ts = v && v->time_scale > 0.0 ? v->time_scale : 1.0;
-  m->dur = v ? BK_MAX(0.0, v->duration) : 0.0;
   m->repeat = v ? v->repeat : 0;
   m->rdelay = v ? BK_MAX(0.0, v->repeat_delay) : 0.0;
+  set_dur(m, v ? BK_MAX(0.0, v->duration) : 0.0);
   m->yoyo = v && v->yoyo;
   m->paused = v && v->paused;
   m->reversed = v && v->reversed;
@@ -428,7 +439,7 @@ static void resolve(BKMotion *m)
     }
   }
   if (m->kind != BK_MOTION_TWEEN_KIND) {
-    m->dur = longest; /* a physics tween lasts until its slowest value settles */
+    set_dur(m, longest); /* a physics tween lasts until its slowest value settles */
     if (m->parent && m->parent->timeline) {
       timeline_measure(m->parent);
     }
@@ -459,6 +470,14 @@ static void track_eval(const BKMotion *m, const Track *t, double it, double p, f
     memcpy(out, t->values, sizeof(float) * (size_t)t->n);
     return;
   }
+  if (t->nkeys == 2 && !t->times && !t->eases) { /* from -> to, the usual: one ease, one lerp */
+    const float u = BK_ease_eval(&m->ease, (float)p);
+    const float *a = t->values, *b = &t->values[t->n];
+    for (int c = 0; c < t->n; c++) {
+      out[c] = a[c] + (b[c] - a[c]) * u;
+    }
+    return;
+  }
   /* the segment holding p (keyframe times are ascending) */
   const float pf = (float)p;
   float x = t->eases ? pf : BK_ease_eval(&m->ease, pf);
@@ -468,12 +487,18 @@ static void track_eval(const BKMotion *m, const Track *t, double it, double p, f
       seg++;
     }
   }
-  else {
-    seg = BK_CLAMP((int)floorf(x * (float)(t->nkeys - 1)), 0, t->nkeys - 2);
+  float u;
+  if (t->times) {
+    const float t0 = t->times[seg], t1 = t->times[seg + 1];
+    u = t1 > t0 ? (x - t0) / (t1 - t0) : 1.0f;
   }
-  const float t0 = t->times ? t->times[seg] : (float)seg / (float)(t->nkeys - 1);
-  const float t1 = t->times ? t->times[seg + 1] : (float)(seg + 1) / (float)(t->nkeys - 1);
-  float u = t1 > t0 ? (x - t0) / (t1 - t0) : 1.0f;
+  else {
+    /* evenly spaced: the segment and where in it, without a division (a cast, not floorf:
+     * negatives clamp to 0 either way) */
+    const float fk = x * (float)(t->nkeys - 1);
+    seg = BK_CLAMP((int)fk, 0, t->nkeys - 2);
+    u = fk - (float)seg;
+  }
   if (t->eases) {
     u = BK_ease_eval(&t->eases[seg], BK_CLAMP(u, 0.0f, 1.0f));
   }
@@ -502,7 +527,8 @@ static void render(BKMotion *m, double t, bool force);
 static double iteration_time(const BKMotion *m, double T, int *r_iter)
 {
   const double cycle = m->dur + m->rdelay;
-  int iter = cycle > 0.0 ? (int)floor(T / cycle) : 0;
+  /* T >= 0: the cast is floor, without a call; times the inverse: no division */
+  int iter = cycle > 0.0 ? (int)(T * m->inv_cycle) : 0;
   if (m->repeat >= 0 && iter > m->repeat) {
     iter = m->repeat;
   }
@@ -517,7 +543,7 @@ static double iteration_time(const BKMotion *m, double T, int *r_iter)
 
 static void render_tween(BKMotion *m, double it)
 {
-  const double p = m->dur > 0.0 ? it / m->dur : 1.0;
+  const double p = m->dur > 0.0 ? it * m->inv_dur : 1.0;
   for (int i = 0; i < m->ntracks; i++) {
     Track *t = &m->tracks[i];
     if (t->killed) {
@@ -525,10 +551,16 @@ static void render_tween(BKMotion *m, double it)
     }
     float v[4];
     track_eval(m, t, it, p, v);
-    if (t->has_last && memcmp(v, t->last, sizeof(float) * (size_t)t->n) == 0) {
+    bool same = t->has_last; /* 1 .. 4 numbers: a loop, not a memcmp call */
+    for (int c = 0; c < t->n && same; c++) {
+      same = v[c] == t->last[c];
+    }
+    if (same) {
       continue; /* unchanged: no write, no redraw */
     }
-    memcpy(t->last, v, sizeof(float) * (size_t)t->n);
+    for (int c = 0; c < t->n; c++) {
+      t->last[c] = v[c];
+    }
     t->has_last = true;
     if (m->cls && m->cls->set) {
       m->cls->set(m->obj, t->prop, v, t->n, t->unit);
@@ -561,6 +593,17 @@ static void render(BKMotion *m, double T, bool force)
   const double total = BK_motion_total_duration(m);
   T = BK_CLAMP(T, 0.0, total);
   if (!force && m->rendered && T == m->t) {
+    return;
+  }
+  /* a running tween nobody listens to (every element's motion): the time, the values, done;
+   * what follows is first frames, timelines and events */
+  if (!force && m->rendered && m->resolved && m->started && !m->timeline && !m->on) {
+    int iter;
+    const double it = iteration_time(m, T, &iter);
+    m->t = T;
+    m->it_time = it;
+    m->iteration = iter;
+    render_tween(m, it);
     return;
   }
   const double prev = m->rendered ? m->t : 0.0;
@@ -613,7 +656,7 @@ static BKMotion *root(void)
     G.root = motion_new(NULL);
     G.root->timeline = true;
     G.root->repeat = -1;
-    G.root->dur = NEVER;
+    set_dur(G.root, NEVER);
   }
   return G.root;
 }
@@ -700,7 +743,7 @@ static void timeline_measure(BKMotion *tl)
     const double total = BK_motion_total_duration(c);
     end = BK_MAX(end, start_in_parent(c) + (total >= NEVER ? 0.0 : total / c->ts));
   }
-  tl->dur = end;
+  set_dur(tl, end);
 }
 
 /* place `m` in `tl` starting (local 0) at `at` */
@@ -879,7 +922,7 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
     const BKTrack *in = &tracks[i];
     const int ink = BK_MAX(1, in->nkeys), n = BK_CLAMP(in->n, 1, 4);
     const int nk = in->from ? ink + 1 : (in->nkeys <= 1 ? 2 : ink);
-    nfloat += (size_t)(nk * n) + (in->times && in->nkeys == nk ? (size_t)nk : 0);
+    nfloat += (nk * n <= 8 ? 0 : (size_t)(nk * n)) + (in->times && in->nkeys == nk ? (size_t)nk : 0);
     nease += in->eases && in->nkeys == nk && nk > 1 ? (size_t)(nk - 1) : 0;
     nbyte += (size_t)nk * (in->rel ? 2 : 1);
   }
@@ -919,8 +962,13 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
     t->n = n;
     t->nkeys = nk;
     t->unit = in->unit;
-    t->values = fp;
-    fp += nk * n;
+    if (nk * n <= 8) {
+      t->values = t->kv;
+    }
+    else {
+      t->values = fp;
+      fp += nk * n;
+    }
     memcpy(&t->values[at * n], in->values, sizeof(float) * (size_t)(ink * n));
     t->current = bp;
     bp += nk;
@@ -953,7 +1001,7 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
       t->ph = (BKPhysics *)(block + off_phys) + i;
     }
   }
-  m->dur = v->kind == BK_MOTION_TWEEN_KIND ? BK_MAX(0.0, v->duration) : 0.0;
+  set_dur(m, v->kind == BK_MOTION_TWEEN_KIND ? BK_MAX(0.0, v->duration) : 0.0);
   if (v->kind != BK_MOTION_TWEEN_KIND) {
     resolve(m); /* physics: the duration comes from the distance */
   }
@@ -968,7 +1016,7 @@ BKMotion *BK_timeline(const BKMotionVars *vars)
 {
   BKMotion *m = motion_new(vars);
   m->timeline = true;
-  m->dur = 0.0;
+  set_dur(m, 0.0);
   start_now(m, vars ? BK_MAX(0.0, vars->delay) : 0.0);
   return m;
 }
