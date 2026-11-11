@@ -15,6 +15,8 @@ use std::sync::Arc;
 
 use blenderui::prelude::*;
 
+pub mod motion;
+
 /// An event from a window (`kind`: click, mousedown, mouseup, mousemove,
 /// mouseenter, mouseleave, wheel, keydown, keyup, change, input, frame,
 /// close).
@@ -38,6 +40,8 @@ pub struct Event {
     pub shift: bool,
     pub ctrl: bool,
     pub alt: bool,
+    /// `motion`: a plain object's values, for `onUpdate`
+    pub values: Option<Vec<f64>>,
 }
 
 /// Where a window's events go (called on the UI thread).
@@ -126,6 +130,7 @@ pub mod op {
     pub const SET_TEXT: i32 = 7; // id, s(text)
     pub const LISTEN: i32 = 8; // id, event bits (replaces)
     pub const FREE: i32 = 9; // id
+    pub const MOTION: i32 = 10; // id, which (motion::MotionProp::parse), index into the commit's motion props
 }
 
 /// Event bits (`LISTEN`), matching `bindings/node/index.js`.
@@ -154,6 +159,8 @@ struct JsNode {
     style: Option<Box<[blenderui::css::Decl]>>,
     children: Vec<u32>,
     events: u32,
+    /// Motion's props (`initial`, `animate` ...), when it has any.
+    motion: Option<Box<motion::NodeMotion>>,
 }
 
 /// `style="..."` parsed into declarations whose values are shared.
@@ -215,7 +222,8 @@ impl JsView {
         }
     }
 
-    fn apply(&mut self, ops: &[i32], strings: &[String], tags: &mut HashMap<String, &'static str>) {
+    fn apply(&mut self, ops: &[i32], strings: &[String], motion: &mut [Option<motion::MotionProp>],
+             tags: &mut HashMap<String, &'static str>) {
         let s = |k: i32| strings.get(k as usize).map(String::as_str).unwrap_or("");
         let mut i = 0;
         while i < ops.len() {
@@ -224,13 +232,13 @@ impl JsView {
                 op::CREATE => {
                     let tag = intern_tag(s(a(2)), tags);
                     self.put(a(1), JsNode { tag, key: format!("n{}", a(1)).into(), text: None, attrs: Vec::new(),
-                                            style: None, children: Vec::new(), events: 0 });
+                                            style: None, children: Vec::new(), events: 0, motion: None });
                     i += 3;
                 }
                 op::TEXT => {
                     let text = s(a(2)).to_string();
                     self.put(a(1), JsNode { tag: "", key: SharedString::Borrowed(""), text: Some(text.into()),
-                                            attrs: Vec::new(), style: None, children: Vec::new(), events: 0 });
+                                            attrs: Vec::new(), style: None, children: Vec::new(), events: 0, motion: None });
                     i += 3;
                 }
                 op::SET_ATTR => {
@@ -294,6 +302,13 @@ impl JsView {
                     }
                     i += 3;
                 }
+                op::MOTION => {
+                    let p = usize::try_from(a(3)).ok().and_then(|k| motion.get_mut(k)?.take());
+                    if let (Some(n), Some(p)) = (self.node(a(1)), p) {
+                        n.motion.get_or_insert_with(Box::default).set(p);
+                    }
+                    i += 4;
+                }
                 op::FREE => {
                     if let Ok(k) = u32::try_from(a(1)) {
                         self.nodes.remove(&k);
@@ -326,6 +341,9 @@ impl JsView {
         }
         if n.events != 0 {
             d = self.listeners(d, id, n.events);
+        }
+        if let Some(m) = &n.motion {
+            d = m.apply(d);
         }
         for &c in &n.children {
             d = d.child(self.build(c));
@@ -459,7 +477,7 @@ impl JsView {
     pub fn new(window: u32, sink: Sink) -> JsView {
         let mut v = JsView { window, nodes: NodeMap::default(), sink, raf: false, frame_scheduled: false };
         v.put(0, JsNode { tag: "body", key: "n0".into(), text: None, attrs: Vec::new(),
-                          style: None, children: Vec::new(), events: 0 });
+                          style: None, children: Vec::new(), events: 0, motion: None });
         v
     }
 }
@@ -530,12 +548,20 @@ pub fn open_window(cx: &mut App, id: u32, config: WindowConfig, sink: Sink) {
 }
 
 /// Apply a batch of ops to window `window` and re-render it: right away, or
-/// (`animated`, during requestAnimationFrame) on the next vsync.
-pub fn commit(cx: &mut App, window: u32, ops: &[i32], strings: &[String], animated: bool) {
+/// (`animated`, during requestAnimationFrame) on the next vsync. `motion`:
+/// the Motion props the batch's `MOTION` ops set.
+pub fn commit(cx: &mut App, window: u32, ops: &[i32], strings: &[String], mut props: Vec<Option<motion::MotionProp>>,
+              animated: bool) {
     let Some(handle) = cx.global::<UiState>().windows.get(&window).cloned() else { return };
+    if !props.is_empty() {
+        let m = motion::motions(cx);
+        for p in props.iter_mut().flatten() {
+            p.resolve(m);
+        }
+    }
     let mut tags = std::mem::take(&mut cx.global_mut::<UiState>().tags);
     handle.update(cx, |v, w, _| {
-        v.apply(ops, strings, &mut tags);
+        v.apply(ops, strings, &mut props, &mut tags);
         if !animated {
             w.refresh(); // this window only
         } else if !v.frame_scheduled {
@@ -597,8 +623,13 @@ pub fn screenshot(cx: &mut App, window: u32) -> Option<(u32, u32, Vec<u8>)> {
 /// Bounds of node `node` of window `window`, after rendering it.
 pub fn bounds(cx: &mut App, window: u32, node: u32) -> Option<Rect> {
     let h = cx.global::<UiState>().windows.get(&window).cloned()?;
+    // its key: an `id` attribute's value, else "n<node>" (as `build` gives it)
+    let key = h.update(cx, |v, _, _| {
+        let n = v.nodes.get(&node)?;
+        Some(n.attrs.iter().find(|(k, _)| k == "id").map_or_else(|| n.key.clone(), |(_, v)| v.clone()))
+    })??;
     cx.draw(h.id);
-    cx.element_bounds(h.id, &format!("n{node}")).map(|b| Rect {
+    cx.element_bounds(h.id, &key).map(|b| Rect {
         x: b.origin.x as f64,
         y: b.origin.y as f64,
         width: b.size.width as f64,

@@ -257,7 +257,7 @@ fn run_jobs(js: &Js) {
 fn apply(cx: &mut App, c: Command) {
     match c {
         Command::Open(id, config) => view::open_window(cx, id, config, sink()),
-        Command::Commit(w, ops, strings, animated) => view::commit(cx, w, &ops, &strings, animated),
+        Command::Commit(w, ops, strings, animated) => view::commit(cx, w, &ops, &strings, Vec::new(), animated),
         Command::Frame(w) => view::request_frame(cx, w),
         Command::Close(w) => view::close_window(cx, w),
         Command::Slug(on) => {

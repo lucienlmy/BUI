@@ -13,3 +13,4 @@ publish = false
 [dependencies]
 # the kit features are the app's choice (blenderui-node: all; bui-runtime: per runtime)
 blenderui = { path = "../blenderui", default-features = false }
+smallvec = { version = "1", features = ["union", "const_generics"] }

@@ -23,6 +23,8 @@ use napi::threadsafe_function::{
 use napi::{Env, JsFunction, JsObject};
 use napi_derive::napi;
 
+mod motion;
+
 type Tsfn = ThreadsafeFunction<BuiEvent, ErrorStrategy::Fatal>;
 
 // ==========================================================================
@@ -51,6 +53,9 @@ pub struct BuiEvent {
     pub shift: bool,
     pub ctrl: bool,
     pub alt: bool,
+    /// `motion` (`target`: the motion, `button`: the event bit, `number`: a
+    /// value target's value): a plain object's values.
+    pub values: Option<Vec<f64>>,
 }
 
 impl From<view::Event> for BuiEvent {
@@ -58,7 +63,7 @@ impl From<view::Event> for BuiEvent {
         BuiEvent {
             kind: e.kind, window: e.window, target: e.target, x: e.x, y: e.y, button: e.button,
             click_count: e.click_count, delta: e.delta, key: e.key, key_char: e.key_char, value: e.value,
-            checked: e.checked, number: e.number, shift: e.shift, ctrl: e.ctrl, alt: e.alt,
+            checked: e.checked, number: e.number, shift: e.shift, ctrl: e.ctrl, alt: e.alt, values: e.values,
         }
     }
 }
@@ -157,6 +162,19 @@ pub struct NativeApp {
     headless: bool,
 }
 
+impl NativeApp {
+    /// Run `f` on the UI thread and wait for its answer (None: the thread is gone).
+    fn ask<T: Send + 'static>(&self, f: impl FnOnce(&mut App) -> T + Send + 'static) -> Option<T> {
+        let (tx, rx) = mpsc::sync_channel(1);
+        if !self.link.send(move |cx| {
+            let _ = tx.send(f(cx));
+        }) {
+            return None;
+        }
+        rx.recv().ok()
+    }
+}
+
 #[napi]
 impl NativeApp {
     #[napi(constructor)]
@@ -248,11 +266,15 @@ impl NativeApp {
 
     /// Apply a batch of ops to window `window` and re-render it: right away,
     /// or (`animated`, during requestAnimationFrame) on the next vsync.
+    /// `motion`: the Motion props its `MOTION` ops set (`[which, value, ...]`).
     #[napi]
-    pub fn commit(&self, window: u32, ops: Int32Array, strings: Vec<String>, animated: Option<bool>) {
+    pub fn commit(&self, window: u32, ops: Int32Array, strings: Vec<String>, animated: Option<bool>,
+                  motion: Option<JsObject>) -> Result<()> {
         let ops: Vec<i32> = ops.to_vec();
         let animated = animated.unwrap_or(false);
-        self.link.send(move |cx| view::commit(cx, window, &ops, &strings, animated));
+        let props = motion::props(motion)?;
+        self.link.send(move |cx| view::commit(cx, window, &ops, &strings, props, animated));
+        Ok(())
     }
 
     /// Ask for a `frame` event when window `window` next renders (vsync).
