@@ -51,7 +51,7 @@ export interface Target {
 export interface MotionProps {
   initial?: Target | string | boolean
   animate?: Target | string
-  /** what it animates to when it goes away (no AnimatePresence in JavaScript yet) */
+  /** what it animates to when it is removed: it stays until that ends (Motion's AnimatePresence) */
   exit?: Target | string
   whileHover?: Target | string
   whileTap?: Target | string

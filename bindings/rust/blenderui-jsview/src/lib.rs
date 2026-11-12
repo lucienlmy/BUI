@@ -161,6 +161,8 @@ struct JsNode {
     events: u32,
     /// Motion's props (`initial`, `animate` ...), when it has any.
     motion: Option<Box<motion::NodeMotion>>,
+    /// JavaScript removed it, and its `exit` animation runs first: the presence it goes with (0: none).
+    exiting: u64,
 }
 
 /// `style="..."` parsed into declarations whose values are shared.
@@ -200,6 +202,10 @@ struct JsView {
     raf: bool,
     /// The next vsync frame is already scheduled (changes just wait for it).
     frame_scheduled: bool,
+    /// Removed nodes whose `exit` animation runs: (parent, child, presence).
+    leaving: Vec<(u32, u32, u64)>,
+    /// Nodes JavaScript freed while some were leaving (a leaving subtree needs its nodes).
+    freed: Vec<u32>,
 }
 
 /// Tag names as the `&'static str` elements need: HTML tags from the
@@ -232,13 +238,13 @@ impl JsView {
                 op::CREATE => {
                     let tag = intern_tag(s(a(2)), tags);
                     self.put(a(1), JsNode { tag, key: format!("n{}", a(1)).into(), text: None, attrs: Vec::new(),
-                                            style: None, children: Vec::new(), events: 0, motion: None });
+                                            style: None, children: Vec::new(), events: 0, motion: None, exiting: 0 });
                     i += 3;
                 }
                 op::TEXT => {
                     let text = s(a(2)).to_string();
                     self.put(a(1), JsNode { tag: "", key: SharedString::Borrowed(""), text: Some(text.into()),
-                                            attrs: Vec::new(), style: None, children: Vec::new(), events: 0, motion: None });
+                                            attrs: Vec::new(), style: None, children: Vec::new(), events: 0, motion: None, exiting: 0 });
                     i += 3;
                 }
                 op::SET_ATTR => {
@@ -266,6 +272,7 @@ impl JsView {
                 }
                 op::APPEND => {
                     let child = a(2) as u32;
+                    self.stay(child);
                     if let Some(n) = self.node(a(1)) {
                         n.children.retain(|&c| c != child);
                         n.children.push(child);
@@ -274,6 +281,7 @@ impl JsView {
                 }
                 op::INSERT => {
                     let (child, before) = (a(2) as u32, a(3) as u32);
+                    self.stay(child);
                     if let Some(n) = self.node(a(1)) {
                         n.children.retain(|&c| c != child);
                         let at = n.children.iter().position(|&c| c == before).unwrap_or(n.children.len());
@@ -282,8 +290,15 @@ impl JsView {
                     i += 4;
                 }
                 op::REMOVE => {
-                    let child = a(2) as u32;
-                    if let Some(n) = self.node(a(1)) {
+                    let (parent, child) = (a(1) as u32, a(2) as u32);
+                    if self.nodes.get(&child).is_some_and(|c| c.motion.as_ref().is_some_and(|m| m.has_exit())) {
+                        // animates out first, where it is (Motion's AnimatePresence)
+                        let id = blenderui::motion::presence_id();
+                        if let Some(c) = self.nodes.get_mut(&child) {
+                            c.exiting = id;
+                        }
+                        self.leaving.push((parent, child, id));
+                    } else if let Some(n) = self.node(a(1)) {
                         n.children.retain(|&c| c != child);
                     }
                     i += 3;
@@ -311,7 +326,11 @@ impl JsView {
                 }
                 op::FREE => {
                     if let Ok(k) = u32::try_from(a(1)) {
-                        self.nodes.remove(&k);
+                        if self.leaving.is_empty() {
+                            self.nodes.remove(&k);
+                        } else {
+                            self.freed.push(k);
+                        }
                     }
                     i += 2;
                 }
@@ -320,10 +339,55 @@ impl JsView {
         }
     }
 
+    /// A node put back in the tree while it was leaving stays.
+    fn stay(&mut self, child: u32) {
+        if let Some(k) = self.leaving.iter().position(|l| l.1 == child) {
+            let (parent, _, _) = self.leaving.swap_remove(k);
+            if let Some(c) = self.nodes.get_mut(&child) {
+                c.exiting = 0;
+            }
+            if let Some(p) = self.nodes.get_mut(&parent) {
+                p.children.retain(|&c| c != child);
+            }
+        }
+    }
+
+    /// Nodes whose exit animations ended go now (and the nodes JavaScript freed meanwhile).
+    fn reap(&mut self) {
+        if self.leaving.is_empty() {
+            return;
+        }
+        let mut k = 0;
+        while k < self.leaving.len() {
+            let (parent, child, id) = self.leaving[k];
+            if blenderui::motion::exit_done(id) {
+                self.leaving.swap_remove(k);
+                if let Some(p) = self.nodes.get_mut(&parent) {
+                    p.children.retain(|&c| c != child);
+                }
+            } else {
+                k += 1;
+            }
+        }
+        if self.leaving.is_empty() {
+            for k in std::mem::take(&mut self.freed) {
+                self.nodes.remove(&k);
+            }
+        }
+    }
+
     fn build(&self, id: u32) -> AnyElement {
         let Some(n) = self.nodes.get(&id) else {
             return String::new().into_any_element();
         };
+        if n.exiting != 0 {
+            // taken away: its `exit` is its only target
+            return blenderui::motion::exiting_scope(n.exiting, || self.build_node(id, n)).0;
+        }
+        self.build_node(id, n)
+    }
+
+    fn build_node(&self, id: u32, n: &JsNode) -> AnyElement {
         if let Some(t) = &n.text {
             return t.clone().into_any_element();
         }
@@ -451,6 +515,7 @@ impl JsView {
 impl Render for JsView {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         self.frame_scheduled = false;
+        self.reap();
         if self.raf {
             // requestAnimationFrame: JS runs its callbacks while this frame
             // presents, and the next vsync frame is scheduled now (as a
@@ -475,9 +540,9 @@ pub struct UiState {
 impl JsView {
     /// A view of window `window` (JavaScript's id) with an empty `<body>` as node 0.
     pub fn new(window: u32, sink: Sink) -> JsView {
-        let mut v = JsView { window, nodes: NodeMap::default(), sink, raf: false, frame_scheduled: false };
+        let mut v = JsView { window, nodes: NodeMap::default(), sink, raf: false, frame_scheduled: false, leaving: Vec::new(), freed: Vec::new() };
         v.put(0, JsNode { tag: "body", key: "n0".into(), text: None, attrs: Vec::new(),
-                          style: None, children: Vec::new(), events: 0, motion: None });
+                          style: None, children: Vec::new(), events: 0, motion: None, exiting: 0 });
         v
     }
 }

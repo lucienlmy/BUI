@@ -80,7 +80,13 @@ function useMotionValueEvent (value, event, fn) {
   React.useEffect(() => value.on(event, (v) => cb.current(v)), [value, event])
 }
 
+/** Motion's `AnimatePresence`: an element removed while it has an `exit` stays and animates out (the
+ *  renderer does it for every element), so this only passes its children through. */
+function AnimatePresence ({ children }) {
+  return children ?? null
+}
+
 module.exports = {
-  motion, useMotionValue, useSpring, useTransform, useMotionValueEvent, transform,
+  AnimatePresence, motion, useMotionValue, useSpring, useTransform, useMotionValueEvent, transform,
   animate, stagger, motionValue, MotionValue, isMotionValue,
 }

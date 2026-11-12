@@ -55,6 +55,27 @@ pub(super) fn done(id: u64) {
     crate::hooks::wake_all();
 }
 
+/// A new presence (for a host that keeps elements in a tree of its own).
+#[must_use]
+pub fn presence_id() -> u64 {
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+/// Run `build` as presence `id` taking its elements away: the ones it builds with an `exit` take it as their
+/// only target. Also whether any of them has an `exit` (if none, nothing animates out).
+pub fn exiting_scope<R>(id: u64, build: impl FnOnce() -> R) -> (R, bool) {
+    BUILDING.set((id, false));
+    let r = build();
+    let (_, any_exit) = BUILDING.replace((0, false));
+    (r, any_exit)
+}
+
+/// Whether presence `id`'s exits ended (once: the host lets its elements go).
+#[must_use]
+pub fn exit_done(id: u64) -> bool {
+    take_done(id)
+}
+
 fn take_done(id: u64) -> bool {
     DONE.with(|d| {
         let mut v = d.take();
@@ -68,7 +89,7 @@ fn take_done(id: u64) -> bool {
 /// out after (Motion's `AnimatePresence` around one child).
 #[track_caller]
 pub fn presence<E: IntoElement>(show: bool, build: impl FnOnce() -> E) -> Option<AnyElement> {
-    let state = crate::hooks::use_signal_with(|| (NEXT.fetch_add(1, Ordering::Relaxed), Phase::Gone));
+    let state = crate::hooks::use_signal_with(|| (presence_id(), Phase::Gone));
     let (id, was) = state.with(|s| *s);
     let phase = match (show, was) {
         (true, _) => {
@@ -83,9 +104,7 @@ pub fn presence<E: IntoElement>(show: bool, build: impl FnOnce() -> E) -> Option
         Phase::Gone => None,
         Phase::Present => Some(build().into_any_element()),
         Phase::Exiting => {
-            BUILDING.set((id, false));
-            let el = build().into_any_element();
-            let (_, any_exit) = BUILDING.replace((0, false));
+            let (el, any_exit) = exiting_scope(id, || build().into_any_element());
             any_exit.then_some(el) // nothing animates out: it goes now
         }
     };

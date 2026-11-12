@@ -8,7 +8,7 @@
 > Differences from the proposal:
 > - `variants` in `rsx!` take a list of `("name", vars! { ... })` pairs, not a nested object, and
 >   `staggerChildren` / `delayChildren` aren't there (give children a `delay`, or use `gsap::to` with `stagger`).
-> - JavaScript has no `AnimatePresence` or `layoutId` yet; Rust has `presence` and `layout`.
+> - JavaScript has no `layoutId` yet; its `exit` runs whenever an element is removed, so `AnimatePresence` only passes its children through. Rust has `presence` and `layout`.
 > - Widgets (kit nodes) have no draw transform or opacity: `x`, `y`, `scale`, `rotate` and `opacity` apply to
 >   HTML elements, and a widget animates its own values.
 

@@ -114,7 +114,10 @@ import { motion, useMotionValue, useSpring, useTransform } from '@blender-ui/rea
 - **Also on every element:** `whileInView` (with `viewport`), `whileDrag`, `drag`
   (`true`, `"x"`, `"y"`) with `dragConstraints`, `dragElastic`, `dragMomentum` and
   `dragSnapToOrigin`, and `layout` (`true`, `"position"`, `"size"`).
-- Not there yet: `AnimatePresence` and `layoutId`.
+- **Exit animations:** an element with an `exit` that React removes stays and animates out before it
+  goes, wherever it is (`AnimatePresence` passes its children through, so Motion code that names it works).
+  `mode` and `custom` aren't there.
+- Not there yet: `layoutId`.
 
 ## The renderer
 

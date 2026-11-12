@@ -27,7 +27,7 @@ All notable changes to **blenderui** (BUI). The format follows
   - **JavaScript and React:** `@blender-ui/native/gsap` and `@blender-ui/native/motion` (`animate`, `motionValue`,
     `stagger`), Motion's props on every element (`el.setMotion`), `@blender-ui/react/motion` (`motion.div`,
     `useMotionValue`, `useSpring`, `useTransform`), and `el.animate()` (Web Animations) now runs for real.
-    `app.advanceClock(ms)` steps animations frame-exactly in tests. No `AnimatePresence` or `layoutId` yet.
+    `app.advanceClock(ms)` steps animations frame-exactly in tests. An element removed while it has an `exit` animates out before it goes (`AnimatePresence`); no `layoutId` yet.
   - **Python:** `bui.gsap` and `bui.motion`; `QPropertyAnimation`, `QVariantAnimation`, the animation groups and
     `QEasingCurve` of Qt syntax run on the engine too. Components take `initial`, `animate` and `transition`.
   - **Lua:** `bui.gsap` and `bui.motion`. **C:** `BK_tween`, `BK_timeline`, `BK_spring_*`, `BK_ease_*`, and

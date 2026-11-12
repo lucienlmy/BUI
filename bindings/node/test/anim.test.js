@@ -259,3 +259,22 @@ test('cancel() rejects the pending finished promise with an AbortError', async (
   await app.advanceClock(1100)
   await a.finished
 })
+
+test('exit: a removed element animates out first, then goes (AnimatePresence)', async (t) => {
+  const { app, win, box } = page(t)
+  const el = box('gone')
+  el.style = { width: 10, height: 40 }
+  el.setMotion('exit', { height: 0 })
+  el.setMotion('transition', { duration: 1, ease: 'linear' })
+  const quick = box('quick') // no exit: goes at once
+  const tail = box('tail')
+  const top = async () => (await tail.getBoundingClientRect()).y
+  assert.strictEqual(await top(), 50)
+  win.body.removeChild(el)
+  win.body.removeChild(quick)
+  await app.advanceClock(500)
+  const mid = await top()
+  assert.ok(mid > 0 && mid < 40, `it is still there, shrinking: ${mid}`)
+  await app.advanceClock(700)
+  assert.strictEqual(await top(), 0, 'and gone after its exit')
+})

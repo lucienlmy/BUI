@@ -472,6 +472,11 @@ impl NodeMotion {
     }
 
     /// The props on the element (each render makes its own copies).
+    /// Whether it has an `exit` (it animates out before it goes).
+    pub(crate) fn has_exit(&self) -> bool {
+        self.0.iter().any(|p| matches!(p, MotionProp::Target(When::Exit, _)))
+    }
+
     pub(crate) fn apply(&self, mut d: Div) -> Div {
         for p in &self.0 {
             d = match p {

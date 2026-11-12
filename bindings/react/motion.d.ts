@@ -30,3 +30,7 @@ export function useTransform<T> (source: MotionValue<number>, fn: (v: number) =>
 export function useMotionValueEvent<T> (value: MotionValue<T>, event: 'change', fn: (v: T) => void): void
 /** Motion's `transform(input, output)`. */
 export function transform (input: number[], output: number[]): (v: number) => number
+
+/** An element removed while it has an `exit` animates out before it goes (every element does, in or out of
+ *  this component); it passes its children through, so Motion code that names it works. */
+export function AnimatePresence (props: { children?: import('react').ReactNode, [prop: string]: unknown }): import('react').ReactElement | null

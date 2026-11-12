@@ -73,7 +73,8 @@ import { motion, useMotionValue, useSpring, useTransform } from '@blender-ui/rea
 
 - **Host elements:** `motion.div`, `motion.span` and the rest take the props above; `motion.Button`, `motion.NumberSlider` and the other Blender widgets animate their own values.
 - **Motion values:** `style={{ width: mv }}` follows a value without rendering the component again.
-- **Not there yet:** `AnimatePresence` and `layoutId`.
+- **Exit animations:** an element with an `exit` that you remove stays and animates out before it goes; `AnimatePresence` passes its children through.
+- **Not there yet:** `layoutId`.
 
 ## Springs and eases
 

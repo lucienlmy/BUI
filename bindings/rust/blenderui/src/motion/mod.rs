@@ -36,7 +36,7 @@ mod value;
 mod vars;
 
 pub use ease::{Ease, ease};
-pub use presence::presence;
+pub use presence::{exit_done, exiting_scope, presence, presence_id};
 pub use scroll::{Scroll, use_element_scroll, use_scroll};
 pub(crate) use scroll::update as update_scroll;
 pub use spec::{Drag, DragConstraints, InView, Layout, Spec, Target, Variants, When};
