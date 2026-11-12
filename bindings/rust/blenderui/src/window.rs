@@ -722,9 +722,16 @@ impl App {
 
     /// Bring a window's layout up to date (what `element_bounds` reads) without drawing it: a native
     /// window draws itself on its next frame, and [`draw`](Self::draw) would be a second, unpresented one.
+    ///
+    /// An off-screen window has no loop of its own: it is drawn, which is also what lays the kit out.
     pub fn layout(&mut self, id: WindowId) {
-        self.flush();
-        self.with_window(id.0, |w, app| w.update(app));
+        let native = self.windows.get(id.0).and_then(|w| w.as_deref()).is_some_and(|w| w.native.is_some());
+        if native {
+            self.flush();
+            self.with_window(id.0, |w, app| w.update(app));
+        } else {
+            self.draw(id);
+        }
     }
 
     /// Move every window's CSS animation clock forward by `d`. Headless
