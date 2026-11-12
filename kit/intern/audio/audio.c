@@ -217,7 +217,8 @@ static bool next_frame(BKAudio *a, float *out, double *r_t, bool loop, bool *r_j
       const float *f = a->block + (size_t)a->pos * a->src_channels;
       a->pos++;
       if (t + 0.5 / a->src_rate < a->skip_to) {
-        continue; /* before the seek's time: the reader starts a little early */
+        tries--; /* before the seek's time: the reader starts a little early. Not a try */
+        continue;
       }
       memcpy(out, f, sizeof(float) * (size_t)a->src_channels);
       *r_t = t;
