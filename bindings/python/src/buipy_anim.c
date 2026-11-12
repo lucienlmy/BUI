@@ -202,24 +202,135 @@ static PyTypeObject Ease_Type = {
  * over, as on a node); an attribute's name is looked up by property id, the spelling Python used.
  * \{ */
 
-static PyObject **g_names; /* property id -> attribute name */
-static int g_cap_names;
+/* The attribute names Python used for one target's properties. `scale_x` and `scaleX` are one
+ * property to the engine, so the name is kept per (target, property): two objects animating
+ * different spellings each write their own. An entry lives as long as the tweens on its target
+ * (retain / release count them); the table is open addressing by the target's address. */
+typedef struct ObjNames {
+  PyObject *obj; /* NULL: empty, DELETED: removed */
+  int refs, n, cap;
+  int *props;
+  PyObject **names;
+} ObjNames;
 
-static int name_set(int prop, PyObject *name)
+#define DELETED ((PyObject *)1)
+
+static ObjNames *g_objs;
+static int g_nobjs, g_capobjs;
+
+static size_t objs_hash(const PyObject *obj)
 {
-  if (prop >= g_cap_names) {
-    const int cap = prop + 32;
-    PyObject **grown = PyMem_Realloc(g_names, sizeof(PyObject *) * (size_t)cap);
-    if (!grown) {
+  const uintptr_t h = (uintptr_t)obj * 0x9E3779B97F4A7C15ull;
+  return (size_t)(h >> 20);
+}
+
+static ObjNames *objs_find(const PyObject *obj)
+{
+  if (!g_capobjs) {
+    return NULL;
+  }
+  for (size_t i = objs_hash(obj) & (size_t)(g_capobjs - 1), k = 0; k < (size_t)g_capobjs;
+       i = (i + 1) & (size_t)(g_capobjs - 1), k++)
+  {
+    ObjNames *e = &g_objs[i];
+    if (!e->obj) {
+      return NULL;
+    }
+    if (e->obj == obj) {
+      return e;
+    }
+  }
+  return NULL;
+}
+
+static int objs_grow(void)
+{
+  ObjNames *old = g_objs;
+  const int old_cap = g_capobjs;
+  const int cap = old_cap ? old_cap * 2 : 16;
+  ObjNames *grown = PyMem_Calloc((size_t)cap, sizeof(ObjNames));
+  if (!grown) {
+    PyErr_NoMemory();
+    return 0;
+  }
+  g_objs = grown;
+  g_capobjs = cap;
+  g_nobjs = 0;
+  for (int i = 0; i < old_cap; i++) {
+    if (old[i].obj && old[i].obj != DELETED) {
+      for (size_t k = objs_hash(old[i].obj) & (size_t)(cap - 1);; k = (k + 1) & (size_t)(cap - 1)) {
+        if (!g_objs[k].obj) {
+          g_objs[k] = old[i];
+          g_nobjs++;
+          break;
+        }
+      }
+    }
+  }
+  PyMem_Free(old);
+  return 1;
+}
+
+/* the entry for `obj`, made when there is none */
+static ObjNames *objs_entry(PyObject *obj)
+{
+  ObjNames *e = objs_find(obj);
+  if (e) {
+    return e;
+  }
+  if ((g_nobjs + 1) * 2 > g_capobjs && !objs_grow()) {
+    return NULL;
+  }
+  for (size_t i = objs_hash(obj) & (size_t)(g_capobjs - 1);; i = (i + 1) & (size_t)(g_capobjs - 1)) {
+    if (!g_objs[i].obj || g_objs[i].obj == DELETED) {
+      g_objs[i] = (ObjNames){.obj = obj};
+      g_nobjs++;
+      return &g_objs[i];
+    }
+  }
+}
+
+static int name_set(PyObject *obj, int prop, PyObject *name)
+{
+  ObjNames *e = objs_entry(obj);
+  if (!e) {
+    return 0;
+  }
+  for (int i = 0; i < e->n; i++) {
+    if (e->props[i] == prop) {
+      Py_XSETREF(e->names[i], Py_NewRef(name));
+      return 1;
+    }
+  }
+  if (e->n == e->cap) {
+    const int cap = e->cap ? e->cap * 2 : 4;
+    int *props = PyMem_Realloc(e->props, sizeof(int) * (size_t)cap);
+    if (props) {
+      e->props = props;
+    }
+    PyObject **names = props ? PyMem_Realloc(e->names, sizeof(PyObject *) * (size_t)cap) : NULL;
+    if (!names) {
       PyErr_NoMemory();
       return 0;
     }
-    memset(grown + g_cap_names, 0, sizeof(PyObject *) * (size_t)(cap - g_cap_names));
-    g_names = grown;
-    g_cap_names = cap;
+    e->names = names;
+    e->cap = cap;
   }
-  Py_XSETREF(g_names[prop], Py_NewRef(name));
+  e->props[e->n] = prop;
+  e->names[e->n++] = Py_NewRef(name);
   return 1;
+}
+
+/* the attribute `obj`'s property `prop` is, as Python spelled it (borrowed) */
+static PyObject *name_of(const PyObject *obj, int prop)
+{
+  const ObjNames *e = objs_find(obj);
+  for (int i = 0; e && i < e->n; i++) {
+    if (e->props[i] == prop) {
+      return e->names[i];
+    }
+  }
+  return NULL;
 }
 
 /* a number, or a sequence of up to 4 */
@@ -243,11 +354,13 @@ static int numbers_of(PyObject *v, float r[4])
 
 static int pyobj_get(void *obj, int prop, float r_value[4], int *r_unit)
 {
-  if (prop >= g_cap_names || !g_names[prop]) {
+  GIL_ENTER;
+  PyObject *name = name_of((PyObject *)obj, prop);
+  if (!name) {
+    GIL_LEAVE;
     return 0;
   }
-  GIL_ENTER;
-  PyObject *v = PyObject_GetAttr((PyObject *)obj, g_names[prop]);
+  PyObject *v = PyObject_GetAttr((PyObject *)obj, name);
   const int n = v ? numbers_of(v, r_value) : 0;
   Py_XDECREF(v);
   if (!n) {
@@ -261,24 +374,28 @@ static int pyobj_get(void *obj, int prop, float r_value[4], int *r_unit)
 static void pyobj_set(void *obj, int prop, const float *value, int n, int unit)
 {
   (void)unit;
-  if (prop >= g_cap_names || !g_names[prop]) {
-    return;
-  }
   GIL_ENTER;
-  PyObject *v = n == 1 ? PyFloat_FromDouble(value[0]) : PyTuple_New(n);
-  for (int i = 0; v && n > 1 && i < n; i++) {
-    PyTuple_SET_ITEM(v, i, PyFloat_FromDouble(value[i]));
+  PyObject *name = name_of((PyObject *)obj, prop);
+  if (name) {
+    PyObject *v = n == 1 ? PyFloat_FromDouble(value[0]) : PyTuple_New(n);
+    for (int i = 0; v && n > 1 && i < n; i++) {
+      PyTuple_SET_ITEM(v, i, PyFloat_FromDouble(value[i]));
+    }
+    if (!v || PyObject_SetAttr((PyObject *)obj, name, v) < 0) {
+      buipy_stash_error();
+    }
+    Py_XDECREF(v);
   }
-  if (!v || PyObject_SetAttr((PyObject *)obj, g_names[prop], v) < 0) {
-    buipy_stash_error();
-  }
-  Py_XDECREF(v);
   GIL_LEAVE;
 }
 
 static void pyobj_retain(void *obj)
 {
   GIL_ENTER;
+  ObjNames *e = objs_find((PyObject *)obj);
+  if (e) {
+    e->refs++;
+  }
   Py_INCREF((PyObject *)obj);
   GIL_LEAVE;
 }
@@ -286,6 +403,15 @@ static void pyobj_retain(void *obj)
 static void pyobj_release(void *obj)
 {
   GIL_ENTER;
+  ObjNames *e = objs_find((PyObject *)obj);
+  if (e && --e->refs <= 0) { /* the last tween on it: its names go */
+    for (int i = 0; i < e->n; i++) {
+      Py_DECREF(e->names[i]);
+    }
+    PyMem_Free(e->props);
+    PyMem_Free(e->names);
+    *e = (ObjNames){.obj = DELETED};
+  }
   Py_DECREF((PyObject *)obj);
   GIL_LEAVE;
 }
@@ -1083,7 +1209,7 @@ static int target_read(PyObject *target, const Plan *p, const BKAnimClass **r_cl
       return 0; /* AttributeError: nothing by that name */
     }
     Py_DECREF(cur);
-    if (!name_set(p->t[i].prop, p->t[i].name)) {
+    if (!name_set(target, p->t[i].prop, p->t[i].name)) {
       return 0;
     }
   }

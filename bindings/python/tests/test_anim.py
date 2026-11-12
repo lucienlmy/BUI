@@ -300,6 +300,21 @@ def test_qt_animations():
     step(0.5)
 
 
+def test_attribute_spellings_stay_per_target():
+    # scale_x and scaleX are one property to the engine; each object keeps its own spelling
+    a, b = Obj(scale_x=1.0), Obj(scaleX=1.0)
+    ta = gsap.to(a, scale_x=3, duration=1, ease="none")
+    tb = gsap.to(b, scaleX=5, duration=1, ease="none")
+    step(0.5)
+    assert near(a.scale_x, 2.0) and near(b.scaleX, 3.0), (a.__dict__, b.__dict__)
+    assert "scaleX" not in a.__dict__ and "scale_x" not in b.__dict__, (a.__dict__, b.__dict__)
+    # and the same object again, with the other spelling and while the first still runs
+    step(1.0)
+    assert near(a.scale_x, 3.0) and near(b.scaleX, 5.0)
+    ta.kill()
+    tb.kill()
+
+
 def main() -> int:
     if not buipy.motion_available():
         print("anim tests: no animation in this build, skipped")
