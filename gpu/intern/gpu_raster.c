@@ -291,11 +291,13 @@ int BUI_gpu_slug(void)
   return c >= 0 ? c : BUI_SLUG_DEFAULT;
 }
 
-/* Whether text of `px` pixels draws with Slug. */
-static int slug_for(float px)
+/* Whether text of `px` pixels draws with Slug. `shear` (a synthetic italic): the atlas has
+ * upright glyph bitmaps only, so slanted text stays on Slug, which applies the slant, unless Slug
+ * was turned off explicitly. */
+static int slug_for(float px, float shear)
 {
   const int c = slug_choice();
-  return c >= 0 ? c : (BUI_SLUG_DEFAULT && px >= (float)SLUG_MIN_PX);
+  return c >= 0 ? c : (BUI_SLUG_DEFAULT && (px >= (float)SLUG_MIN_PX || shear != 0.0f));
 }
 
 int BUI_raster_gpu_attach(BuiRaster *r, void *window_handle, int wait)
@@ -2958,7 +2960,7 @@ static int gpu_text_glyphs(BuiRaster *r, TextRun *e, float x, float y, const flo
   }
   const FontSlot *fs = &g_fonts[e->font];
   const float ox = floorf(x + 0.5f), base = floorf(y + 0.5f);
-  const int slug = slug_for((float)fs->px) && bui_gpu_slug_on(r->gpu);
+  const int slug = slug_for((float)fs->px, shear) && bui_gpu_slug_on(r->gpu);
   const int passes = embolden > 0.0f ? 1 + (int)(embolden + 0.5f) : 1; /* synthetic bold */
   for (int i = 0; i < e->ng; i++) {
     const float pen = ox + e->gx[i];

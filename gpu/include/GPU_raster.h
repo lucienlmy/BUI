@@ -336,9 +336,10 @@ int BUI_gpu_default(void);
  * pixel shader; sharp at any size), 0 = per-glyph bitmap atlas (Blender's
  * approach; less GPU work). Takes effect on the next frame. Without a choice
  * (BUI_gpu_set_slug, the BUI_SLUG variable 1/0), the BUI_SLUG build option ON
- * draws text of 40 px and up with Slug and smaller text from the atlas (half
- * the GPU time on UI text, the same pixels as the CPU renderer); OFF: the
- * atlas. BUI_gpu_slug() says whether Slug is in use at all. */
+ * draws text of 40 px and up, and synthetic italic (the atlas has no slant),
+ * with Slug and the rest from the atlas (half the GPU time on UI text, the
+ * same pixels as the CPU renderer); OFF: the atlas. BUI_gpu_slug() says
+ * whether Slug is in use at all. */
 void BUI_gpu_set_slug(int on);
 int BUI_gpu_slug(void);
 
