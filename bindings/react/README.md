@@ -111,7 +111,10 @@ import { motion, useMotionValue, useSpring, useTransform } from '@blender-ui/rea
   re-rendering.
 - **Functions:** `animate`, `stagger`, `motionValue`; GSAP's API is
   `@blender-ui/native/gsap`.
-- Not there yet: `AnimatePresence`, `whileInView`, `drag`, `layout`.
+- **Also on every element:** `whileInView` (with `viewport`), `whileDrag`, `drag`
+  (`true`, `"x"`, `"y"`) with `dragConstraints`, `dragElastic`, `dragMomentum` and
+  `dragSnapToOrigin`, and `layout` (`true`, `"position"`, `"size"`).
+- Not there yet: `AnimatePresence` and `layoutId`.
 
 ## The renderer
 

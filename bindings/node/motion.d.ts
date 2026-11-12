@@ -56,8 +56,24 @@ export interface MotionProps {
   whileHover?: Target | string
   whileTap?: Target | string
   whileFocus?: Target | string
+  /** held while the element is in the viewport */
+  whileInView?: Target | string
+  /** held while it is dragged */
+  whileDrag?: Target | string
+  viewport?: { once?: boolean, amount?: number | 'some' | 'all' }
   transition?: Transition
   variants?: Record<string, Target>
+  /** drag it: both axes, or one */
+  drag?: boolean | 'x' | 'y'
+  /** pixels from where the drag started */
+  dragConstraints?: { left?: number, right?: number, top?: number, bottom?: number }
+  /** how far past the constraints it goes, 0 to 1 */
+  dragElastic?: number | boolean
+  /** keep moving by inertia after the pointer lets go */
+  dragMomentum?: boolean
+  dragSnapToOrigin?: boolean
+  /** a change of its box animates from the old box to the new one */
+  layout?: boolean | 'position' | 'size'
 }
 
 /** A number (or CSS value) the engine animates; bind it with `style={{ x: mv }}`. */
