@@ -257,6 +257,12 @@ export class Window {
   cancelAnimationFrame (id: number): void
   screenshot (): Promise<{ width: number, height: number, data: Buffer }>
   click (x: number, y: number): void
+  /** Move the pointer (tests): hover, drag and mouse events follow. */
+  mouseMove (x: number, y: number): void
+  /** Press the left button (tests). */
+  mouseDown (x: number, y: number): void
+  /** Let go of the left button (tests). */
+  mouseUp (x: number, y: number): void
   close (): void
   /** `focus` / `blur`: the window got or lost the keyboard focus. */
   on (event: 'close' | 'focus' | 'blur', listener: () => void): this

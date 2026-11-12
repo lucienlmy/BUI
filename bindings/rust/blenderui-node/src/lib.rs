@@ -412,6 +412,12 @@ impl NativeApp {
     pub fn simulate_click(&self, window: u32, x: f64, y: f64) {
         self.link.send(move |cx| view::simulate_click(cx, window, x, y));
     }
+
+    /// The pointer in window `window` (tests; logical pixels): `kind` 0 moves it, 1 presses the left button, 2 lets go.
+    #[napi]
+    pub fn simulate_pointer(&self, window: u32, kind: u32, x: f64, y: f64) {
+        self.link.send(move |cx| view::simulate_pointer(cx, window, kind, x, y));
+    }
 }
 
 // ==========================================================================

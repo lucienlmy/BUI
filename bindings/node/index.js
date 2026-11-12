@@ -177,6 +177,24 @@ class Window {
     this.app.native.simulateClick(this.id, x, y)
   }
 
+  /** Move the pointer to (x, y) logical pixels (tests): hover, drag and mouse events follow. */
+  mouseMove (x, y) {
+    this.flush()
+    this.app.native.simulatePointer(this.id, 0, x, y)
+  }
+
+  /** Press the left button at (x, y) (tests). */
+  mouseDown (x, y) {
+    this.flush()
+    this.app.native.simulatePointer(this.id, 1, x, y)
+  }
+
+  /** Let go of the left button at (x, y) (tests). */
+  mouseUp (x, y) {
+    this.flush()
+    this.app.native.simulatePointer(this.id, 2, x, y)
+  }
+
   close () {
     this.flush()
     this.app.native.closeWindow(this.id)

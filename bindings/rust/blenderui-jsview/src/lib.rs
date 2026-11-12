@@ -709,6 +709,18 @@ pub fn simulate_click(cx: &mut App, window: u32, x: f64, y: f64) {
     }
 }
 
+/// The pointer at (x, y) in window `window` (tests; logical pixels): 0 moves it, 1 presses the left button, 2 lets go.
+pub fn simulate_pointer(cx: &mut App, window: u32, kind: u32, x: f64, y: f64) {
+    if let Some(h) = cx.global::<UiState>().windows.get(&window).cloned() {
+        let (x, y) = (x as f32, y as f32);
+        match kind {
+            0 => cx.simulate_mouse_move(h.id, x, y),
+            1 => cx.simulate_press(h.id, x, y),
+            _ => cx.simulate_release(h.id, x, y),
+        }
+    }
+}
+
 // ==========================================================================
 // Measuring (benchmarks): the same counters as bench/common/measure.rs.
 
