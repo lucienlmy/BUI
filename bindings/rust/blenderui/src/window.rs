@@ -677,6 +677,39 @@ impl App {
         (pw as usize, ph as usize, px)
     }
 
+    /// A frame the way a native window draws it, and the same frame in full: what the kit repaints
+    /// where something changed (on the pixels of the last frame), and a fresh render of everything.
+    /// They must be equal; a difference is a damaged region that was lost. (Tests: draw once first.)
+    #[doc(hidden)]
+    pub fn draw_partial_and_full(&mut self, id: WindowId) -> (usize, usize, Vec<u32>, Vec<u32>, Vec<[i32; 4]>) {
+        self.flush();
+        let Some(w) = self.windows.get_mut(id.0).and_then(|w| w.as_deref_mut()) else {
+            return (0, 0, Vec::new(), Vec::new(), Vec::new());
+        };
+        let (pw, ph) = w.phys;
+        // SAFETY: the rasters are sized to the window; pixels are copied out.
+        let (partial, full, damage) = unsafe {
+            if w.raster.is_null() {
+                w.raster = sys::BUI_raster_create(pw, ph);
+            }
+            sys::BK_render(w.ctx, w.raster, pw, ph, 0);
+            let p = sys::BUI_raster_pixels(w.raster);
+            let partial = std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec();
+            // what a window's present would copy to the screen
+            let mut rects: *const [c_int; 4] = std::ptr::null();
+            let n = sys::BUI_raster_damage(w.raster, &raw mut rects);
+            let damage = if rects.is_null() { Vec::new() } else { std::slice::from_raw_parts(rects, n as usize).to_vec() };
+            let fresh = sys::BUI_raster_create(pw, ph);
+            sys::BK_render(w.ctx, fresh, pw, ph, 1);
+            let p = sys::BUI_raster_pixels(fresh);
+            let full = std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec();
+            sys::BUI_raster_free(fresh);
+            (partial, full, damage)
+        };
+        self.flush();
+        (pw as usize, ph as usize, partial, full, damage)
+    }
+
     /// Move every window's CSS animation clock forward by `d`. Headless
     /// windows' clocks stand still otherwise, so tests step animations and
     /// transitions deterministically; native windows add `d` to real time.

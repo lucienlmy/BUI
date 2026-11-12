@@ -403,6 +403,8 @@ unsafe extern "C" {
     // raster + text (gpu/)
     pub fn BUI_raster_create(width: c_int, height: c_int) -> *mut BuiRaster;
     pub fn BUI_raster_free(r: *mut BuiRaster);
+    /// The rectangles (x, y, w, h) the last frame changed: what a present copies.
+    pub fn BUI_raster_damage(r: *const BuiRaster, r_rects: *mut *const [c_int; 4]) -> c_int;
     pub fn BUI_raster_width(r: *const BuiRaster) -> c_int;
     pub fn BUI_raster_height(r: *const BuiRaster) -> c_int;
     pub fn BUI_raster_pixels(r: *const BuiRaster) -> *const u32;
