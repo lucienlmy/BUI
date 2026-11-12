@@ -3743,8 +3743,13 @@ static int face_find(const char *family, int style, int *r_have)
   if (fam == 0 && generic) { /* Inter (italic synthesized, like Blender) */
     const int f = face_inter(want & 1);
     if (f >= 0) {
-      /* FreeType instances the bold weight; stb_truetype can't (synthesized) */
-      *r_have = TEXT_FT && g_faces[f].ft ? (style & BUI_FONT_BOLD) : 0;
+      /* FreeType instances the bold weight; stb_truetype can't (synthesized). Without FreeType
+       * compiled in, a Face has no `ft` to look at. */
+#    if TEXT_FT
+      *r_have = g_faces[f].ft ? (style & BUI_FONT_BOLD) : 0;
+#    else
+      *r_have = 0;
+#    endif
       return f;
     }
   }
