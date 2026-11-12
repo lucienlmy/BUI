@@ -275,8 +275,16 @@ impl Elements {
             let Some(n) = frame.nodes.get(node).filter(|n| n.key == key) else { continue };
             let b = n.bounds;
             let area = (b.size.width * b.size.height).max(1e-6);
-            let w = (b.origin.x + b.size.width).min(viewport.0) - b.origin.x.max(0.0);
-            let h = (b.origin.y + b.size.height).min(viewport.1) - b.origin.y.max(0.0);
+            // what the window shows of it, and what the scroll containers around it show
+            let (mut x0, mut y0) = (b.origin.x.max(0.0), b.origin.y.max(0.0));
+            let (mut x1, mut y1) = ((b.origin.x + b.size.width).min(viewport.0), (b.origin.y + b.size.height).min(viewport.1));
+            if let Some(c) = n.clip {
+                x0 = x0.max(c.origin.x);
+                y0 = y0.max(c.origin.y);
+                x1 = x1.min(c.origin.x + c.size.width);
+                y1 = y1.min(c.origin.y + c.size.height);
+            }
+            let (w, h) = (x1 - x0, y1 - y0);
             let shown = if w > 0.0 && h > 0.0 { w * h / area } else { 0.0 };
             let inside = if v.amount <= 0.0 { shown > 0.0 } else { shown >= v.amount - 1e-4 };
             let now = inside || (v.once && g.in_view);
