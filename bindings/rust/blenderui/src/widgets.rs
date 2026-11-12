@@ -313,6 +313,8 @@ pub(crate) struct WidgetNode {
     pub node: *mut sys::BKNode,
     pub spec: WidgetSpec,
     seen: bool,
+    /// the canvas it is on (see `Painter`)
+    seg: u32,
 }
 
 /// The kit widgets of one window, keyed by element key.
@@ -344,7 +346,7 @@ impl Widgets {
                 sys::BK_node_add(parent, node, -1);
                 sys::BK_geom_set_manager(node, sys::BK_GEOM_PLACE);
             }
-            let w = WidgetNode { node, spec: spec.clone(), seen: true };
+            let w = WidgetNode { node, spec: spec.clone(), seen: true, seg: 0 };
             sync(node, None, spec);
             w
         });
@@ -362,7 +364,6 @@ impl Widgets {
         ((nat[0] as f32 / scale).max(mw), (nat[1] as f32 / scale).max(mh))
     }
 
-    /// Place every widget at its laid-out bounds; free those not rendered.
     /// A frame without layout (a redraw of Motion's values) keeps the widgets
     /// of the last one: none was asked for again, none is gone.
     pub(crate) fn keep(&mut self) {
@@ -371,8 +372,9 @@ impl Widgets {
         }
     }
 
-    pub(crate) fn place(&mut self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool)>,
-                        scale: f32) {
+    /// Place every widget at its laid-out bounds; free those not rendered.
+    pub(crate) fn place(&mut self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool, u32)>,
+                        canvases: &[*mut sys::BKNode], scale: f32) {
         self.nodes.retain(|key, w| {
             if !w.seen || !at.contains_key(key) {
                 // SAFETY: frees our node (detaching it from the canvas).
@@ -380,7 +382,14 @@ impl Widgets {
                 return false;
             }
             w.seen = false;
-            let (b, clip, visible) = at[key];
+            let (b, clip, visible, seg) = at[key];
+            // on the canvas its paint order puts it on (above what comes before, below what overlaps it)
+            let seg = seg.min(canvases.len() as u32 - 1);
+            if w.seg != seg {
+                // SAFETY: our node, moved to another of the window's canvases.
+                unsafe { sys::BK_node_add(canvases[seg as usize], w.node, -1) };
+                w.seg = seg;
+            }
             let shown = visible && clip.is_none_or(|c| {
                 let i = c.intersect(&b);
                 i.size.width > 0.0 && i.size.height > 0.0

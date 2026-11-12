@@ -915,6 +915,11 @@ pub struct Window {
     id: usize,
     ctx: *mut sys::BKContext,
     canvas: *mut sys::BKNode,
+    /// The canvases over the first one (see `Painter`: items that overlap a
+    /// widget are drawn on a canvas above it), made as needed.
+    overlays: Vec<*mut sys::BKNode>,
+    /// `canvas`, then `overlays`: what `Painter::flush` fills.
+    canvases: Vec<*mut sys::BKNode>,
     root: *mut sys::BKNode,
     opaque: bool,
     native: Option<*mut sys::BKWindow>,
@@ -977,6 +982,8 @@ impl Window {
                 id,
                 ctx,
                 canvas,
+                overlays: Vec::new(),
+                canvases: vec![canvas],
                 root,
                 opaque: false,
                 native: None,
@@ -1261,10 +1268,10 @@ impl Window {
     fn present(&mut self, app: &mut App, frame: Frame, dirty: Option<&[bool]>) {
         FRAMES_PRESENTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let vp = self.viewport();
-        let (canvas, scale) = (self.canvas, self.scale);
-        let p = &mut self.painter;
+        let scale = self.scale;
         {
             let _s = span(Phase::Paint);
+            let p = &mut self.painter;
             let kept = dirty.is_some_and(|d| p.repaint(&frame, &self.caches.styles, &mut self.caches.text, d, vp, app));
             if !kept {
                 p.reset();
@@ -1273,16 +1280,20 @@ impl Window {
         }
         {
             let _s = span(Phase::Flush);
-            p.flush(canvas, scale);
+            self.grow_canvases(self.painter.segment_count());
+            self.painter.flush(&self.canvases, scale);
         }
         let _rest = span(Phase::Widgets);
         let mut at = HashMap::new(); // empty (no allocation) without form widgets
-        for n in &frame.nodes {
-            if matches!(n.content, Content::Widget(_)) {
-                at.insert(n.key, (n.bounds, n.clip, n.visible));
+        if frame.nodes.iter().any(|n| matches!(n.content, Content::Widget(_))) {
+            let segment = self.painter.widget_segments();
+            for n in &frame.nodes {
+                if matches!(n.content, Content::Widget(_)) {
+                    at.insert(n.key, (n.bounds, n.clip, n.visible, segment.get(&n.key).copied().unwrap_or(0)));
+                }
             }
         }
-        self.widgets.place(&at, scale);
+        self.widgets.place(&at, &self.canvases, scale);
         // an opaque <html> background covers the window: the kit can skip its clear
         let styles = &self.caches.styles;
         let opaque = frame.nodes.first()
@@ -1301,6 +1312,27 @@ impl Window {
     }
 
     // -- events ------------------------------------------------------------------------------
+
+    /// At least `n` canvases (the ones over the first are made here, above
+    /// the rest, and take the pointer only where they have items).
+    fn grow_canvases(&mut self, n: usize) {
+        while self.canvases.len() < n {
+            // SAFETY: a fresh canvas added to our root, like the first one.
+            let c = unsafe {
+                let c = sys::BK_node_new(c"canvas".as_ptr());
+                sys::BK_node_add(self.root, c, -1);
+                sys::BK_geom_set_manager(c, sys::BK_GEOM_PLACE);
+                sys::BK_geom_set(c, c"relwidth".as_ptr(), 1.0);
+                sys::BK_geom_set(c, c"relheight".as_ptr(), 1.0);
+                sys::BK_set_num(c, c"events".as_ptr(), 1.0);
+                sys::BK_set_num(c, c"hititems".as_ptr(), 1.0);
+                sys::BK_set_num(c, c"cursor".as_ptr(), f64::from(self.cursor));
+                c
+            };
+            self.overlays.push(c);
+            self.canvases.push(c);
+        }
+    }
 
     /// Element keys from the root to the deepest element under the pointer.
     fn path_at(&self, x: f32, y: f32) -> Vec<Key> {
@@ -1351,7 +1383,9 @@ impl Window {
                 .find_map(|k| f.by_key().get(k).and_then(|&i| self.caches.styles[f.nodes[i].style].cursor)).unwrap_or(0);
             if cursor != self.cursor {
                 self.cursor = cursor;
-                unsafe { sys::BK_set_num(self.canvas, c"cursor".as_ptr(), cursor as f64) };
+                for &c in &self.canvases {
+                    unsafe { sys::BK_set_num(c, c"cursor".as_ptr(), cursor as f64) };
+                }
             }
         }
         if fire {
@@ -1398,7 +1432,7 @@ impl Window {
     }
 
     fn dispatch(&mut self, ev: RawEvent, app: &mut App) {
-        if ev.node != self.canvas {
+        if !self.canvases.contains(&ev.node) {
             self.widget_event(ev, app);
             return;
         }
