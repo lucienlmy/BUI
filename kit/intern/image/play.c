@@ -175,10 +175,16 @@ static double heard(const BKImPlay *p)
 }
 
 /* The sound's time held against a frame at `pts`: in a looping movie, sound
- * near the end that hasn't come round yet is from before the start. */
+ * near the end that hasn't come round yet is from before the start, and sound that came
+ * round before the last frames (the picture runs a little past the sound) is from after the end. */
 static double heard_for(const BKImPlay *p, double c, double pts)
 {
-  return p->loops == 0 && p->duration > 0.0 && c - pts > 0.5 * p->duration ? c - p->duration : c;
+  if (p->loops != 0 || p->duration <= 0.0) {
+    return c;
+  }
+  return c - pts > 0.5 * p->duration ? c - p->duration :
+         pts - c > 0.5 * p->duration ? c + p->duration :
+                                       c;
 }
 
 /* With sound: when the shown frame is over (the sound reached the next one). */
