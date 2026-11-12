@@ -26,6 +26,7 @@ launch({
     setInterval(async () => {
       const r = await red.getBoundingClientRect()
       const b = await blue.getBoundingClientRect()
+      if (process.env.BUI_LOG) console.log(moves, worst.toFixed(0), r && r.width.toFixed(0), b && b.x.toFixed(0))
       log.textContent = `mousemoves ${moves} | slowest frame ${worst.toFixed(0)} ms | red ${r ? r.width.toFixed(0) : '?'} px wide | blue x ${b ? b.x.toFixed(0) : '?'}`
       worst = 0
     }, 250)

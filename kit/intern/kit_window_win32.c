@@ -388,6 +388,24 @@ static void vsync(void)
   }
 }
 
+/* Windows hands a thread its posted messages before its input and timers, and the frames of an
+ * animation are posted (host_request): one every frame, for ever, left the mouse, the keyboard, the
+ * title bar's buttons and every timer waiting. Between two frames: take what is waiting. */
+static void serve_input(void)
+{
+  MSG msg;
+  while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE | PM_QS_INPUT | PM_QS_PAINT) ||
+         PeekMessageW(&msg, NULL, WM_TIMER, WM_TIMER, PM_REMOVE))
+  {
+    if (msg.message == WM_QUIT) {
+      PostQuitMessage((int)msg.wParam); /* not ours to swallow */
+      return;
+    }
+    TranslateMessage(&msg);
+    DispatchMessageW(&msg);
+  }
+}
+
 /* The primary display's refresh interval in ms. */
 static double refresh_ms(void)
 {
@@ -652,6 +670,10 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         bk_frame_budget_ms = win->frame_vsync ? refresh_ms() : 0.0;
         if (win->frame_vsync && bk_frame_ms < refresh_ms() - 1.5) {
           vsync(); /* early: wait for the next refresh; late: start right away */
+        }
+        serve_input();
+        if (!win->hwnd) { /* an input message closed the window */
+          return 0;
         }
         host_request(win);
       }

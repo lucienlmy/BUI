@@ -118,6 +118,11 @@ All notable changes to **blenderui** (BUI). The format follows
 - **Rust: `whileInView`** counts what a scroller clips as out of view, so a row below a scroller's edge animates when
   it is scrolled in, not at mount.
 - **Rust: widgets and Motion.** A frame of moving values (no layout) freed every form widget; it keeps them now.
+- **Windows: a window that animates for ever ignored the mouse, the keyboard and its title bar.** The frames of an animation are
+  posted messages (`WM_BK_RENDER`, one after another), and Windows hands a thread its posted messages before hardware input and
+  timers, so with an endless animation (a loop, a spinner, a marquee) none of them got through: no hover, no drag, no maximize,
+  no alt-tab, and the busy cursor over the window. Between two frames the host now takes the input, paint and timer messages
+  that are waiting.
 - **`repeat: -1` in a timeline** (and so on every element or selector, which GSAP-style calls run through a timeline): a
   child that repeats for ever counted as zero long, so its timeline ended at once and it never moved. The timeline now plays
   until it is killed.
