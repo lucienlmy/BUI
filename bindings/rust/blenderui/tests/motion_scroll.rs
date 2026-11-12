@@ -1,19 +1,21 @@
 //! Motion's useScroll, headless: the values follow the window's scroll.
 
 use std::cell::Cell;
-use std::rc::Rc;
 
 use blenderui::motion::{Scroll, use_scroll};
 use blenderui::prelude::*;
 
-struct Page {
-    seen: Rc<Cell<Option<Scroll>>>,
+thread_local! {
+    /// The scroll values the view made (the test reads them): per thread, no shared ownership.
+    static SEEN: Cell<Option<Scroll>> = const { Cell::new(None) };
 }
+
+struct Page;
 
 impl Render for Page {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
         let s = use_scroll();
-        self.seen.set(Some(s));
+        SEEN.set(Some(s));
         let p = s.y_progress;
         rsx! {
             <body style="margin: 0; height: 100vh; overflow-y: auto">
@@ -28,8 +30,6 @@ impl Render for Page {
 #[test]
 fn scroll_values() {
     Application::headless().run(|cx| {
-        let seen = Rc::new(Cell::new(None));
-        let s2 = seen.clone();
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(0.0), px(0.0)),
@@ -37,9 +37,9 @@ fn scroll_values() {
             })),
             ..Default::default()
         };
-        let w = cx.open_window(opts, move |_, cx| cx.new(|_| Page { seen: s2 })).unwrap().id;
+        let w = cx.open_window(opts, |_, cx| cx.new(|_| Page)).unwrap().id;
         cx.draw(w);
-        let s = seen.get().expect("rendered");
+        let s = SEEN.get().expect("rendered");
         assert_eq!(s.scroll_y.get(), 0.0);
         cx.simulate_scroll(w, 100.0, 100.0, -5);
         cx.draw(w);

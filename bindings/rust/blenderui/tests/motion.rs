@@ -3,12 +3,15 @@
 
 use std::time::Duration;
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use blenderui::motion::{MotionValue, Value, gsap};
 use blenderui::prelude::*;
 use blenderui::vars;
+
+// counted by callbacks, at compile time (no shared ownership)
+static DONE: AtomicU32 = AtomicU32::new(0);
+static CALLS: AtomicU32 = AtomicU32::new(0);
 
 fn open<V: Render>(cx: &mut App, v: V) -> WindowHandle<V> {
     let opts = WindowOptions {
@@ -148,9 +151,7 @@ fn motion_elements() {
 
         // style={{ width: mv }}: the element follows the value every frame
         assert!(near(bounds(cx, w, "bound").size.width, 30.0, 0.5));
-        let done = Rc::new(Cell::new(0));
-        let d = done.clone();
-        let t = gsap::to(mv, vars! { value: 130, duration: 1, ease: "none", onComplete: move || d.set(d.get() + 1) });
+        let t = gsap::to(mv, vars! { value: 130, duration: 1, ease: "none", onComplete: || { DONE.fetch_add(1, Relaxed); } });
         ms(cx, w, 500);
         assert!(near(mv.get(), 80.0, 0.5), "gsap.to a value: {}", mv.get());
         assert!(near(bounds(cx, w, "bound").size.width, 80.0, 0.6), "the bound element moved with it");
@@ -159,7 +160,7 @@ fn motion_elements() {
         assert!(near(mv.get(), 80.0, 0.5), "paused");
         t.resume();
         ms(cx, w, 600);
-        assert!(near(mv.get(), 130.0, 0.5) && done.get() == 1, "complete, once: {} {}", mv.get(), done.get());
+        assert!(near(mv.get(), 130.0, 0.5) && DONE.load(Relaxed) == 1, "complete, once: {} {}", mv.get(), DONE.load(Relaxed));
 
         // gsap.to by selector: the elements, staggered in document order
         let _ = gsap::to(".box", vars! { width: 110, duration: 1, ease: "none", stagger: 0.5 });
@@ -171,21 +172,19 @@ fn motion_elements() {
         assert!(near(bounds(cx, w, "b2").size.width, 110.0, 0.6) && near(bounds(cx, w, "b1").size.width, 110.0, 0.6));
 
         // a timeline: positions, labels, calls
-        let calls = Rc::new(Cell::new(0));
-        let c = calls.clone();
         let a = MotionValue::new(0.0);
         let b = MotionValue::new(0.0);
         let tl = gsap::timeline(vars! {});
         tl.to(a, vars! { value: 100, duration: 1, ease: "none" }, "")
             .add_label("half", "<0.5")
             .to(b, vars! { value: 100, duration: 1, ease: "none" }, "half")
-            .call(move || c.set(c.get() + 1), ">");
+            .call(|| { CALLS.fetch_add(1, Relaxed); }, ">");
         assert_eq!(tl.label_time("half"), Some(0.5));
         assert!(near(tl.duration() as f32, 1.5, 1e-6));
         ms(cx, w, 1000);
         assert!(near(a.get(), 100.0, 0.5) && near(b.get(), 50.0, 0.5), "a {} b {}", a.get(), b.get());
         ms(cx, w, 600);
-        assert!(near(b.get(), 100.0, 0.5) && calls.get() == 1, "the call ran once at the end");
+        assert!(near(b.get(), 100.0, 0.5) && CALLS.load(Relaxed) == 1, "the call ran once at the end");
         tl.seek(0.25);
         assert!(near(a.get(), 25.0, 0.5) && near(b.get(), 0.0, 0.5), "seek back: every child where it belongs");
         a.dispose();

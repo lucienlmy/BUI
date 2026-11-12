@@ -1,19 +1,19 @@
 //! Frames of Motion's values alone are redraws: the pixels move, the view
 //! doesn't render again.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use std::sync::atomic::{AtomicU32, Ordering::Relaxed};
 use std::time::Duration;
 
 use blenderui::prelude::*;
 
-struct Page {
-    renders: Rc<Cell<u32>>,
-}
+/// How often the view rendered (counted at compile time: no shared ownership).
+static RENDERS: AtomicU32 = AtomicU32::new(0);
+
+struct Page;
 
 impl Render for Page {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        self.renders.set(self.renders.get() + 1);
+        RENDERS.fetch_add(1, Relaxed);
         rsx! {
             <body style="margin: 0; background: black">
                 <motion.div id="c" style="position: absolute; left: 0; top: 0; width: 50px; height: 50px"
@@ -46,7 +46,6 @@ fn near(a: (u32, u32, u32), b: (u32, u32, u32)) -> bool {
 fn moving_values_redraw() {
     Application::headless().run(|cx| {
         blenderui::motion::lag_smoothing(0.0, 0.0);
-        let renders = Rc::new(Cell::new(0));
         let opts = WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds {
                 origin: point(px(0.0), px(0.0)),
@@ -54,10 +53,9 @@ fn moving_values_redraw() {
             })),
             ..Default::default()
         };
-        let r = renders.clone();
-        let w = cx.open_window(opts, move |_, cx| cx.new(|_| Page { renders: r })).unwrap().id;
+        let w = cx.open_window(opts, |_, cx| cx.new(|_| Page)).unwrap().id;
         assert!(near(pixel(cx, w, 10, 25), (255, 0, 0)), "starts red: {:?}", pixel(cx, w, 10, 25));
-        let after_mount = renders.get();
+        let after_mount = RENDERS.load(Relaxed);
         cx.advance_clock(Duration::from_millis(500));
         // halfway: purple, moved 50 px right (the left 50 px are background now)
         let mid = pixel(cx, w, 60, 25);
@@ -69,7 +67,7 @@ fn moving_values_redraw() {
         assert!(!near(pixel(cx, w, 10, 25), (255, 0, 0)) && !near(pixel(cx, w, 10, 25), mid), "moved off its start: {:?}", pixel(cx, w, 10, 25));
         cx.advance_clock(Duration::from_millis(600));
         assert!(near(pixel(cx, w, 110, 25), (0, 0, 255)), "ends blue at x 100: {:?}", pixel(cx, w, 110, 25));
-        assert_eq!(renders.get(), after_mount, "frames of moving values don't render the view");
+        assert_eq!(RENDERS.load(Relaxed), after_mount, "frames of moving values don't render the view");
         assert!(!cx.window(w).unwrap().is_animating());
     });
 }
