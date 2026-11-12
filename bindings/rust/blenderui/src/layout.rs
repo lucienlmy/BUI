@@ -2382,8 +2382,13 @@ impl Walk<'_> {
         if let Some(i) = self.box_of.get(slot(id)).filter(|&&b| b != NONE).map(|&b| b as usize) {
             let st = &self.styles[nodes[i].style];
             let u = Units { font_size: st.font_size, viewport: self.vp };
-            x += st.translate.0.resolve(&u, w);
-            y += st.translate.1.resolve(&u, h);
+            // a word carries its owner's style: the owner's translate already moved the line it is in,
+            // unless the owner is an inline element (no box of its own to carry it)
+            let own_translate = !matches!(nodes[i].content, Content::Word { .. }) || nodes[nodes[i].owner].taffy.is_none();
+            if own_translate {
+                x += st.translate.0.resolve(&u, w);
+                y += st.translate.1.resolve(&u, h);
+            }
             if matches!(nodes[i].content, Content::Word { .. }) {
                 y += match st.vertical_align {
                     VAlign::Sub => st.font_size * 0.25,
