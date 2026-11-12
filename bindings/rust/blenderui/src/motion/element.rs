@@ -46,6 +46,8 @@ pub(super) struct PropState {
     last: Option<Value>,
     /// a `layout` offset (1 x, 2 y, 3 scale x, 4 scale y), or 0
     pub(super) layout: u8,
+    /// its value came from the element's `style` last frame (when that goes, so does the value)
+    styled: bool,
 }
 
 /// An element's animated values: the engine's target object.
@@ -400,14 +402,24 @@ impl Elements {
             for p in &mut s.props {
                 p.base = base_of(p, base, u);
             }
-            // `style={{ x: mv }}`: values read every frame
+            // `style={{ x: mv }}`: values read every frame; one the style no longer has (and no target
+            // moves) stops holding the style's last value over the element's own
+            let mut bound: SmallVec<[i32; 4]> = SmallVec::new();
             if let Some(style) = spec.style() {
                 for (k, v) in style.props.iter() {
                     ensure(s, k.id(), base, u);
                     if let (Some(p), Some(r)) = (s.find(k.id()), v.read().filter(|r| !r.current)) {
                         p.cur = Some(r);
+                        bound.push(k.id());
                     }
                 }
+            }
+            for p in &mut s.props {
+                let now = bound.contains(&p.id);
+                if p.styled && !now && p.last.is_none() {
+                    p.cur = None;
+                }
+                p.styled = now;
             }
             if first {
                 // where it starts: `initial`, or (initial={false}) where it goes
@@ -633,7 +645,7 @@ pub(super) fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) ->
 fn ensure(s: &mut Slot, id: i32, base: &Computed, u: &Units) {
     if s.find(id).is_none() {
         let mut p = PropState { id, fields: fields_for(id), cur: None, base: Read::default(), last: None,
-                                layout: super::flip::role(id) };
+                                layout: super::flip::role(id), styled: false };
         p.base = base_of(&p, base, u);
         s.props.push(p);
     }

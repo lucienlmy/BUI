@@ -75,17 +75,27 @@ fn vars(o: &JsObject) -> Result<DynVars> {
     DynVars::parse(&entries(o, DEPTH)?).map_err(err)
 }
 
-/// Commit's Motion props: `[which, value, which, value ...]`.
-pub(crate) fn props(list: Option<JsObject>) -> Result<Vec<Option<m::MotionProp>>> {
-    let Some(list) = list else { return Ok(Vec::new()) };
+/// Commit's Motion props: `[which, value, which, value ...]`, and the first error among them. A
+/// prop that can't be read becomes the removal of that prop (the ops of the batch refer to the
+/// list by position, and the rest of the batch must still be applied: the elements JavaScript
+/// made are in the tree either way); the caller reports the error after sending it.
+pub(crate) fn props(list: Option<JsObject>) -> Result<(Vec<Option<m::MotionProp>>, Option<napi::Error>)> {
+    let Some(list) = list else { return Ok((Vec::new(), None)) };
     let n = list.get_array_length()?;
     let mut out = Vec::with_capacity(n as usize / 2);
+    let mut first = None;
     for i in (0..n.saturating_sub(1)).step_by(2) {
         let which = list.get_element::<JsNumber>(i)?.get_int32()?;
         let v = any(list.get_element::<JsUnknown>(i + 1)?, DEPTH)?.unwrap_or(Any::Null);
-        out.push(Some(m::MotionProp::parse(which, &v).map_err(err)?));
+        out.push(Some(match m::MotionProp::parse(which, &v) {
+            Ok(p) => p,
+            Err(e) => {
+                first.get_or_insert_with(|| err(e));
+                m::MotionProp::Clear(which)
+            }
+        }));
     }
-    Ok(out)
+    Ok((out, first))
 }
 
 #[napi]

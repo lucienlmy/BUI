@@ -162,3 +162,100 @@ test('el.animate (Web Animations)', async (t) => {
   assert.strictEqual(a.playState, 'finished')
   assert.ok(near(await width(el), 210), 'holds its end')
 })
+
+// -- review fixes ---------------------------------------------------------------------------
+
+test('a motion value is animated by the App that made it', async (t) => {
+  const { app, box } = page(t)
+  await width(box('x'))
+  const mv = motionValue(0)
+  gsap.to(mv, { value: 100, duration: 1, ease: 'none' })
+  await app.advanceClock(500)
+  assert.ok(near(mv.get(), 50), `animated in its own App: ${mv.get()}`)
+  // values of two Apps can't be animated together (one process runs one App, so fake the other)
+  const other = motionValue(0)
+  other._m = { native: {} }
+  assert.throws(() => gsap.to([mv, other], { value: 1 }), /different Apps/)
+})
+
+test('every animated motion value hears its changes', async (t) => {
+  const { app, box } = page(t)
+  await width(box('x'))
+  const one = motionValue(0)
+  const two = motionValue(0)
+  const heard = []
+  two.on('change', (v) => heard.push(v))
+  gsap.to([one, two], { value: 100, duration: 1, ease: 'none' })
+  await app.advanceClock(500)
+  assert.ok(heard.length >= 1 && near(heard.at(-1), 50), `the second value's listener: ${heard}`)
+})
+
+test('reverse playback reaching its start settles the handle', async (t) => {
+  const { app, box } = page(t)
+  const a = box('a')
+  await width(a)
+  const tw = gsap.to('#a', { width: 110, duration: 1, ease: 'none' })
+  await width(a)
+  await app.advanceClock(1100)
+  await tw
+  tw.reverse()
+  const done = tw.then(() => 'settled')
+  await app.advanceClock(1100)
+  const hung = new Promise((resolve) => setTimeout(() => resolve('hung'), 500))
+  assert.strictEqual(await Promise.race([done, hung]), 'settled')
+})
+
+test('an animation that never ends and has no listener is not held', async (t) => {
+  const { app, box } = page(t)
+  const a = box('a')
+  await width(a)
+  const tw = gsap.to('#a', { width: 110, duration: 1, repeat: -1 })
+  assert.strictEqual(app.motions._live.has(tw.id), false, 'nothing needs the handle kept')
+  const listened = gsap.to('#a', { width: 50, duration: 1, repeat: -1, onRepeat () {} })
+  assert.strictEqual(app.motions._live.has(listened.id), true, 'a callback does')
+})
+
+test('a style that replaces a Motion style lets go of its values', async (t) => {
+  const { app, box } = page(t)
+  const el = box('a')
+  const mv = motionValue(20)
+  el.style = { width: mv, height: 10 }
+  await app.advanceClock(16)
+  assert.ok(near(await width(el), 20), 'bound')
+  el.style = 'width: 33px; height: 10px' // replaced by a string
+  mv.set(70)
+  await app.advanceClock(16)
+  assert.ok(near(await width(el), 33), `the old value no longer moves it: ${await width(el)}`)
+  el.style = { width: mv, height: 10 }
+  el.style = null // removed
+  mv.set(90)
+  await app.advanceClock(16)
+  assert.ok(!near(await width(el), 90), 'removed: the value no longer moves it')
+})
+
+test('a Motion prop that cannot be read does not lose the batch', async (t) => {
+  const { win } = page(t)
+  const el = win.createElement('div')
+  el.setAttribute('id', 'late')
+  el.style = { width: 40, height: 10 }
+  win.body.appendChild(el)
+  el.setMotion('drag', 'diagonal') // not true, "x" or "y"
+  assert.throws(() => win.flush(), /drag/)
+  const r = await el.getBoundingClientRect()
+  assert.ok(r && near(r.width, 40), 'the element is in the native tree anyway')
+})
+
+test('cancel() rejects the pending finished promise with an AbortError', async (t) => {
+  const { app, box } = page(t)
+  const el = box('w')
+  await width(el)
+  const a = el.animate([{ width: '10px' }, { width: '210px' }], { duration: 1000 })
+  const first = a.finished
+  a.cancel()
+  await assert.rejects(first, { name: 'AbortError' })
+  assert.notStrictEqual(a.finished, first, 'later playback has a new promise')
+  assert.strictEqual(a.playState, 'idle')
+  a.play()
+  await app.advanceClock(1100)
+  await a.finished
+})

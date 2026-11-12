@@ -135,7 +135,8 @@ pub fn tween(cx: &mut App, id: u32, verb: Verb, target: Target, mut vars: DynVar
             (run(verb, Targets::Selector(s.into()), v, from), SmallVec::new())
         }
         Target::Values(_) => {
-            v.events = events(cx, id, mask, mvs.first().map(|mv| smallvec::smallvec![*mv]));
+            // every value's frames: each listener hears its own
+            v.events = events(cx, id, mask, (!mvs.is_empty()).then(|| mvs.iter().copied().collect()));
             (run(verb, Targets::Values(mvs), v, from), SmallVec::new())
         }
         Target::Object(props) => object(cx, id, verb, &props, v, from.as_ref(), mask),

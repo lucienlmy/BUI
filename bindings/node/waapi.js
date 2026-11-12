@@ -44,8 +44,10 @@ class Animation extends Handle {
     this.onfinish = null
     this.oncancel = null
     this._state = 'running'
-    this.finished = this._finished()
+    this._fin = null // `finished`, made when it is first asked for (a promise somebody awaits keeps the handle)
   }
+
+  get finished () { return (this._fin ??= this._finished()) }
 
   get playState () { return this._done ? 'finished' : this._state }
   get pending () { return false }
@@ -56,10 +58,10 @@ class Animation extends Handle {
   updatePlaybackRate (r) { this.playbackRate = r }
 
   play () {
-    const done = this._done
+    const redo = this._done || this._state === 'idle' // finished or canceled: from the start
     this._state = 'running'
-    this._ctl(done ? 'restart' : 'play')
-    if (done) this.finished = this._finished()
+    this._ctl(redo ? 'restart' : 'play')
+    if (redo) this._fin = null // a new one, pending
   }
 
   pause () { this._state = 'paused'; this._ctl('pause') }
@@ -67,8 +69,19 @@ class Animation extends Handle {
   finish () { this._ctl('complete') }
   cancel () {
     this._ctl('seek', 0)
-    this._ctl('kill')
+    this._ctl('pause') // not killed: play() starts it again
+    this._m._live.delete(this.id)
     this._state = 'idle'
+    // the pending `finished` rejects with an AbortError (nobody has to be listening), and later
+    // playback gets a new one
+    if (!this._done && this._fin) {
+      this._fin.catch(() => {})
+      const err = new Error('The animation was aborted')
+      err.name = 'AbortError'
+      this._abort(err)
+    }
+    this._done = false
+    this._fin = null
     this.oncancel?.({ type: 'cancel', target: this })
   }
 

@@ -97,6 +97,8 @@ function applyProps (el, prev, next) {
         listen(el, k, null)
       } else if (isMotionProp(k)) {
         el.setMotion(k, null)
+      } else if (k === 'style') {
+        el.style = null // the setter also lets go of the Motion values in it
       } else {
         el.removeAttribute(ATTR_ALIASES[k] ?? k)
       }
@@ -111,8 +113,7 @@ function applyProps (el, prev, next) {
     } else if (isMotionProp(k)) {
       el.setMotion(k, v) // read by the engine once, when the tick's changes are sent
     } else if (k === 'style') {
-      if (v == null) el.removeAttribute('style')
-      else el.style = v // a string, an object (motion values too) or a signal of either
+      el.style = v // a string, an object (motion values too), a signal of either, or null
     } else if (v == null || v === false) {
       el.removeAttribute(ATTR_ALIASES[k] ?? k)
     } else if (isSignal(v)) {

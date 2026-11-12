@@ -570,7 +570,10 @@ class Element extends Node {
       if (this._x?.motion?.style) this.setMotion('style', null)
       return this.removeAttribute('style')
     }
-    if (typeof v === 'string' || isSignal(v)) return this.setAttribute('style', v)
+    if (typeof v === 'string' || isSignal(v)) {
+      if (this._x?.motion?.style) this.setMotion('style', null) // replaced: its motion values let go
+      return this.setAttribute('style', v)
+    }
     let motion = null
     for (const k in v) if (isMotionValue(v[k])) (motion ??= {})[k] = v[k]
     if (motion !== null || this._x?.motion?.style) {

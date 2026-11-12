@@ -272,9 +272,9 @@ impl NativeApp {
                   motion: Option<JsObject>) -> Result<()> {
         let ops: Vec<i32> = ops.to_vec();
         let animated = animated.unwrap_or(false);
-        let props = motion::props(motion)?;
+        let (props, bad) = motion::props(motion)?;
         self.link.send(move |cx| view::commit(cx, window, &ops, &strings, props, animated));
-        Ok(())
+        bad.map_or(Ok(()), Err) // the batch is applied; the prop that couldn't be read is reported
     }
 
     /// Ask for a `frame` event when window `window` next renders (vsync).

@@ -119,12 +119,17 @@ class Window {
     const ops = this.closed ? null : Int32Array.from(this._ops)
     const strings = this._strings
     const motion = this._motion.length > 0 ? this._motion : undefined
-    this._ops.length = 0 // the array keeps its capacity for the next tick
-    this._strings = []
-    this._stringIds.clear()
-    if (motion) this._motion = []
-    // while animating, changes render on the next vsync (one rebuild per frame)
-    if (ops) this.app.native.commit(this.id, ops, strings, this._inFrame || this._framePending, motion)
+    try {
+      // while animating, changes render on the next vsync (one rebuild per frame). A Motion prop
+      // the addon can't read throws here, after it applied the rest of the batch (without it): the
+      // elements JavaScript made are in the native tree either way
+      if (ops) this.app.native.commit(this.id, ops, strings, this._inFrame || this._framePending, motion)
+    } finally {
+      this._ops.length = 0 // the array keeps its capacity for the next tick
+      this._strings = []
+      this._stringIds.clear()
+      if (motion) this._motion = []
+    }
   }
 
   /**

@@ -115,7 +115,7 @@
         gpu: c.gpu ?? this._options.gpu })
     }
 
-    commit (window, ops, strings, animated) { host.commit(window, ops, strings, !!animated) }
+    commit (window, ops, strings, animated, motion) { host.commit(window, ops, strings, !!animated, motion) }
     requestFrame (window) { host.requestFrame(window) }
     closeWindow (window) { host.closeWindow(window) }
     setSlug (on) { host.setSlug(!!on) }

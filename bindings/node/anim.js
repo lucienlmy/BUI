@@ -32,13 +32,18 @@ class Motions {
     this.app = app
     this.native = app.native
     this._next = 1
-    /** ids -> handles that wait for events (running, or a timeline's children) */
+    /** ids -> handles that wait for events and must not be collected: they have callbacks, or an
+     *  object or values to write (a timeline's children too) */
     this._live = new Map()
+    /** ids -> every handle JavaScript still holds (weakly): a `repeat: -1` animation nobody keeps
+     *  needs no handle, and an end can still settle the `await` of one somebody does */
+    this._weak = new Map()
     // a handle JavaScript dropped: the UI thread lets go of it (it runs on)
     this._gone = typeof FinalizationRegistry !== 'function' ? { register () {}, unregister () {} } : new FinalizationRegistry(({ id, children, value }) => {
       if (this.app._quit) return
       if (value) this.native.motionValueDispose(id)
       else this.native.motionRelease(id)
+      this._weak.delete(id)
       for (const c of children) this._live.delete(c)
     })
     current = this
@@ -52,7 +57,8 @@ class Motions {
   _id () { return this._next++ }
 
   _event (raw) {
-    this._live.get(raw.target)?._event(raw.button, raw)
+    const h = this._live.get(raw.target) ?? this._weak.get(raw.target)?.deref()
+    h?._event(raw.button, raw)
   }
 }
 
@@ -60,6 +66,10 @@ class Motions {
 function motionsOf (app) {
   const m = app?.motions ?? current
   if (!m) throw new Error('blenderui: no App is running (create one before animating)')
+  // the standalone QuickJS runtime has no animation commands yet: a clear error, not a missing function
+  if (typeof m.native.motionTween !== 'function') {
+    throw new Error('blenderui: animation (gsap, animate, el.animate) needs the Node addon; the QuickJS runtime does not have it yet')
+  }
   return m
 }
 
@@ -75,15 +85,19 @@ function elementSelector (el) {
   return `[data-bui-motion="${key}"]`
 }
 
-/** What a call animates: `{ app, selector }`, `{ values }` (motion values)
+/** What a call animates: `{ app, selector }`, `{ values, motions }` (motion values and their App's motions)
  *  or `{ object }` (a plain object's numbers). */
 function targetsOf (targets) {
   if (typeof targets === 'string') return { selector: targets }
-  if (isMotionValue(targets)) return { values: [targets] }
+  if (isMotionValue(targets)) return { values: [targets], motions: targets._m }
   const list = Array.isArray(targets) || (targets && typeof targets.length === 'number' && typeof targets !== 'function')
     ? Array.from(targets)
     : [targets]
-  if (list.length > 0 && list.every(isMotionValue)) return { values: list }
+  if (list.length > 0 && list.every(isMotionValue)) {
+    // a value belongs to the App that made it: its handle means nothing to another
+    if (list.some((v) => v._m !== list[0]._m)) throw new TypeError('blenderui: motion values of different Apps can\'t be animated together')
+    return { values: list, motions: list[0]._m }
+  }
   if (list.every((t) => typeof t === 'string' || (t && t.nodeType === 1))) {
     const el = list.find((t) => typeof t !== 'string')
     return { app: el?.ownerWindow?.app, selector: list.map((t) => typeof t === 'string' ? t : elementSelector(t)).join(', ') }
@@ -116,10 +130,11 @@ class Handle {
     this._values = null // motion value targets
     this._waiters = null
     this._done = false
+    this._needed = false // something must hear its events even if JavaScript drops the handle
   }
 
   _ctl (op, value) {
-    this._m._live.set(this.id, this) // its events matter again
+    if (this._needed) this._m._live.set(this.id, this) // its events matter again
     this._done = false
     this._m.native.motionControl(this.id, op, value)
     return this
@@ -134,7 +149,8 @@ class Handle {
         const vs = raw.values ?? [raw.number]
         for (let i = 0; i < names.length; i++) o[names[i]] = vs[i]
       } else if (this._values) {
-        this._values[0]._changed(raw.number)
+        const vs = raw.values ?? [raw.number] // one number, or one per value
+        for (let i = 0; i < this._values.length && i < vs.length; i++) this._values[i]._changed(vs[i])
       }
     }
     const cb = callback(this._sources, bit)
@@ -145,13 +161,20 @@ class Handle {
         : (params ?? [])
       try { fn.apply(this, args) } catch (err) { queueMicrotask(() => { throw err }) }
     }
-    if (bit === EV.COMPLETE) {
+    if (bit === EV.COMPLETE || bit === EV.REVERSE_COMPLETE) { // its end, either way it plays
       this._done = true
       if (!this._child) this._m._live.delete(this.id)
       const w = this._waiters
       this._waiters = null
-      if (w) for (const r of w) r(this._settled())
+      if (w) for (const r of w) r.resolve(this._settled())
     }
+  }
+
+  /** Reject what waits for it (a canceled animation): `err`. */
+  _abort (err) {
+    const w = this._waiters
+    this._waiters = null
+    if (w) for (const r of w) r.reject(err)
   }
 
   /** What `finished` resolves with: this handle, unless it is a thenable
@@ -161,7 +184,9 @@ class Handle {
   /** Resolves when it completes (GSAP's and Motion's `then`). */
   _finished () {
     if (this._done) return Promise.resolve(this._settled())
-    return new Promise((resolve) => (this._waiters ??= []).push(resolve))
+    // somebody waits: the handle stays until its end settles that (whoever else holds it)
+    this._m._live.set(this.id, this)
+    return new Promise((resolve, reject) => (this._waiters ??= []).push({ resolve, reject }))
   }
 
   then (resolve, reject) {
@@ -180,7 +205,8 @@ Handle.prototype._child = false
 function start (verb, targets, vars, extra, { timeline = null, pos, Kind = null, flavor = 'gsap', events = 0 } = {}) {
   if (vars === null || typeof vars !== 'object') throw new TypeError('blenderui: vars must be an object')
   const t = targetsOf(targets)
-  const m = timeline ? timeline._m : motionsOf(t.app)
+  const m = timeline ? timeline._m : (t.motions ?? motionsOf(t.app))
+  if (timeline && t.motions && t.motions !== m) throw new TypeError('blenderui: a motion value of another App can\'t be added to this timeline')
   const id = m._id()
   const sources = [vars, vars.transition, verb === 'animate' ? extra : null]
   const h = new (Kind ?? Handle)(m, id, sources, flavor)
@@ -188,13 +214,16 @@ function start (verb, targets, vars, extra, { timeline = null, pos, Kind = null,
   if (t.object || t.values?.some((v) => v._on !== null)) events |= EV.UPDATE
   m._flush()
   const names = m.native.motionTween(id, verb, t.selector, t.values?.map((v) => v.id), t.object, vars, extra,
-    timeline?.id, timeline ? position(pos) : undefined, events | (Kind ? EV.COMPLETE : 0))
+    timeline?.id, timeline ? position(pos) : undefined, events | (Kind ? EV.COMPLETE | EV.REVERSE_COMPLETE : 0))
   if (names) h._object = [t.object, names]
   if (t.values) h._values = t.values
+  h._needed = !!(names || t.values || CALLBACKS.some(([bit]) => callback(sources, bit)))
   if (Kind) {
-    m._live.set(id, h)
+    if (typeof WeakRef === 'function') m._weak.set(id, new WeakRef(h))
+    // a handle nobody holds and nothing listens to may be collected (an animation that never ends)
+    if (h._needed || typeof WeakRef !== 'function') m._live.set(id, h)
     m._gone.register(h, { id, children: h._children ?? [], value: false })
-  } else if (names || t.values || CALLBACKS.some(([bit]) => callback(sources, bit))) {
+  } else if (h._needed) {
     // a timeline's child: its callbacks live as long as the timeline
     h._child = true
     m._live.set(id, h)
