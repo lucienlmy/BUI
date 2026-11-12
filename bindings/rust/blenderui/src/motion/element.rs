@@ -621,12 +621,11 @@ impl Elements {
                     // a clip made inside the moved subtree moves with it
                     let inner = nodes[j].parent.is_some_and(|p| self.shift[p] == d && own == (0.0, 0.0));
                     let parent_clip = nodes[j].parent.and_then(|p| nodes[p].clip);
-                    if let (true, Some(c)) = (inner, &mut nodes[j].clip) {
-                        if parent_clip != Some(*c) {
+                    if let (true, Some(c)) = (inner, &mut nodes[j].clip)
+                        && parent_clip != Some(*c) {
                             c.origin.x += d.0;
                             c.origin.y += d.1;
                         }
-                    }
                 }
             }
             self.shift.clear();

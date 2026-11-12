@@ -14,40 +14,40 @@ pub struct Ease(pub(crate) sys::BKEase);
 
 impl Ease {
     /// Linear (GSAP's `"none"`).
-    pub const LINEAR: Ease = Ease(sys::BKEase { kind: sys::BK_EASE_LINEAR, mode: 0, table: 0, p: [0.0; 4] });
+    pub const LINEAR: Self = Self(sys::BKEase { kind: sys::BK_EASE_LINEAR, mode: 0, table: 0, p: [0.0; 4] });
 
     /// An ease by name: `"power2.out"`, `"elastic.out(1, 0.3)"`, `"easeInOut"`,
     /// `"cubic-bezier(.17,.67,.83,.67)"`, `"steps(4, jump-start)"`,
     /// `"linear(0, 0.25 75%, 1)"`, `"bezier"` (Blender's) ... `None` when unknown.
     #[must_use]
-    pub fn parse(name: &CStr) -> Option<Ease> {
+    pub fn parse(name: &CStr) -> Option<Self> {
         let mut e = sys::BKEase::default();
         // SAFETY: a NUL-terminated name and a valid out pointer.
-        (unsafe { sys::BK_ease_parse(name.as_ptr(), &raw mut e) } != 0).then_some(Ease(e))
+        (unsafe { sys::BK_ease_parse(name.as_ptr(), &raw mut e) } != 0).then_some(Self(e))
     }
 
     /// Motion's `[x1, y1, x2, y2]` and CSS's `cubic-bezier()`.
     #[must_use]
-    pub fn bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Ease {
+    pub fn bezier(x1: f32, y1: f32, x2: f32, y2: f32) -> Self {
         // SAFETY: plain values.
-        Ease(unsafe { sys::BK_ease_bezier(x1, y1, x2, y2) })
+        Self(unsafe { sys::BK_ease_bezier(x1, y1, x2, y2) })
     }
 
     /// A curve through `(x, y)` points, x ascending from 0 to 1.
     #[must_use]
-    pub fn points(xy: &[[f32; 2]]) -> Option<Ease> {
+    pub fn points(xy: &[[f32; 2]]) -> Option<Self> {
         let mut e = sys::BKEase::default();
         let n = i32::try_from(xy.len()).ok()?;
         // SAFETY: `n` points read from a live slice.
-        (unsafe { sys::BK_ease_points(xy.as_ptr(), n, &raw mut e) } != 0).then_some(Ease(e))
+        (unsafe { sys::BK_ease_points(xy.as_ptr(), n, &raw mut e) } != 0).then_some(Self(e))
     }
 
     /// GSAP's `CustomEase`: an SVG path normalized to 0..1.
     #[must_use]
-    pub fn path(svg: &CStr) -> Option<Ease> {
+    pub fn path(svg: &CStr) -> Option<Self> {
         let mut e = sys::BKEase::default();
         // SAFETY: a NUL-terminated path and a valid out pointer.
-        (unsafe { sys::BK_ease_path(svg.as_ptr(), &raw mut e) } != 0).then_some(Ease(e))
+        (unsafe { sys::BK_ease_path(svg.as_ptr(), &raw mut e) } != 0).then_some(Self(e))
     }
 
     /// Give this ease a name [`Ease::parse`] finds (`CustomEase.create`,

@@ -23,8 +23,8 @@ struct Compound {
 pub(crate) struct Selector(SmallVec<[Compound; 1]>);
 
 impl Selector {
-    pub(crate) fn parse(s: &str) -> Selector {
-        Selector(s.split(',').map(|part| {
+    pub(crate) fn parse(s: &str) -> Self {
+        Self(s.split(',').map(|part| {
             let mut c = Compound::default();
             let mut rest = part.trim();
             let tag_end = rest.find(['#', '.', '[']).unwrap_or(rest.len());

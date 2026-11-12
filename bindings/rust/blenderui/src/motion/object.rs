@@ -28,8 +28,8 @@ pub enum Any {
     Bool(bool),
     Num(f64),
     Str(String),
-    List(Vec<Any>),
-    Map(Vec<(String, Any)>),
+    List(Vec<Self>),
+    Map(Vec<(String, Self)>),
     /// A function (`onComplete` ...): the binding keeps it; the vars note
     /// which events it wants.
     Func,
@@ -71,8 +71,8 @@ pub struct DynVars {
 impl DynVars {
     /// GSAP's vars / Motion's target: properties, options, `transition: {..}`
     /// (with per-property ones), `defaults: {..}` (a timeline's), callbacks.
-    pub fn parse(entries: &[(String, Any)]) -> Result<DynVars, String> {
-        let mut d = DynVars::default();
+    pub fn parse(entries: &[(String, Any)]) -> Result<Self, String> {
+        let mut d = Self::default();
         for (k, v) in entries {
             match norm(k).as_str() {
                 "transition" => d.add_transition(map(k, v)?)?,
@@ -212,19 +212,19 @@ pub enum DynTarget {
 }
 
 impl DynTarget {
-    pub fn parse(v: &Any) -> Result<DynTarget, String> {
+    pub fn parse(v: &Any) -> Result<Self, String> {
         Ok(match v {
-            Any::Map(m) => DynTarget::Vars(DynVars::parse(m)?),
-            Any::Str(s) => DynTarget::Variant(s.clone()),
-            Any::Bool(false) => DynTarget::Off,
-            Any::Bool(true) | Any::Null => DynTarget::Variant(String::new()),
+            Any::Map(m) => Self::Vars(DynVars::parse(m)?),
+            Any::Str(s) => Self::Variant(s.clone()),
+            Any::Bool(false) => Self::Off,
+            Any::Bool(true) | Any::Null => Self::Variant(String::new()),
             _ => return Err("a target is an object, a variant's name or false".into()),
         })
     }
 
     /// Its motion values (UI thread, once).
     pub fn resolve(&mut self, motion: impl Fn(u32) -> Option<MotionValue>) {
-        if let DynTarget::Vars(v) = self {
+        if let Self::Vars(v) = self {
             v.resolve(motion);
         }
     }
@@ -233,9 +233,9 @@ impl DynTarget {
     #[must_use]
     pub fn target(&self) -> Target {
         match self {
-            DynTarget::Vars(v) => Target::Vars(v.vars()),
-            DynTarget::Variant(s) => Target::Variant(Cow::Owned(s.clone())),
-            DynTarget::Off => Target::Off,
+            Self::Vars(v) => Target::Vars(v.vars()),
+            Self::Variant(s) => Target::Variant(Cow::Owned(s.clone())),
+            Self::Off => Target::Off,
         }
     }
 }

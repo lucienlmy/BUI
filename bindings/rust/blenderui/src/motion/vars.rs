@@ -89,7 +89,7 @@ macro_rules! or_fields {
 impl Transition {
     /// These options, with `base`'s where these have none.
     #[must_use]
-    pub fn or(&self, base: &Transition) -> Transition {
+    pub fn or(&self, base: &Self) -> Self {
         let a = self;
         let b = base;
         or_fields!(a, b; duration, delay, ease, eases, times, repeat, repeat_delay, yoyo, time_scale, paused, reversed,
@@ -220,7 +220,7 @@ impl Events {
 
     unsafe extern "C" fn dispatch(_m: *mut sys::BKMotion, ev: i32, data: *mut c_void) {
         // SAFETY: `data` is the `Events` this motion owns (freed with it).
-        let e = unsafe { &mut *data.cast::<Events>() };
+        let e = unsafe { &mut *data.cast::<Self>() };
         let f = match ev {
             sys::BK_EV_MOTION_START => &mut e.on_start,
             sys::BK_EV_MOTION_UPDATE => &mut e.on_update,
@@ -237,14 +237,14 @@ impl Events {
 
     unsafe extern "C" fn free(data: *mut c_void) {
         // SAFETY: the box handed over in `attach`.
-        drop(unsafe { Box::from_raw(data.cast::<Events>()) });
+        drop(unsafe { Box::from_raw(data.cast::<Self>()) });
     }
 
     /// Hand these callbacks to a motion's options (the motion frees them).
     pub(crate) fn attach(self: Box<Self>, v: &mut sys::BKMotionVars) {
         v.events = self.mask();
-        v.on = Some(Events::dispatch);
-        v.free_data = Some(Events::free);
+        v.on = Some(Self::dispatch);
+        v.free_data = Some(Self::free);
         v.data = Box::into_raw(self).cast();
     }
 }
@@ -264,20 +264,20 @@ pub struct Vars {
 
 impl Vars {
     #[must_use]
-    pub fn new() -> Vars {
-        Vars::default()
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Animate `key` to `value` (a number, `"50%"`, `"#f80"`, `[keyframes]` ...).
     #[must_use]
-    pub fn set(mut self, key: &'static Key, value: impl Into<Value>) -> Vars {
+    pub fn set(mut self, key: &'static Key, value: impl Into<Value>) -> Self {
         self.props.to_mut().push((key, value.into()));
         self
     }
 
     /// Change the timing options.
     #[must_use]
-    pub fn with(mut self, f: impl FnOnce(&mut Transition)) -> Vars {
+    pub fn with(mut self, f: impl FnOnce(&mut Transition)) -> Self {
         f(&mut self.transition);
         self
     }
@@ -327,33 +327,33 @@ options!(duration: f64 => duration, delay: f64 => delay, ease: Ease => ease, rep
 impl Vars {
     /// `type: "spring"`.
     #[must_use]
-    pub fn spring(self) -> Vars {
+    pub fn spring(self) -> Self {
         self.with(|t| t.kind = Kind::Spring)
     }
 
     /// `type: "inertia"`.
     #[must_use]
-    pub fn inertia(self) -> Vars {
+    pub fn inertia(self) -> Self {
         self.with(|t| t.kind = Kind::Inertia)
     }
 
     /// Run `f` when the motion completes.
     #[must_use]
-    pub fn on_complete(mut self, f: impl FnMut() + 'static) -> Vars {
+    pub fn on_complete(mut self, f: impl FnMut() + 'static) -> Self {
         self.events.get_or_insert_with(Box::default).on_complete = Some(Box::new(f));
         self
     }
 
     /// Run `f` every frame the motion renders.
     #[must_use]
-    pub fn on_update(mut self, f: impl FnMut() + 'static) -> Vars {
+    pub fn on_update(mut self, f: impl FnMut() + 'static) -> Self {
         self.events.get_or_insert_with(Box::default).on_update = Some(Box::new(f));
         self
     }
 
     /// Run `f` when the motion starts.
     #[must_use]
-    pub fn on_start(mut self, f: impl FnMut() + 'static) -> Vars {
+    pub fn on_start(mut self, f: impl FnMut() + 'static) -> Self {
         self.events.get_or_insert_with(Box::default).on_start = Some(Box::new(f));
         self
     }
@@ -393,14 +393,14 @@ pub(crate) struct TrackBuf {
 
 impl TrackBuf {
     /// `None` when a keyframe isn't a value this engine reads.
-    pub(crate) fn read(keys: &[Value]) -> Option<TrackBuf> {
+    pub(crate) fn read(keys: &[Value]) -> Option<Self> {
         let mut reads: SmallVec<[Read; 4]> = SmallVec::new();
         for k in keys {
             reads.push(k.read()?);
         }
         let n = reads.iter().filter(|r| !r.current).map(|r| r.n as usize).max().unwrap_or(1);
         let unit = reads.iter().rev().find(|r| !r.current).map_or(sys::BK_UNIT_NONE, |r| r.unit);
-        let mut b = TrackBuf { values: SmallVec::new(), current: SmallVec::new(), rel: SmallVec::new(), n, unit,
+        let mut b = Self { values: SmallVec::new(), current: SmallVec::new(), rel: SmallVec::new(), n, unit,
                                last: 0.0 };
         for r in &reads {
             b.values.extend_from_slice(&r.v[..n]);

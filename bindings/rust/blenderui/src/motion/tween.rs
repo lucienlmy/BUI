@@ -29,10 +29,10 @@ impl Drop for Tween {
 }
 
 impl Clone for Tween {
-    fn clone(&self) -> Tween {
+    fn clone(&self) -> Self {
         // SAFETY: one more handle.
         unsafe { sys::BK_motion_retain(self.0.as_ptr()) };
-        Tween(self.0)
+        Self(self.0)
     }
 }
 
@@ -68,11 +68,11 @@ macro_rules! flags {
 impl Tween {
     /// Take one handle of `m` (a motion just made; a null one is an empty
     /// timeline, so the handle is never dangling).
-    pub(crate) fn from_raw(m: *mut sys::BKMotion) -> Tween {
+    pub(crate) fn from_raw(m: *mut sys::BKMotion) -> Self {
         match NonNull::new(m) {
-            Some(m) => Tween(m),
+            Some(m) => Self(m),
             // the engine is off: an empty, finished timeline stands in
-            None => Tween(NonNull::new(unsafe { sys::BK_timeline(std::ptr::null()) }).unwrap_or(NonNull::dangling())),
+            None => Self(NonNull::new(unsafe { sys::BK_timeline(std::ptr::null()) }).unwrap_or(NonNull::dangling())),
         }
     }
 
@@ -149,32 +149,32 @@ pub enum Targets {
 }
 
 impl From<MotionValue> for Targets {
-    fn from(v: MotionValue) -> Targets {
-        Targets::Values(smallvec::smallvec![v])
+    fn from(v: MotionValue) -> Self {
+        Self::Values(smallvec::smallvec![v])
     }
 }
 
 impl From<&[MotionValue]> for Targets {
-    fn from(v: &[MotionValue]) -> Targets {
-        Targets::Values(v.into())
+    fn from(v: &[MotionValue]) -> Self {
+        Self::Values(v.into())
     }
 }
 
 impl<const N: usize> From<[MotionValue; N]> for Targets {
-    fn from(v: [MotionValue; N]) -> Targets {
-        Targets::Values(v.into_iter().collect())
+    fn from(v: [MotionValue; N]) -> Self {
+        Self::Values(v.into_iter().collect())
     }
 }
 
 impl From<&'static str> for Targets {
-    fn from(s: &'static str) -> Targets {
-        Targets::Selector(Cow::Borrowed(s))
+    fn from(s: &'static str) -> Self {
+        Self::Selector(Cow::Borrowed(s))
     }
 }
 
 impl From<String> for Targets {
-    fn from(s: String) -> Targets {
-        Targets::Selector(Cow::Owned(s))
+    fn from(s: String) -> Self {
+        Self::Selector(Cow::Owned(s))
     }
 }
 
@@ -308,11 +308,11 @@ impl std::ops::Deref for Timeline {
 }
 
 impl Timeline {
-    fn new(vars: &Vars) -> Timeline {
+    fn new(vars: &Vars) -> Self {
         let v = vars.transition.engine(Flavor::Gsap, 0, 1, 0.0);
         super::sync();
         // SAFETY: options read during the call.
-        Timeline(Tween::from_raw(unsafe { sys::BK_timeline(&raw const v) }))
+        Self(Tween::from_raw(unsafe { sys::BK_timeline(&raw const v) }))
     }
 
     /// Do `op` now, or (this timeline waits for elements) after the layout
@@ -394,9 +394,9 @@ impl Deferred {
         }
         // SAFETY (all three): a live timeline (and child); the timeline takes the closure (and frees it).
         match self {
-            Deferred::Place(t, p) => unsafe { sys::BK_timeline_add(tl.raw(), t.raw(), p.as_ptr()); },
-            Deferred::Label(n, p) => unsafe { sys::BK_timeline_label(tl.raw(), n.as_ptr(), p.as_ptr()); },
-            Deferred::Call(f, p) => unsafe {
+            Self::Place(t, p) => unsafe { sys::BK_timeline_add(tl.raw(), t.raw(), p.as_ptr()); },
+            Self::Label(n, p) => unsafe { sys::BK_timeline_label(tl.raw(), n.as_ptr(), p.as_ptr()); },
+            Self::Call(f, p) => unsafe {
                 sys::BK_timeline_call(tl.raw(), Some(call), Box::into_raw(f).cast(), Some(free), p.as_ptr());
             },
         }

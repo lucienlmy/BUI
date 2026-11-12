@@ -20,27 +20,27 @@ pub enum Target {
 }
 
 impl From<Vars> for Target {
-    fn from(v: Vars) -> Target {
-        Target::Vars(v)
+    fn from(v: Vars) -> Self {
+        Self::Vars(v)
     }
 }
 
 impl From<&'static str> for Target {
-    fn from(s: &'static str) -> Target {
-        Target::Variant(Cow::Borrowed(s))
+    fn from(s: &'static str) -> Self {
+        Self::Variant(Cow::Borrowed(s))
     }
 }
 
 impl From<String> for Target {
-    fn from(s: String) -> Target {
-        Target::Variant(Cow::Owned(s))
+    fn from(s: String) -> Self {
+        Self::Variant(Cow::Owned(s))
     }
 }
 
 impl From<bool> for Target {
     /// `false`: no initial animation (`true`: the default).
-    fn from(on: bool) -> Target {
-        if on { Target::Variant(Cow::Borrowed("")) } else { Target::Off }
+    fn from(on: bool) -> Self {
+        if on { Self::Variant(Cow::Borrowed("")) } else { Self::Off }
     }
 }
 
@@ -55,33 +55,33 @@ impl std::ops::Deref for Variants {
     type Target = [(&'static str, Vars)];
     fn deref(&self) -> &Self::Target {
         match self {
-            Variants::Static(v) => v,
-            Variants::Owned(v) => v,
+            Self::Static(v) => v,
+            Self::Owned(v) => v,
         }
     }
 }
 
 impl From<&'static [(&'static str, Vars)]> for Variants {
-    fn from(v: &'static [(&'static str, Vars)]) -> Variants {
-        Variants::Static(v)
+    fn from(v: &'static [(&'static str, Vars)]) -> Self {
+        Self::Static(v)
     }
 }
 
 impl<const N: usize> From<&'static [(&'static str, Vars); N]> for Variants {
-    fn from(v: &'static [(&'static str, Vars); N]) -> Variants {
-        Variants::Static(v)
+    fn from(v: &'static [(&'static str, Vars); N]) -> Self {
+        Self::Static(v)
     }
 }
 
 impl From<Vec<(&'static str, Vars)>> for Variants {
-    fn from(v: Vec<(&'static str, Vars)>) -> Variants {
-        Variants::Owned(v)
+    fn from(v: Vec<(&'static str, Vars)>) -> Self {
+        Self::Owned(v)
     }
 }
 
 impl<const N: usize> From<[(&'static str, Vars); N]> for Variants {
-    fn from(v: [(&'static str, Vars); N]) -> Variants {
-        Variants::Owned(v.into())
+    fn from(v: [(&'static str, Vars); N]) -> Self {
+        Self::Owned(v.into())
     }
 }
 
@@ -108,8 +108,8 @@ pub struct InView {
 }
 
 impl From<Vars> for InView {
-    fn from(v: Vars) -> InView {
-        let mut r = InView::default();
+    fn from(v: Vars) -> Self {
+        let mut r = Self::default();
         for (k, val) in v.props.iter() {
             match k.name().to_bytes() {
                 b"once" => r.once = val.read().is_some_and(|x| x.v[0] != 0.0),
@@ -141,21 +141,21 @@ pub struct Drag {
 }
 
 impl Default for Drag {
-    fn default() -> Drag {
-        Drag { x: true, y: true, constraints: None, elastic: 0.5, momentum: true, snap_to_origin: false }
+    fn default() -> Self {
+        Self { x: true, y: true, constraints: None, elastic: 0.5, momentum: true, snap_to_origin: false }
     }
 }
 
 /// `drag` / `drag="x"` / `drag="y"`.
 impl From<bool> for Drag {
-    fn from(on: bool) -> Drag {
-        Drag { x: on, y: on, ..Drag::default() }
+    fn from(on: bool) -> Self {
+        Self { x: on, y: on, ..Self::default() }
     }
 }
 
 impl From<&str> for Drag {
-    fn from(axis: &str) -> Drag {
-        Drag { x: axis != "y", y: axis != "x", ..Drag::default() }
+    fn from(axis: &str) -> Self {
+        Self { x: axis != "y", y: axis != "x", ..Self::default() }
     }
 }
 
@@ -164,13 +164,13 @@ impl From<&str> for Drag {
 pub struct DragConstraints(pub [f32; 4]);
 
 impl From<[f32; 4]> for DragConstraints {
-    fn from(c: [f32; 4]) -> DragConstraints {
-        DragConstraints(c)
+    fn from(c: [f32; 4]) -> Self {
+        Self(c)
     }
 }
 
 impl From<Vars> for DragConstraints {
-    fn from(v: Vars) -> DragConstraints {
+    fn from(v: Vars) -> Self {
         let mut c = [f32::NEG_INFINITY, f32::INFINITY, f32::NEG_INFINITY, f32::INFINITY];
         for (k, val) in v.props.iter() {
             let i = match k.name().to_bytes() {
@@ -184,7 +184,7 @@ impl From<Vars> for DragConstraints {
                 c[i] = r.v[0];
             }
         }
-        DragConstraints(c)
+        Self(c)
     }
 }
 
@@ -198,17 +198,17 @@ pub enum Layout {
 }
 
 impl From<bool> for Layout {
-    fn from(_: bool) -> Layout {
-        Layout::Both
+    fn from(_: bool) -> Self {
+        Self::Both
     }
 }
 
 impl From<&str> for Layout {
-    fn from(s: &str) -> Layout {
+    fn from(s: &str) -> Self {
         match s {
-            "position" => Layout::Position,
-            "size" => Layout::Size,
-            _ => Layout::Both,
+            "position" => Self::Position,
+            "size" => Self::Size,
+            _ => Self::Both,
         }
     }
 }
@@ -228,9 +228,9 @@ enum Entry {
 
 impl Entry {
     /// Entries of one kind replace each other.
-    fn same(&self, o: &Entry) -> bool {
+    fn same(&self, o: &Self) -> bool {
         match (self, o) {
-            (Entry::Target(a, _), Entry::Target(b, _)) => a == b,
+            (Self::Target(a, _), Self::Target(b, _)) => a == b,
             _ => std::mem::discriminant(self) == std::mem::discriminant(o),
         }
     }
@@ -355,7 +355,7 @@ impl Div {
     /// The default transition of its motions (Motion's `transition`:
     /// `{{ type: "spring", x: { duration: 1 } }}`).
     #[must_use]
-    pub fn transition(mut self, t: impl Into<Vars>) -> Div {
+    pub fn transition(mut self, t: impl Into<Vars>) -> Self {
         self.motion_mut().set(Entry::Transition(t.into()));
         self
     }
@@ -363,7 +363,7 @@ impl Div {
     /// Values set every frame, usually [`MotionValue`](super::MotionValue)s
     /// (Motion's `style={{ x: mv }}`).
     #[must_use]
-    pub fn motion_style(mut self, v: Vars) -> Div {
+    pub fn motion_style(mut self, v: Vars) -> Self {
         self.motion_mut().set(Entry::Style(v));
         self
     }
@@ -371,7 +371,7 @@ impl Div {
     /// What it animates to when it goes away (in a [`presence`](super::presence)):
     /// while a presence takes it away, this is its only target.
     #[must_use]
-    pub fn exit(mut self, target: impl Into<Target>) -> Div {
+    pub fn exit(mut self, target: impl Into<Target>) -> Self {
         let m = self.motion_mut();
         m.set(Entry::Target(When::Exit, target.into()));
         if let Some(id) = super::presence::exiting() {
@@ -382,14 +382,14 @@ impl Div {
 
     /// When it counts as in view: `{{ once: true, amount: 0.5 }}`.
     #[must_use]
-    pub fn viewport(mut self, v: impl Into<InView>) -> Div {
+    pub fn viewport(mut self, v: impl Into<InView>) -> Self {
         self.motion_mut().set(Entry::Viewport(v.into()));
         self
     }
 
     /// Drag it with the pointer: `true`, `"x"` or `"y"`.
     #[must_use]
-    pub fn drag(mut self, d: impl Into<Drag>) -> Div {
+    pub fn drag(mut self, d: impl Into<Drag>) -> Self {
         let d = d.into();
         let m = self.motion_mut().drag_mut();
         (m.x, m.y) = (d.x, d.y);
@@ -400,49 +400,49 @@ impl Div {
     /// right: 100, top: 0, bottom: 0 }}` or `[left, right, top, bottom]`
     /// (past them, `drag_elastic` gives).
     #[must_use]
-    pub fn drag_constraints(mut self, c: impl Into<DragConstraints>) -> Div {
+    pub fn drag_constraints(mut self, c: impl Into<DragConstraints>) -> Self {
         self.motion_mut().drag_mut().constraints = Some(c.into().0);
         self
     }
 
     /// How far past its constraints a drag goes (0: none, 1: freely; 0.5).
     #[must_use]
-    pub fn drag_elastic(mut self, e: f32) -> Div {
+    pub fn drag_elastic(mut self, e: f32) -> Self {
         self.motion_mut().drag_mut().elastic = e.clamp(0.0, 1.0);
         self
     }
 
     /// Whether it carries on (inertia) when let go (true).
     #[must_use]
-    pub fn drag_momentum(mut self, on: bool) -> Div {
+    pub fn drag_momentum(mut self, on: bool) -> Self {
         self.motion_mut().drag_mut().momentum = on;
         self
     }
 
     /// Whether it springs back to where it started when let go.
     #[must_use]
-    pub fn drag_snap_to_origin(mut self, on: bool) -> Div {
+    pub fn drag_snap_to_origin(mut self, on: bool) -> Self {
         self.motion_mut().drag_mut().snap_to_origin = on;
         self
     }
 
     /// Animate changes of its box (Motion's `layout`): `true`, `"position"`, `"size"`.
     #[must_use]
-    pub fn layout(mut self, l: impl Into<Layout>) -> Div {
+    pub fn layout(mut self, l: impl Into<Layout>) -> Self {
         self.motion_mut().set(Entry::Layout(l.into()));
         self
     }
 
     /// Named targets: `animate="visible"` picks one.
     #[must_use]
-    pub fn variants(mut self, v: impl Into<Variants>) -> Div {
+    pub fn variants(mut self, v: impl Into<Variants>) -> Self {
         self.motion_mut().set(Entry::Variants(v.into()));
         self
     }
 }
 
 impl From<Transition> for Vars {
-    fn from(t: Transition) -> Vars {
-        Vars { transition: t, ..Vars::default() }
+    fn from(t: Transition) -> Self {
+        Self { transition: t, ..Self::default() }
     }
 }

@@ -80,7 +80,7 @@ pub(crate) static MV_CLASS: sys::BKAnimClass = sys::BKAnimClass { get: Some(mv_g
 impl MotionValue {
     /// A new value (freed with [`dispose`](Self::dispose); [`use_motion_value`]
     /// frees its own when the component goes).
-    pub fn new(init: impl Into<Value>) -> MotionValue {
+    pub fn new(init: impl Into<Value>) -> Self {
         let v = init.into().read().unwrap_or_default();
         let i = FREE.with(|f| {
             let mut free = f.take();
@@ -93,11 +93,11 @@ impl MotionValue {
                 let slot = &mut s[i as usize];
                 slot.v = v;
                 slot.live = true;
-                MotionValue { i, generation: slot.generation }
+                Self { i, generation: slot.generation }
             }
             None => {
                 s.push(Slot { v, generation: 0, live: true, driver: std::ptr::null_mut() });
-                MotionValue { i: (s.len() - 1) as u32, generation: 0 }
+                Self { i: (s.len() - 1) as u32, generation: 0 }
             }
         })
     }
@@ -221,8 +221,8 @@ impl MotionValue {
 }
 
 impl From<MotionValue> for Value {
-    fn from(mv: MotionValue) -> Value {
-        Value::Motion(mv)
+    fn from(mv: MotionValue) -> Self {
+        Self::Motion(mv)
     }
 }
 

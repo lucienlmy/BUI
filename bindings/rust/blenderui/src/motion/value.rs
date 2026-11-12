@@ -24,8 +24,8 @@ pub struct Key {
 impl Key {
     /// A property by its name (GSAP's / Motion's camelCase or CSS's kebab-case).
     #[must_use]
-    pub const fn new(name: &'static CStr) -> Key {
-        Key { name, id: AtomicI32::new(0) }
+    pub const fn new(name: &'static CStr) -> Self {
+        Self { name, id: AtomicI32::new(0) }
     }
 
     /// The engine's id for it.
@@ -88,7 +88,7 @@ pub enum Value {
     Text(Cow<'static, CStr>),
     Color(Rgba),
     /// Keyframes (Motion's arrays, GSAP's keyframe values).
-    Keys(Cow<'static, [Value]>),
+    Keys(Cow<'static, [Self]>),
     /// The value it has when the motion starts (Motion's `null` keyframe).
     Current,
     /// A [`MotionValue`](super::MotionValue)'s value, read every frame (`style={{ x: mv }}`).
@@ -96,63 +96,63 @@ pub enum Value {
 }
 
 impl From<f32> for Value {
-    fn from(v: f32) -> Value {
-        Value::Num(v)
+    fn from(v: f32) -> Self {
+        Self::Num(v)
     }
 }
 
 impl From<f64> for Value {
-    fn from(v: f64) -> Value {
-        Value::Num(v as f32)
+    fn from(v: f64) -> Self {
+        Self::Num(v as f32)
     }
 }
 
 impl From<i32> for Value {
-    fn from(v: i32) -> Value {
-        Value::Num(v as f32)
+    fn from(v: i32) -> Self {
+        Self::Num(v as f32)
     }
 }
 
 impl From<Rgba> for Value {
-    fn from(c: Rgba) -> Value {
-        Value::Color(c)
+    fn from(c: Rgba) -> Self {
+        Self::Color(c)
     }
 }
 
 impl From<&'static CStr> for Value {
-    fn from(s: &'static CStr) -> Value {
-        Value::Text(Cow::Borrowed(s))
+    fn from(s: &'static CStr) -> Self {
+        Self::Text(Cow::Borrowed(s))
     }
 }
 
 impl From<&str> for Value {
-    fn from(s: &str) -> Value {
-        Value::Text(Cow::Owned(CString::new(s).unwrap_or_default()))
+    fn from(s: &str) -> Self {
+        Self::Text(Cow::Owned(CString::new(s).unwrap_or_default()))
     }
 }
 
 impl From<String> for Value {
-    fn from(s: String) -> Value {
-        Value::Text(Cow::Owned(CString::new(s).unwrap_or_default()))
+    fn from(s: String) -> Self {
+        Self::Text(Cow::Owned(CString::new(s).unwrap_or_default()))
     }
 }
 
-impl<T: Into<Value>, const N: usize> From<[T; N]> for Value {
-    fn from(keys: [T; N]) -> Value {
-        Value::Keys(Cow::Owned(keys.into_iter().map(Into::into).collect()))
+impl<T: Into<Self>, const N: usize> From<[T; N]> for Value {
+    fn from(keys: [T; N]) -> Self {
+        Self::Keys(Cow::Owned(keys.into_iter().map(Into::into).collect()))
     }
 }
 
-impl<T: Into<Value>> From<Vec<T>> for Value {
-    fn from(keys: Vec<T>) -> Value {
-        Value::Keys(Cow::Owned(keys.into_iter().map(Into::into).collect()))
+impl<T: Into<Self>> From<Vec<T>> for Value {
+    fn from(keys: Vec<T>) -> Self {
+        Self::Keys(Cow::Owned(keys.into_iter().map(Into::into).collect()))
     }
 }
 
-impl<T: Into<Value>> From<Option<T>> for Value {
+impl<T: Into<Self>> From<Option<T>> for Value {
     /// `None`: the current value (Motion's `null` keyframe).
-    fn from(v: Option<T>) -> Value {
-        v.map_or(Value::Current, Into::into)
+    fn from(v: Option<T>) -> Self {
+        v.map_or(Self::Current, Into::into)
     }
 }
 
@@ -168,41 +168,41 @@ pub(crate) struct Read {
 }
 
 impl Read {
-    pub const CURRENT: Read = Read { v: [0.0; 4], n: 1, unit: sys::BK_UNIT_NONE, rel: 0, current: true };
+    pub const CURRENT: Self = Self { v: [0.0; 4], n: 1, unit: sys::BK_UNIT_NONE, rel: 0, current: true };
 }
 
 impl Value {
     /// One (non-keyframe) value as numbers; `None` for text that isn't a value.
     pub(crate) fn read(&self) -> Option<Read> {
         match self {
-            Value::Num(v) => Some(Read { v: [*v, 0.0, 0.0, 0.0], n: 1, unit: sys::BK_UNIT_NONE, ..Read::default() }),
-            Value::Color(c) => Some(Read { v: [c.r, c.g, c.b, c.a], n: 4, unit: sys::BK_UNIT_COLOR, ..Read::default() }),
-            Value::Text(s) => {
+            Self::Num(v) => Some(Read { v: [*v, 0.0, 0.0, 0.0], n: 1, unit: sys::BK_UNIT_NONE, ..Read::default() }),
+            Self::Color(c) => Some(Read { v: [c.r, c.g, c.b, c.a], n: 4, unit: sys::BK_UNIT_COLOR, ..Read::default() }),
+            Self::Text(s) => {
                 let (mut r, mut unit, mut rel) = (Read::default(), 0, 0);
                 // SAFETY: a NUL-terminated string and valid out pointers.
                 let n = unsafe { sys::BK_anim_parse_value(s.as_ptr(), r.v.as_mut_ptr(), &raw mut unit, &raw mut rel) };
-                (n > 0).then(|| Read { n: n as u8, unit, rel: rel as i8, ..r })
+                (n > 0).then_some(Read { n: n as u8, unit, rel: rel as i8, ..r })
             }
-            Value::Current => Some(Read::CURRENT),
-            Value::Motion(m) => Some(m.read()),
-            Value::Keys(k) => k.last().and_then(Value::read),
+            Self::Current => Some(Read::CURRENT),
+            Self::Motion(m) => Some(m.read()),
+            Self::Keys(k) => k.last().and_then(Self::read),
         }
     }
 
     /// Equal values: the same `static` (a literal object's, every render) at
     /// once, else by value.
-    pub(crate) fn same(&self, o: &Value) -> bool {
+    pub(crate) fn same(&self, o: &Self) -> bool {
         match (self, o) {
-            (Value::Keys(Cow::Borrowed(a)), Value::Keys(Cow::Borrowed(b))) if std::ptr::eq(*a, *b) => true,
-            (Value::Text(Cow::Borrowed(a)), Value::Text(Cow::Borrowed(b))) if std::ptr::eq(*a, *b) => true,
+            (Self::Keys(Cow::Borrowed(a)), Self::Keys(Cow::Borrowed(b))) if std::ptr::eq(*a, *b) => true,
+            (Self::Text(Cow::Borrowed(a)), Self::Text(Cow::Borrowed(b))) if std::ptr::eq(*a, *b) => true,
             _ => self == o,
         }
     }
 
     /// The keyframes (one for a plain value).
-    pub(crate) fn keys(&self) -> &[Value] {
+    pub(crate) fn keys(&self) -> &[Self] {
         match self {
-            Value::Keys(k) => k,
+            Self::Keys(k) => k,
             v => std::slice::from_ref(v),
         }
     }
