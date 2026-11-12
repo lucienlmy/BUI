@@ -53,7 +53,8 @@ typedef struct Label {
 struct BKMotion {
   /* -- every frame */
   bool timeline : 1, call : 1, paused : 1, reversed : 1, yoyo : 1, rendered : 1, started : 1, killed : 1,
-      resolved : 1, olinked : 1;
+      resolved : 1, olinked : 1,
+      open : 1; /* a timeline with a child that repeats for ever: it plays until killed */
   int refs;
   int run;      /* in the global timeline: its index in G.run */
   int repeat;
@@ -418,7 +419,7 @@ double BK_motion_total_duration(const BKMotion *m)
   if (!m) {
     return 0.0;
   }
-  if (m->repeat < 0) {
+  if (m->repeat < 0 || m->open) {
     return NEVER;
   }
   return m->dur * (m->repeat + 1) + m->rdelay * m->repeat;
@@ -630,6 +631,10 @@ static void render(BKMotion *m, double t, bool force);
 /* the iteration and the time in it for a total time */
 static double iteration_time(const BKMotion *m, double T, int *r_iter)
 {
+  if (m->open) { /* nothing ends it: the time is the time */
+    *r_iter = 0;
+    return T;
+  }
   const double cycle = m->dur + m->rdelay;
   /* T >= 0: the cast is floor, without a call; times the inverse: no division */
   int iter = cycle > 0.0 ? (int)(T * m->inv_cycle) : 0;
@@ -844,10 +849,14 @@ static void timeline_measure(BKMotion *tl)
     return;
   }
   double end = 0.0;
+  bool open = false;
   for (BKMotion *c = tl->first; c; c = c->next) {
     const double total = BK_motion_total_duration(c);
-    end = BK_MAX(end, start_in_parent(c) + (total >= NEVER ? 0.0 : total / c->ts));
+    /* a child that repeats for ever counts as one of its iterations, and the timeline plays on */
+    open |= total >= NEVER;
+    end = BK_MAX(end, start_in_parent(c) + (total >= NEVER ? c->dur : total) / c->ts);
   }
+  tl->open = open;
   set_dur(tl, end);
 }
 

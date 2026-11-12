@@ -350,6 +350,39 @@ static void test_timelines(void)
   CHECK(NEAR(c.x, 100.0, 1e-3));
   BK_motion_release(tl);
 
+  /* a timeline with a child that repeats for ever plays until it is killed (it had no length, and so no time to run) */
+  {
+    Obj loop = {0}, loop2 = {0};
+    BKMotionVars fv = linear(1.0);
+    fv.repeat = -1;
+    BKMotion *ltl = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+    BKMotion *lt = to(&loop, BK_PROP_X, 100.0f, fv);
+    BK_timeline_add(ltl, lt, "0");
+    BK_motion_release(lt);
+    step(0.5);
+    CHECK(NEAR(loop.x, 50.0, 1e-3));
+    step(1.0); /* 1.5: the second iteration */
+    CHECK(NEAR(loop.x, 50.0, 1e-3) && NEAR(BK_motion_total_duration(ltl), 1e300, 1e290));
+    step(20.0);
+    CHECK(NEAR(loop.x, 50.0, 1e-3) && BK_motion_is_active(ltl));
+    /* a yoyo one in a timeline inside a timeline */
+    fv.yoyo = 1;
+    BKMotion *outer = BK_timeline(&(BKMotionVars){.time_scale = 1.0}), *inner = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+    BKMotion *lt2 = to(&loop2, BK_PROP_X, 100.0f, fv);
+    BK_timeline_add(inner, lt2, "0");
+    BK_motion_release(lt2);
+    BK_timeline_add(outer, inner, "0");
+    BK_motion_release(inner);
+    step(1.5);
+    CHECK(NEAR(loop2.x, 50.0, 1e-3));
+    step(1.0); /* 2.5 into it: back down */
+    CHECK(NEAR(loop2.x, 50.0, 1e-3));
+    BK_motion_kill(ltl);
+    BK_motion_kill(outer);
+    BK_motion_release(ltl);
+    BK_motion_release(outer);
+  }
+
   /* repeat and yoyo, with the events */
   memset(g_events, 0, sizeof(g_events));
   Obj o = {0};
