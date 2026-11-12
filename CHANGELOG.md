@@ -7,6 +7,32 @@ All notable changes to **blenderui** (BUI). The format follows
 ## [Unreleased]
 
 ### Added
+- **Animation: GSAP and Motion on one engine** (feature `anim`, on by default; `BUI_ANIM` in CMake). One C engine
+  in the kit (`kit/intern/anim`, `BUI_anim.h`) runs every animation, so Rust, JavaScript, Python, Lua and C animate
+  the same way and none carries its own. Eases: every name of GSAP, Motion, CSS and Blender, `cubic-bezier()`,
+  `steps()`, `linear()`, SVG paths and registered curves (bezier curves are a 256-point table; the powers and
+  `cos` are polynomials). Springs (stiffness, damping, mass, or `duration` and `bounce`) and inertia are solved in
+  closed form, so a frame reads the value at its time and the result doesn't depend on the frame rate; an
+  interrupted motion hands its position and velocity to the next. Tweens and timelines take GSAP's position strings
+  (`"<"`, `"+=1"`, labels, `"50%"`), stagger, repeat, yoyo, time scale, overwrite and callbacks, and the engine keeps
+  them in one dense array with a per-target index (killing a target's motions touches only those). Reduced motion
+  makes every motion jump to its end.
+  - **Rust:** `<motion.div>` in `rsx!` with `initial`, `animate`, `exit`, `transition`, `variants`, `whileHover`,
+    `whileTap`, `whileFocus`, `whileInView`, `whileDrag`, `drag` (with `dragConstraints`, `dragElastic`,
+    `dragMomentum`) and `layout`; `presence` (AnimatePresence); motion values (`use_motion_value`, `use_spring`,
+    `use_transform`, `use_velocity`, `use_scroll`); `gsap::to / from / from_to / set / timeline` and
+    `motion::animate`. `{{ }}` (and `vars!{}` outside `rsx!`) is an object of values; one made of literals is a
+    `static` read once, and a frame allocates nothing. Frames of moving values redraw only the boxes that moved,
+    without rendering the view or running layout. `examples/site_motion.rs`.
+  - **JavaScript and React:** `@blender-ui/native/gsap` and `@blender-ui/native/motion` (`animate`, `motionValue`,
+    `stagger`), Motion's props on every element (`el.setMotion`), `@blender-ui/react/motion` (`motion.div`,
+    `useMotionValue`, `useSpring`, `useTransform`), and `el.animate()` (Web Animations) now runs for real.
+    `app.advanceClock(ms)` steps animations frame-exactly in tests. No `AnimatePresence` or `layoutId` yet.
+  - **Python:** `bui.gsap` and `bui.motion`; `QPropertyAnimation`, `QVariantAnimation`, the animation groups and
+    `QEasingCurve` of Qt syntax run on the engine too. Components take `initial`, `animate` and `transition`.
+  - **Lua:** `bui.gsap` and `bui.motion`. **C:** `BK_tween`, `BK_timeline`, `BK_spring_*`, `BK_ease_*`, and
+    `BK_anim_node` for kit widgets.
+  - Docs: the website's Motion and GSAP pages for Rust, JavaScript and Python, and the Lua overview; `docs/animation-api.md`.
 - **Custom themes.** A theme file (JSON, in gpui-kit's shape, with Blender's own names for the colors) adds your
   own themes to Dark and Light: `bui.load_theme(path_or_text)`, `blenderui::load_theme` / `load_theme_file`,
   `app.loadTheme`, `bui.load_theme` (Lua), `BK_theme_load_file` / `BK_theme_load_json` (C), then `set_theme(name)`.

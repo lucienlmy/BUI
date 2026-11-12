@@ -1,0 +1,158 @@
+---
+title: Motion and GSAP animation
+sidebarLabel: Motion and GSAP
+description: <motion.div> with initial, animate, exit, whileHover, whileTap, drag and layout, springs solved in closed form, GSAP's timelines, and presence for exit animations, all on one C engine.
+section: Rust
+order: 62
+languages: ["rust"]
+sources: ["docs/animation-api.md", "bindings/rust/blenderui/src/motion/mod.rs", "bindings/rust/blenderui/src/motion/spec.rs", "bindings/rust/blenderui/src/motion/presence.rs", "bindings/rust/blenderui/src/motion/tween.rs", "bindings/rust/blenderui/src/motion/motion_value.rs", "bindings/rust/blenderui/examples/site_motion.rs", "bindings/rust/blenderui/tests/motion.rs", "bindings/rust/blenderui/tests/motion_presence.rs", "bindings/rust/blenderui/tests/motion_drag.rs", "bindings/rust/blenderui/tests/motion_layout.rs", "bindings/rust/blenderui/tests/motion_scroll.rs", "kit/include/BUI_anim.h"]
+---
+
+A card that fades in and rises, a button that springs when you press it, a panel that animates out before it leaves: **write the animation next to the element.** `<motion.div>` takes `initial`, `animate`, `exit`, `whileHover` and `whileTap` props, and the engine under it does the rest.
+
+The names come from Motion (Framer Motion) and GSAP, so what their docs show works here in Rust's syntax. Everything runs on one animation engine in the C kit (`kit/intern/anim`), the same one Python, JavaScript and Lua use.
+
+<Callout type="tip">Animation is the `anim` feature, on by default. Without it every value jumps to its target, and `blenderui::motion::available()` returns `false`.</Callout>
+
+## A first animation
+
+```rust
+use blenderui::prelude::*;
+
+#[component]
+fn card(title: &str) {
+    rsx! {
+        <motion.div p-4 rounded-xl bg-zinc-800
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            transition={{ type: "spring", stiffness: 400, damping: 30 }}>
+            {title.to_string()}
+        </motion.div>
+    }
+}
+```
+
+`{{ ... }}` is an object of values (double braces, as in JSX). Outside `rsx!` the same object is written `vars! { ... }`.
+
+- **Values:** numbers, `"100px"`, `"50%"`, `"#f80"`, arrays for keyframes (`{{ x: [0, 100, 0] }}`), and any Rust expression in braces.
+- **Transform shorthands:** `x`, `y`, `scale`, `scaleX`, `scaleY`, `rotate` and `opacity`, plus any CSS property that interpolates (colors, lengths, shadows, filters).
+- **Mistakes are compile errors:** an object of literals is checked when your program compiles, so a misspelled property or ease doesn't wait for a user to find it.
+
+## What it costs
+
+An object made of literals is a `static`: its property ids and eases are looked up once per call site, and a frame allocates nothing. A window with moving values redraws only the boxes that moved, without rendering the view or running layout again, and a window with nothing moving costs no CPU.
+
+## Springs and eases
+
+`transition` picks how a value gets there:
+
+```rust
+transition={{ duration: 0.4, ease: "power2.out" }}                    // a curve
+transition={{ type: "spring", stiffness: 300, damping: 20, mass: 1 }} // a physical spring
+transition={{ type: "spring", duration: 0.5, bounce: 0.25 }}          // the same, by feel
+transition={{ type: "inertia", velocity: 400 }}                       // decay from a velocity
+```
+
+**Springs are real springs.** The engine solves the damped spring equation in closed form, with the exact formula for the underdamped, critically damped and overdamped cases. A frame reads the value at its time, so the frame rate doesn't change the result, and the engine knows when the spring settles. Interrupt one and the new motion starts from the old one's position **and velocity**.
+
+Every ease of GSAP, Motion, CSS and Blender works by name: `none`, `power1` to `power4` with `.in`, `.out` and `.inOut`, `sine`, `expo`, `circ`, `back(1.7)`, `elastic(1, 0.3)`, `bounce`, `steps(4)`, `easeInOut`, `anticipate`, `cubic-bezier(...)`, a `[x1, y1, x2, y2]` array, and Blender's interpolation names.
+
+## Props
+
+| Prop | What it does |
+|---|---|
+| `initial` | Where it starts. `initial={false}` starts at `animate` without animating. |
+| `animate` | Where it goes, and again whenever it changes. |
+| `exit` | Where it goes before it leaves (with `presence`). |
+| `transition` | How: duration, ease, spring, delay, repeat. |
+| `variants` | Named states: `variants={[("small", vars! { width: 20 }), ("big", vars! { width: 80 })]}`, then `animate="big"`. |
+| `whileHover`, `whileTap`, `whileFocus` | A state held while it happens, then eased back. |
+| `whileInView` | A state held while the element is in the viewport. |
+| `drag`, `dragConstraints`, `dragElastic`, `dragMomentum` | Drag it; let go and it keeps moving by inertia. |
+| `layout` | When its box changes, it animates from the old box to the new one. |
+| `style={{ x: mv }}` | Bind a motion value to a property. |
+
+## Exit animations
+
+An element taken out of the view normally disappears at once. `presence` keeps it until its `exit` animation ends:
+
+```rust
+use blenderui::motion::presence;
+
+rsx! {
+    <body>
+        {...presence(self.open, || rsx! {
+            <motion.div key="panel"
+                initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -12 }}
+                transition={{ duration: 0.25, ease: "power2.out" }} />
+        })}
+    </body>
+}
+```
+
+## Motion values
+
+A motion value is a number you read and animate without rendering the view:
+
+```rust
+use blenderui::motion::{use_motion_value, use_spring, use_transform};
+
+let x = use_motion_value(0.0);
+let smooth = use_spring(x, vars! { stiffness: 300, damping: 30 });
+let opacity = use_transform(x, &[0.0, 200.0], &[1.0, 0.0]);
+// <motion.div style={{ x: smooth, opacity: opacity }} />
+```
+
+`use_scroll` and `use_element_scroll` give the scroll position as motion values, to bind to a progress bar or a parallax layer. `use_velocity` follows how fast another value changes.
+
+## GSAP
+
+Outside components, the functions underneath are there as GSAP names them:
+
+```rust
+use blenderui::motion::gsap;
+
+let t = gsap::to(".box", vars! { x: 200, duration: 1, ease: "elastic.out(1, 0.3)", stagger: 0.1 });
+t.pause();
+t.seek(0.5);
+
+let tl = gsap::timeline(vars! { repeat: 1, yoyo: true });
+tl.to("#a", vars! { width: 100, duration: 0.5 }, "")
+  .to("#b", vars! { width: 100, duration: 0.5 }, "<0.2")   // GSAP's position strings
+  .add_label("mid", "")
+  .to("#c", vars! { opacity: 0.2 }, "mid+=0.25");
+```
+
+- **Targets:** selectors (`"#id"`, `".class"`, `"tag"`, `"[attr=v]"`), motion values, or an object whose numbers are tweened.
+- **Position strings:** seconds, `"<"`, `">"`, `"+=1"`, `"-=0.5"`, `"<0.2"`, `"label"`, `"label+=1"`, `"50%"`. An empty string puts the tween at the end.
+- **Controls:** `play`, `pause`, `resume`, `reverse`, `restart`, `seek`, `set_progress`, `set_time_scale`, `kill`.
+- **Overwrite:** a new motion on a property takes over from the old one and keeps its velocity.
+
+## Reduced motion
+
+`blenderui::set_reduced_motion(true)`, or the operating system's setting, makes every motion jump to its end.
+
+## Testing animations
+
+A headless window has a clock that stands still. Move it with `cx.advance_clock(Duration)`, then `cx.draw(window)`, to check a value frame by frame, as the tests in `bindings/rust/blenderui/tests/motion*.rs` do.
+
+## Limits
+
+- **Widgets:** a Blender widget has no draw transform or opacity. `x`, `y`, `scale`, `rotate` and `opacity` apply to HTML elements; a widget animates its own values (`value`, colors, sizes).
+- **Clipping:** a widget partly clipped by `overflow: hidden` still draws outside the clip.
+- **Staggered variants:** `staggerChildren` through a parent isn't supported in `rsx!`. Give each child a `delay`, or use `gsap::to` with `stagger`.
+
+## Next steps
+
+<CardGrid>
+  <Card title="Effects and animations" href="docs/rust/effects-and-animations/" icon="sparkle" kicker="Rust">
+    CSS keyframes, transitions, filters and transforms.
+  </Card>
+  <Card title="Hooks" href="docs/rust/hooks/" icon="anchor" kicker="Rust">
+    State and effects in components.
+  </Card>
+</CardGrid>

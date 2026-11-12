@@ -3,7 +3,7 @@ title: Lua
 description: "Use BUI from Lua 5.4. The bui-lua executable and the loadable bui module expose the whole kit: every widget and every event."
 section: Lua
 order: 10
-sources: ["bindings/lua/README.md", "bindings/lua/CMakeLists.txt", "bindings/lua/examples", "bindings/lua/tests"]
+sources: ["bindings/lua/README.md", "kit/include/BUI_anim.h", "bindings/lua/CMakeLists.txt", "bindings/lua/examples", "bindings/lua/tests"]
 ---
 
 A standalone executable and a loadable module that embed Lua 5.4 and expose the full BUI kit API: every widget, every event. Use the `bui-lua` binary, or drop `bui.so` / `bui.dll` into any Lua 5.4, LuaJIT or LuaRocks install.
@@ -54,6 +54,32 @@ registry refs retained by the kit for as long as any copy of their item lives
 (menu button, open popup, search filter) and released automatically when the
 items are replaced or the node/context is freed. See `examples/menus.lua` and
 `examples/menubar.lua`.
+
+## Animation
+
+`bui.gsap` and `bui.motion` are GSAP's and Motion's APIs on the kit's animation engine, the one every BUI language uses. A call's tables are read once, into the engine, and a frame runs no Lua unless you gave a callback such as `onUpdate`.
+
+```lua
+local gsap, motion = bui.gsap, bui.motion
+
+gsap.to(slider, {value = 80, duration = 0.6, ease = "power2.out", repeat_ = 1, yoyo = true})
+gsap.from(progress, {factor = 0, duration = 1})
+gsap.to({a, b, c}, {value = 100, stagger = {each = 0.1, from = "center"}})
+
+local tl = gsap.timeline({defaults = {duration = 0.5, ease = "none"}})
+tl:to(a, {value = 100}):to(b, {value = 100}, "<0.2"):addLabel("mid"):to(c, {value = 50}, "mid+=0.25")
+
+motion.animate(slider, {value = {0, 100, 40}}, {duration = 1, times = {0, 0.3, 1}})
+motion.animate(slider, {value = 75}, {type = "spring", stiffness = 300, damping = 20})
+```
+
+- **Springs are real springs**, solved in closed form, and an interrupted one hands its velocity to the next motion.
+- **Properties:** `value`, `color`, `backgroundColor` and the numbers a node has (`factor`, `min`, `max`, `height`, `padding`, `scroll`). Kit widgets have no draw transform or opacity, so `x`, `y`, `scale`, `rotate` and `opacity` are errors.
+- **Options** in GSAP's camelCase or snake_case (`repeat_` or `["repeat"]` for Lua's keyword): `duration`, `delay`, `repeat`, `repeatDelay`, `yoyo`, `timeScale`, `paused`, `reversed`, `ease`, `overwrite`, `stagger`, `times`, `type` (`tween`, `spring`, `inertia`), the spring's `stiffness`, `damping`, `mass`, `bounce` and `visualDuration`, and the callbacks `onStart`, `onUpdate`, `onComplete`, `onRepeat`, `onReverseComplete` and `onInterrupt`.
+- **Errors at the call:** an unknown ease, property or option, a value of the wrong kind, or a freed node is a Lua error that names it.
+- **Clock:** the kit ticks animations in its frames. A host with its own clock, or a test, calls `gsap.ticker.useHostClock(true)` and `gsap.ticker.tick(seconds)`.
+
+`examples/anim.lua` is a pump-driven loop with progress, color cycling and a wave slider.
 
 ## Examples
 
