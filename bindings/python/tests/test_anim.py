@@ -308,11 +308,36 @@ def test_attribute_spellings_stay_per_target():
     step(0.5)
     assert near(a.scale_x, 2.0) and near(b.scaleX, 3.0), (a.__dict__, b.__dict__)
     assert "scaleX" not in a.__dict__ and "scale_x" not in b.__dict__, (a.__dict__, b.__dict__)
-    # and the same object again, with the other spelling and while the first still runs
     step(1.0)
     assert near(a.scale_x, 3.0) and near(b.scaleX, 5.0)
     ta.kill()
     tb.kill()
+
+
+def test_one_property_one_spelling_while_it_runs():
+    a = Obj(scale_x=1.0, scaleX=1.0)
+    first = gsap.to(a, scale_x=3, duration=1, ease="none")
+    # the other spelling of a running property is an error, and the running tween writes on as it did
+    try:
+        gsap.to(a, scaleX=9, duration=1, delay=0.5)
+        raise AssertionError("two spellings of one running property")
+    except ValueError as e:
+        assert "same property" in str(e), e
+    # a call that is rejected for another reason changes nothing either
+    try:
+        gsap.to(a, scale_x=9, duration=-1)
+    except ValueError:
+        pass
+    step(0.5)
+    assert near(a.scale_x, 2.0) and a.scaleX == 1.0, a.__dict__
+    first.kill()
+    del first
+    gc.collect()
+    # nothing runs on it: the other spelling is free
+    t = gsap.to(a, scaleX=9, duration=1, ease="none")
+    step(0.5)
+    assert near(a.scaleX, 5.0), a.__dict__
+    t.kill()
 
 
 def main() -> int:

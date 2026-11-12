@@ -383,6 +383,20 @@ static void test_timelines(void)
     BK_motion_release(outer);
   }
 
+  /* motions starting and ending on many targets over time: the tables of targets and drivers stay small */
+  {
+    Obj pool[64];
+    memset(pool, 0, sizeof(pool));
+    for (int round = 0; round < 4000; round++) {
+      Obj *o = &pool[(round * 7) % 64];
+      BKMotion *m = to(o, BK_PROP_X, 10.0f, linear(0.01));
+      BK_motion_release(m);
+      step(0.02);
+      CHECK(NEAR(o->x, 10.0, 1e-3));
+      o->x = 0.0f;
+    }
+  }
+
   /* repeat and yoyo, with the events */
   memset(g_events, 0, sizeof(g_events));
   Obj o = {0};

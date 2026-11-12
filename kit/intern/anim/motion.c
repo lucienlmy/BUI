@@ -199,7 +199,12 @@ static void objs_grow(void)
 {
   ObjEntry *old = G.objs;
   const int old_cap = G.cap_objs;
-  G.cap_objs = old_cap ? old_cap * 2 : 64;
+  int live = 0;
+  for (int i = 0; i < old_cap; i++) {
+    live += old[i].obj && old[i].obj != TOMB;
+  }
+  /* mostly tombstones: the same size again drops them; else double */
+  G.cap_objs = !old_cap ? 64 : ((live + 1) * 4 <= old_cap ? old_cap : old_cap * 2);
   G.objs = (ObjEntry *)MEM_callocN(sizeof(ObjEntry) * (size_t)G.cap_objs, "anim objects");
   G.nobjs = 0;
   for (int i = 0; i < old_cap; i++) {
@@ -222,8 +227,8 @@ static ObjEntry *obj_entry(void *obj)
   }
   for (uint32_t i = driver_hash(obj, 0) & (G.cap_objs - 1);; i = (i + 1) & (G.cap_objs - 1)) {
     if (!G.objs[i].obj || G.objs[i].obj == TOMB) {
+      G.nobjs += G.objs[i].obj == NULL; /* a reused tombstone is a slot counted already */
       G.objs[i] = (ObjEntry){obj, NULL};
-      G.nobjs++;
       return &G.objs[i];
     }
   }
@@ -271,7 +276,11 @@ static void drivers_grow(void)
 {
   Driver *old = G.drivers;
   const int old_cap = G.cap_drivers;
-  G.cap_drivers = old_cap ? old_cap * 2 : 64;
+  int live = 0;
+  for (int i = 0; i < old_cap; i++) {
+    live += old[i].obj && old[i].obj != TOMB;
+  }
+  G.cap_drivers = !old_cap ? 64 : ((live + 1) * 4 <= old_cap ? old_cap : old_cap * 2);
   G.drivers = (Driver *)MEM_callocN(sizeof(Driver) * (size_t)G.cap_drivers, "anim drivers");
   G.ndrivers = 0;
   for (int i = 0; i < old_cap; i++) {
@@ -295,8 +304,8 @@ static void driver_set(void *obj, int prop, BKMotion *m, int track)
   }
   for (uint32_t i = driver_hash(obj, prop) & (G.cap_drivers - 1);; i = (i + 1) & (G.cap_drivers - 1)) {
     if (!G.drivers[i].obj || G.drivers[i].obj == TOMB) {
+      G.ndrivers += G.drivers[i].obj == NULL;
       G.drivers[i] = (Driver){obj, prop, m, track};
-      G.ndrivers++;
       return;
     }
   }

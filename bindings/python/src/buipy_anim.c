@@ -247,7 +247,12 @@ static int objs_grow(void)
 {
   ObjNames *old = g_objs;
   const int old_cap = g_capobjs;
-  const int cap = old_cap ? old_cap * 2 : 16;
+  int live = 0;
+  for (int i = 0; i < old_cap; i++) {
+    live += old[i].obj && old[i].obj != DELETED;
+  }
+  /* mostly tombstones: the same size again drops them; else double */
+  const int cap = !old_cap ? 16 : ((live + 1) * 4 <= old_cap ? old_cap : old_cap * 2);
   ObjNames *grown = PyMem_Calloc((size_t)cap, sizeof(ObjNames));
   if (!grown) {
     PyErr_NoMemory();
@@ -283,8 +288,8 @@ static ObjNames *objs_entry(PyObject *obj)
   }
   for (size_t i = objs_hash(obj) & (size_t)(g_capobjs - 1);; i = (i + 1) & (size_t)(g_capobjs - 1)) {
     if (!g_objs[i].obj || g_objs[i].obj == DELETED) {
+      g_nobjs += g_objs[i].obj == NULL; /* a reused tombstone is a slot counted already */
       g_objs[i] = (ObjNames){.obj = obj};
-      g_nobjs++;
       return &g_objs[i];
     }
   }
@@ -298,6 +303,17 @@ static int name_set(PyObject *obj, int prop, PyObject *name)
   }
   for (int i = 0; i < e->n; i++) {
     if (e->props[i] == prop) {
+      const int same = PyObject_RichCompareBool(e->names[i], name, Py_EQ);
+      if (same < 0) {
+        return 0;
+      }
+      if (!same && e->refs > 0) {
+        /* `scale_x` and `scaleX` are one property: a running tween writes the spelling it was given */
+        PyErr_Format(PyExc_ValueError, "'%U' is the same property as '%U', which a running animation of "
+                                       "this object writes: use one spelling, or wait until it has ended and its handle is gone",
+                     name, e->names[i]);
+        return 0;
+      }
       Py_XSETREF(e->names[i], Py_NewRef(name));
       return 1;
     }
@@ -379,7 +395,12 @@ static void pyobj_set(void *obj, int prop, const float *value, int n, int unit)
   if (name) {
     PyObject *v = n == 1 ? PyFloat_FromDouble(value[0]) : PyTuple_New(n);
     for (int i = 0; v && n > 1 && i < n; i++) {
-      PyTuple_SET_ITEM(v, i, PyFloat_FromDouble(value[i]));
+      PyObject *f = PyFloat_FromDouble(value[i]);
+      if (!f) { /* no half-made tuple reaches the setter */
+        Py_CLEAR(v);
+        break;
+      }
+      PyTuple_SET_ITEM(v, i, f);
     }
     if (!v || PyObject_SetAttr((PyObject *)obj, name, v) < 0) {
       buipy_stash_error();
@@ -405,12 +426,14 @@ static void pyobj_release(void *obj)
   GIL_ENTER;
   ObjNames *e = objs_find((PyObject *)obj);
   if (e && --e->refs <= 0) { /* the last tween on it: its names go */
-    for (int i = 0; i < e->n; i++) {
-      Py_DECREF(e->names[i]);
-    }
-    PyMem_Free(e->props);
-    PyMem_Free(e->names);
+    /* the entry leaves the table first: a name's finalizer can run Python that grows (and moves) it */
+    const ObjNames gone = *e;
     *e = (ObjNames){.obj = DELETED};
+    for (int i = 0; i < gone.n; i++) {
+      Py_DECREF(gone.names[i]);
+    }
+    PyMem_Free(gone.props);
+    PyMem_Free(gone.names);
   }
   Py_DECREF((PyObject *)obj);
   GIL_LEAVE;
@@ -1209,12 +1232,23 @@ static int target_read(PyObject *target, const Plan *p, const BKAnimClass **r_cl
       return 0; /* AttributeError: nothing by that name */
     }
     Py_DECREF(cur);
-    if (!name_set(target, p->t[i].prop, p->t[i].name)) {
-      return 0;
-    }
   }
   *r_cls = &PYOBJ;
   *r_obj = target;
+  return 1;
+}
+
+/* How Python spelled each property of the Python objects among the targets: once everything is
+ * checked, so a call that raises leaves the names a running tween writes by alone. */
+static int targets_register(const Plan *p, const BKAnimClass *const *cls_of, void *const *obj_of, Py_ssize_t count)
+{
+  for (Py_ssize_t i = 0; i < count; i++) {
+    for (int j = 0; cls_of[i] == &PYOBJ && j < p->nt; j++) {
+      if (!name_set((PyObject *)obj_of[i], p->t[j].prop, p->t[j].name)) {
+        return 0;
+      }
+    }
+  }
   return 1;
 }
 
@@ -1639,7 +1673,7 @@ static PyObject *motion_tween(PyObject *mod, PyObject *args, PyObject *kw)
   BKMotion *m;
   int timeline = 0;
   if (count == 1) {
-    if (!events_attach(&o, &v)) {
+    if (!events_attach(&o, &v) || !targets_register(&p, cls_of, obj_of, count)) {
       goto done;
     }
     plan_bind(&p, cls_of[0] == &BK_anim_node ? (BKNode *)obj_of[0] : NULL);
@@ -1656,7 +1690,7 @@ static PyObject *motion_tween(PyObject *mod, PyObject *args, PyObject *kw)
     tv.paused = v.paused;
     v.delay = 0.0;
     v.paused = 0;
-    if (!events_attach(&o, &tv)) {
+    if (!events_attach(&o, &tv) || !targets_register(&p, cls_of, obj_of, count)) {
       goto done;
     }
     m = BK_timeline(&tv);
