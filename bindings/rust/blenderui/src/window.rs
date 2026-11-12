@@ -1230,6 +1230,8 @@ impl Window {
             self.dirty = true;
             return self.rebuild(app);
         }
+        // no layout ran: the widgets are the last frame's
+        self.widgets.keep();
         // the boxes the values changed: only they are painted again
         let dirty = self.caches.anim.take_redrawn();
         self.present(app, frame, Some(&dirty));

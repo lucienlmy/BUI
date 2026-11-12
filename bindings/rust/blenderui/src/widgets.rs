@@ -363,6 +363,14 @@ impl Widgets {
     }
 
     /// Place every widget at its laid-out bounds; free those not rendered.
+    /// A frame without layout (a redraw of Motion's values) keeps the widgets
+    /// of the last one: none was asked for again, none is gone.
+    pub(crate) fn keep(&mut self) {
+        for w in self.nodes.values_mut() {
+            w.seen = true;
+        }
+    }
+
     pub(crate) fn place(&mut self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool)>,
                         scale: f32) {
         self.nodes.retain(|key, w| {
