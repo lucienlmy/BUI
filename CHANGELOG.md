@@ -123,6 +123,11 @@ All notable changes to **blenderui** (BUI). The format follows
   timers, so with an endless animation (a loop, a spinner, a marquee) none of them got through: no hover, no drag, no maximize,
   no alt-tab, and the busy cursor over the window. Between two frames the host now takes the input, paint and timer messages
   that are waiting.
+- **Windows (and every native window): ghosts of moved things after `getBoundingClientRect()` and `screenshot()`.** Both
+  rendered the window into its own raster without presenting it, so the kit's record of what is on the screen moved on while the
+  screen didn't: whatever had changed since the last present (a dragged square's old place) stayed painted for good. `bounds`
+  now only brings the layout up to date (`App::layout`), and `draw` on a native window renders into a raster of its own and
+  asks the window to repaint everything.
 - **`repeat: -1` in a timeline** (and so on every element or selector, which GSAP-style calls run through a timeline): a
   child that repeats for ever counted as zero long, so its timeline ended at once and it never moved. The timeline now plays
   until it is killed.

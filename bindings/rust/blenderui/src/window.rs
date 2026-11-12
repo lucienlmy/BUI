@@ -650,13 +650,18 @@ impl App {
             return (0, 0, Vec::new());
         };
         let (pw, ph) = w.phys;
+        // A native window's raster is what it presents next, and the pixels the kit compares frames with
+        // belong to it: drawing into it here would take the damage of frames nobody presented, and
+        // leave their old pixels on the screen. It gets its own raster, and the window repaints all.
+        let own = w.native.is_some();
         // SAFETY: the raster is sized to the window; pixels are copied out.
         let px = unsafe {
-            if w.raster.is_null() {
+            if !own && w.raster.is_null() {
                 w.raster = sys::BUI_raster_create(pw, ph);
             }
+            let target = if own { sys::BUI_raster_create(pw, ph) } else { w.raster };
             let _s = span(Phase::Widgets);
-            sys::BK_render(w.ctx, w.raster, pw, ph, 1);
+            sys::BK_render(w.ctx, target, pw, ph, 1);
             // decodes this frame asked for: wait, then draw what arrived
             let mut st = sys::BKImageStats::default();
             sys::BK_image_stats(&raw mut st);
@@ -668,10 +673,15 @@ impl App {
                 sys::BK_image_stats(&raw mut st);
             }
             if sys::BK_image_poll() > 0 {
-                sys::BK_render(w.ctx, w.raster, pw, ph, 0);
+                sys::BK_render(w.ctx, target, pw, ph, 0);
             }
-            let p = sys::BUI_raster_pixels(w.raster);
-            std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec()
+            let p = sys::BUI_raster_pixels(target);
+            let px = std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec();
+            if own {
+                sys::BUI_raster_free(target);
+                sys::BK_node_relayout(w.root); // the window's own next render covers everything again
+            }
+            px
         };
         self.flush(); // configure events from the render
         (pw as usize, ph as usize, px)
@@ -708,6 +718,13 @@ impl App {
         };
         self.flush();
         (pw as usize, ph as usize, partial, full, damage)
+    }
+
+    /// Bring a window's layout up to date (what `element_bounds` reads) without drawing it: a native
+    /// window draws itself on its next frame, and [`draw`](Self::draw) would be a second, unpresented one.
+    pub fn layout(&mut self, id: WindowId) {
+        self.flush();
+        self.with_window(id.0, |w, app| w.update(app));
     }
 
     /// Move every window's CSS animation clock forward by `d`. Headless

@@ -250,6 +250,8 @@ unsafe extern "C" {
 
     // nodes
     pub fn BK_node_new(type_: *const c_char) -> *mut BKNode;
+    /// Size or structure changed: lay out and redraw everything on the next render.
+    pub fn BK_node_relayout(node: *mut BKNode);
     pub fn BK_node_free(node: *mut BKNode);
     pub fn BK_node_add(parent: *mut BKNode, child: *mut BKNode, index: c_int) -> c_int;
     pub fn BK_node_child(node: *const BKNode, i: c_int) -> *mut BKNode;

@@ -693,7 +693,7 @@ pub fn bounds(cx: &mut App, window: u32, node: u32) -> Option<Rect> {
         let n = v.nodes.get(&node)?;
         Some(n.attrs.iter().find(|(k, _)| k == "id").map_or_else(|| n.key.clone(), |(_, v)| v.clone()))
     })??;
-    cx.draw(h.id);
+    cx.layout(h.id);
     cx.element_bounds(h.id, &key).map(|b| Rect {
         x: b.origin.x as f64,
         y: b.origin.y as f64,

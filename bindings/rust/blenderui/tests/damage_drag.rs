@@ -86,3 +86,47 @@ fn drag_leaves_no_ghosts() {
         }
     });
 }
+
+/// Fast circles, several pointer moves between two frames: the old and the new place are far apart.
+#[test]
+fn fast_circles_leave_no_ghosts() {
+    Application::headless().run(|cx| {
+        blenderui::motion::lag_smoothing(0.0, 0.0);
+        let opts = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(700.0), px(500.0)),
+            })),
+            ..Default::default()
+        };
+        let h = cx.open_window(opts, |_, cx| cx.new(|_| Page { ticks: 0 })).unwrap();
+        let w = h.id;
+        cx.draw(w);
+        let mut screen = Vec::new();
+        assert_eq!(differs(cx, w, &mut screen), None);
+        cx.simulate_mouse_move(w, 180.0, 60.0);
+        cx.simulate_press(w, 180.0, 60.0);
+        let mut a = 0.0f32;
+        for frame in 0..200 {
+            for _ in 0..4 {
+                a += 0.35 + (frame % 5) as f32 * 0.07;
+                cx.simulate_mouse_move(w, 400.0 + 220.0 * a.cos(), 260.0 + 160.0 * a.sin());
+            }
+            if frame % 9 == 4 {
+                h.update(cx, |v, _, cx| {
+                    v.ticks += 1;
+                    cx.notify();
+                });
+            }
+            cx.advance_clock(Duration::from_millis(16));
+            let d = differs(cx, w, &mut screen);
+            assert_eq!(d, None, "ghost at frame {frame}");
+        }
+        cx.simulate_release(w, 400.0, 260.0);
+        for frame in 0..150 {
+            cx.advance_clock(Duration::from_millis(16));
+            let d = differs(cx, w, &mut screen);
+            assert_eq!(d, None, "ghost in the momentum, frame {frame}");
+        }
+    });
+}
