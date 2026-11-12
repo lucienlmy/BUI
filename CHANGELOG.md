@@ -33,6 +33,7 @@ All notable changes to **blenderui** (BUI). The format follows
   - **Lua:** `bui.gsap` and `bui.motion`. **C:** `BK_tween`, `BK_timeline`, `BK_spring_*`, `BK_ease_*`, and
     `BK_anim_node` for kit widgets.
   - Docs: the website's Motion and GSAP pages for Rust, JavaScript and Python, and the Lua overview; `docs/animation-api.md`.
+  - Examples: `examples/animation/` (a hero intro, a card grid, magnetic buttons, a marquee with drag and an equalizer).
 - **Custom themes.** A theme file (JSON, in gpui-kit's shape, with Blender's own names for the colors) adds your
   own themes to Dark and Light: `bui.load_theme(path_or_text)`, `blenderui::load_theme` / `load_theme_file`,
   `app.loadTheme`, `bui.load_theme` (Lua), `BK_theme_load_file` / `BK_theme_load_json` (C), then `set_theme(name)`.
@@ -117,6 +118,13 @@ All notable changes to **blenderui** (BUI). The format follows
 - **Rust: `whileInView`** counts what a scroller clips as out of view, so a row below a scroller's edge animates when
   it is scrolled in, not at mount.
 - **Rust: widgets and Motion.** A frame of moving values (no layout) freed every form widget; it keeps them now.
+- **`repeat: -1` in a timeline** (and so on every element or selector, which GSAP-style calls run through a timeline): a
+  child that repeats for ever counted as zero long, so its timeline ended at once and it never moved. The timeline now plays
+  until it is killed.
+- **Text in a translated box moved twice** when it was a `white-space: pre` (or otherwise line-boxed) run: the words carried
+  their owner's `translate` as well as the box that held them. Animated `x` / `y` and CSS `translate` on such text are right now.
+- **QuickJS (`bui run`, `bui build`):** the runtime rejected `commit` calls that passed `undefined` for the motion props, so
+  every app drew nothing.
 - **Crash at exit on Wayland:** `exit` on another thread closed libwayland-client while the event loop still called into
   it (SIGSEGV in about 1 of 15 benchmark exits). The library now stays loaded until the process ends.
 - **X11 frame pacing:** an animation frame is due one refresh after the previous frame started, so the render time is part

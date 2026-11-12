@@ -5,7 +5,7 @@ description: gsap and motion on BUI's engine, motion props on every element and 
 section: JavaScript & React
 order: 35
 languages: ["javascript"]
-sources: ["docs/animation-api.md", "bindings/node/README.md", "bindings/node/gsap.d.ts", "bindings/node/motion.d.ts", "bindings/node/anim.js", "bindings/node/dom.js", "bindings/node/test/anim.test.js", "bindings/react/README.md", "bindings/react/motion.js", "bindings/react/motion.d.ts", "kit/include/BUI_anim.h"]
+sources: ["examples/animation/README.md", "examples/animation/hero.js", "docs/animation-api.md", "bindings/node/README.md", "bindings/node/gsap.d.ts", "bindings/node/motion.d.ts", "bindings/node/anim.js", "bindings/node/dom.js", "bindings/node/test/anim.test.js", "bindings/react/README.md", "bindings/react/motion.js", "bindings/react/motion.d.ts", "kit/include/BUI_anim.h"]
 ---
 
 A box that slides in with an elastic ease, a timeline of three steps, a card that springs when you hover it: **GSAP's and Motion's APIs, run by BUI.** You import `gsap` or `motion`, call them as you would anywhere, and the animation runs in BUI's engine. JavaScript hands over each call's values once, and hears from the engine only for the callbacks you ask for.
@@ -95,6 +95,10 @@ const app = new App({ headless: true })
 // ...open a window, start an animation...
 await app.advanceClock(500)   // half a second later, every window has rendered that frame
 ```
+
+## Examples
+
+`examples/animation/` has four small windows: a hero intro, a card grid with springs, magnetic buttons, and a marquee with a draggable puck and an equalizer. Run any of them with `node examples/animation/hero.js`, or save frames with `BUI_SHOT=out.png BUI_SHOT_MS=100,500,3000`.
 
 ## Limits
 
