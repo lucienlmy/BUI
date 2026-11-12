@@ -58,14 +58,22 @@ class Animation extends Handle {
   updatePlaybackRate (r) { this.playbackRate = r }
 
   play () {
-    const redo = this._done || this._state === 'idle' // finished or canceled: from the start
+    // finished (also when paused since) or canceled: from the start
+    const redo = this._done || this._over || this._state === 'idle'
     this._state = 'running'
+    this._over = false
     this._ctl(redo ? 'restart' : 'play')
     if (redo) this._fin = null // a new one, pending
   }
 
-  pause () { this._state = 'paused'; this._ctl('pause') }
-  reverse () { this._state = 'running'; this._ctl('reverse') }
+  pause () { this._state = 'paused'; this._over ||= this._done; this._ctl('pause') }
+  reverse () {
+    const ended = this._done
+    this._state = 'running'
+    this._over = false
+    this._ctl('reverse')
+    if (ended) this._fin = null // it plays back: `finished` is a new promise, not the one of the first run
+  }
   finish () { this._ctl('complete') }
   cancel () {
     this._ctl('seek', 0)
@@ -81,6 +89,7 @@ class Animation extends Handle {
       this._abort(err)
     }
     this._done = false
+    this._over = false
     this._fin = null
     this.oncancel?.({ type: 'cancel', target: this })
   }

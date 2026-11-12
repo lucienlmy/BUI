@@ -278,3 +278,20 @@ test('exit: a removed element animates out first, then goes (AnimatePresence)', 
   await app.advanceClock(700)
   assert.strictEqual(await top(), 0, 'and gone after its exit')
 })
+
+test('el.animate: pause after the end, then play() replays; reverse() gets a new finished', async (t) => {
+  const { app, box } = page(t)
+  const el = box('w')
+  await width(el)
+  const a = el.animate([{ width: '10px' }, { width: '110px' }], { duration: 1000, fill: 'forwards' })
+  await app.advanceClock(1100)
+  await a.finished
+  a.pause()
+  a.play() // finished, then paused: it starts again from the start
+  await app.advanceClock(500)
+  assert.ok(near(await width(el), 60, 2), `replayed from the start: ${await width(el)}`)
+  await app.advanceClock(700)
+  const first = a.finished
+  a.reverse()
+  assert.notStrictEqual(a.finished, first, 'reverse() is a new run: a new finished promise')
+})

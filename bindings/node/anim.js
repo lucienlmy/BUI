@@ -161,7 +161,8 @@ class Handle {
         : (params ?? [])
       try { fn.apply(this, args) } catch (err) { queueMicrotask(() => { throw err }) }
     }
-    if (bit === EV.COMPLETE || bit === EV.REVERSE_COMPLETE) { // its end, either way it plays
+    // its end, either way it plays: a reverse's end is at its start, not where a seek (or a cancel) put it
+    if (bit === EV.COMPLETE || (bit === EV.REVERSE_COMPLETE && this._q('reversed'))) {
       this._done = true
       if (!this._child) this._m._live.delete(this.id)
       const w = this._waiters
