@@ -108,6 +108,15 @@ All notable changes to **blenderui** (BUI). The format follows
   reads the setting when it starts.
 
 ### Fixed
+- **Rust: form widgets and overlays** (issue #35). An element painted after a `<TextArea>`, `<Button>` or other form widget
+  (a dialog with `z-index`, a later sibling) now draws over it and takes the pointer there: widgets sit on the canvas
+  their paint order puts them on, above what comes before and below what overlaps them. A widget partly cut by an
+  ancestor's `overflow: hidden` or a scroller is cut there too (a clip rectangle on the kit node, `clipx` / `clipy` /
+  `clipw` / `cliph` in `BK_geom_set`), and an overlay with `pointer-events: none` lets the pointer through to the widget
+  below it (`BKCanvasItem.no_hit`).
+- **Rust: `whileInView`** counts what a scroller clips as out of view, so a row below a scroller's edge animates when
+  it is scrolled in, not at mount.
+- **Rust: widgets and Motion.** A frame of moving values (no layout) freed every form widget; it keeps them now.
 - **Crash at exit on Wayland:** `exit` on another thread closed libwayland-client while the event loop still called into
   it (SIGSEGV in about 1 of 15 benchmark exits). The library now stays loaded until the process ends.
 - **X11 frame pacing:** an animation frame is due one refresh after the previous frame started, so the render time is part

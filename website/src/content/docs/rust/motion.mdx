@@ -143,7 +143,6 @@ A headless window has a clock that stands still. Move it with `cx.advance_clock(
 ## Limits
 
 - **Widgets:** a Blender widget has no draw transform or opacity. `x`, `y`, `scale`, `rotate` and `opacity` apply to HTML elements; a widget animates its own values (`value`, colors, sizes).
-- **Clipping:** a widget partly clipped by `overflow: hidden` still draws outside the clip.
 - **Staggered variants:** `staggerChildren` through a parent isn't supported in `rsx!`. Give each child a `delay`, or use `gsap::to` with `stagger`.
 
 ## Next steps
