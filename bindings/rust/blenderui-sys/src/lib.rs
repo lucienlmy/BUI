@@ -119,6 +119,8 @@ pub struct BKCanvasItem {
     pub frame: c_int,
     /// Images: a video's current frame (borrowed, as `imbuf`).
     pub video: *mut BKVideo,
+    /// A canvas with `hititems` lets the pointer through this item.
+    pub no_hit: c_int,
 }
 
 /// A `<video>` (`BKVideo`): the kit's player (OS decoders; frames in one GPU

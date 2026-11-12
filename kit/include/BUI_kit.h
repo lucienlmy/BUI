@@ -497,6 +497,7 @@ typedef struct BKCanvasItem {
   int frame; /* animated src: 0 plays (each frame for its delay, looping as the file
               * says; paused while off screen); n > 0 shows frame n - 1 */
   BKVideo *video; /* images: a video's current frame (borrowed, as imbuf) */
+  int no_hit;     /* a canvas with `hititems` lets the pointer through this item */
 } BKCanvasItem;
 void BK_canvas_set_item(BKNode *canvas, const BKCanvasItem *item); /* insert or replace by id */
 void BK_canvas_add_item(BKNode *canvas, const BKCanvasItem *item);

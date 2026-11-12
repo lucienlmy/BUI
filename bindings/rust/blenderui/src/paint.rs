@@ -275,6 +275,8 @@ struct Item {
     coords: Coords,
     fill: Rgba,
     clip: Option<Bounds<f32>>,
+    /// Its element has `pointer-events: none`: the pointer goes through it.
+    through: bool,
 }
 
 /// Draws into a canvas display list, in logical pixels.
@@ -291,6 +293,8 @@ pub struct Painter {
     /// Every text item's bytes, NUL-terminated, back to back.
     text: Vec<u8>,
     clip: Option<Bounds<f32>>,
+    /// The box being painted has `pointer-events: none`.
+    through: bool,
     opacity: f32,
     /// Retained painting (frames where only moving values changed): each
     /// box's items (start, end; u32::MAX when it painted none), each item's
@@ -429,7 +433,7 @@ impl Painter {
             Kind::Oval { outline, width } => Kind::Oval { outline: outline.opacity(self.opacity), width },
             k => k,
         };
-        self.items.push(Item { kind, coords, fill, clip: self.clip });
+        self.items.push(Item { kind, coords, fill, clip: self.clip, through: self.through });
     }
 
     fn corners(b: Bounds<f32>) -> Coords {
@@ -559,7 +563,7 @@ impl Painter {
                   -> Option<sys::BKCanvasItem> {
         coords.clear();
         coords.extend(it.coords.as_slice().iter().map(|v| v * scale));
-        let mut ci = sys::BKCanvasItem { fill: it.fill.to_array(), ..Default::default() };
+        let mut ci = sys::BKCanvasItem { fill: it.fill.to_array(), no_hit: i32::from(it.through), ..Default::default() };
         match &it.kind {
             Kind::Rect { radius, outline, width } => {
                 ci.type_ = if *radius > 0.0 { sys::BK_ITEM_ROUNDRECT } else { sys::BK_ITEM_RECT };
@@ -1167,6 +1171,7 @@ fn paint_node(frame: &Frame, styles: &StyleStore, tc: &mut TextCache, i: usize, 
               vp: (f32, f32), app: &crate::window::App) {
     let n = &frame.nodes[i];
     let c = &styles[n.style];
+    p.through = !c.pointer_events;
     let b = n.bounds;
     match &n.content {
         Content::Word { .. } => {

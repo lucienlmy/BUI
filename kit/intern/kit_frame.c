@@ -1048,7 +1048,7 @@ static bool citem_same(const CItem *c, const BKCanvasItem *it)
       o->ncoords != it->ncoords || o->hidden != it->hidden || o->anchor != it->anchor ||
       o->text_flags != it->text_flags || o->clip_on != it->clip_on || o->family != it->family ||
       o->width != it->width || o->radius != it->radius || o->size != it->size ||
-      o->start != it->start || o->extent != it->extent)
+      o->start != it->start || o->extent != it->extent || o->no_hit != it->no_hit)
   {
     return false;
   }
@@ -1793,8 +1793,9 @@ static BKNode *canvas_hit(BKNode *n, int x, int y)
   const float px = (float)(x - (n->x - n->scroll_x)), py = (float)(y - (n->y - n->scroll));
   for (int i = d->n - 1; i >= 0; i--) {
     float b[4];
-    if (!d->items[i].it.hidden && citem_bbox_ex(&d->items[i], b, true) && px >= b[0] && px < b[2] &&
-        py >= b[1] && py < b[3])
+    const BKCanvasItem *it = &d->items[i].it;
+    if (!it->hidden && !it->no_hit && citem_bbox_ex(&d->items[i], b, true) && px >= b[0] &&
+        px < b[2] && py >= b[1] && py < b[3])
     {
       return n;
     }
