@@ -5,7 +5,7 @@ description: <motion.div> with initial, animate, exit, whileHover, whileTap, dra
 section: Rust
 order: 62
 languages: ["rust"]
-sources: ["docs/animation-api.md", "bindings/rust/blenderui/src/motion/mod.rs", "bindings/rust/blenderui/src/motion/spec.rs", "bindings/rust/blenderui/src/motion/presence.rs", "bindings/rust/blenderui/src/motion/tween.rs", "bindings/rust/blenderui/src/motion/motion_value.rs", "bindings/rust/blenderui/examples/site_motion.rs", "bindings/rust/blenderui/tests/motion.rs", "bindings/rust/blenderui/tests/motion_presence.rs", "bindings/rust/blenderui/tests/motion_drag.rs", "bindings/rust/blenderui/tests/motion_layout.rs", "bindings/rust/blenderui/tests/motion_scroll.rs", "kit/include/BUI_anim.h"]
+sources: ["docs/animation-api.md", "bindings/rust/blenderui/src/motion/mod.rs", "bindings/rust/blenderui/src/motion/spec.rs", "bindings/rust/blenderui/src/motion/presence.rs", "bindings/rust/blenderui/src/motion/tween.rs", "bindings/rust/blenderui/src/motion/motion_value.rs", "bindings/rust/blenderui/examples/site_motion.rs", "bindings/rust/blenderui/tests/motion.rs", "bindings/rust/blenderui/tests/motion_builders.rs", "bindings/rust/blenderui/tests/motion_presence.rs", "bindings/rust/blenderui/tests/motion_drag.rs", "bindings/rust/blenderui/tests/motion_layout.rs", "bindings/rust/blenderui/tests/motion_scroll.rs", "kit/include/BUI_anim.h"]
 ---
 
 A card that fades in and rises, a button that springs when you press it, a panel that animates out before it leaves: **write the animation next to the element.** `<motion.div>` takes `initial`, `animate`, `exit`, `whileHover` and `whileTap` props, and the engine under it does the rest.
@@ -15,6 +15,9 @@ The names come from Motion (Framer Motion) and GSAP, so what their docs show wor
 <Callout type="tip">Animation is the `anim` feature, on by default. Without it every value jumps to its target, and `blenderui::motion::available()` returns `false`.</Callout>
 
 ## A first animation
+
+<Tabs sync="rust-syntax" label="Rust syntax">
+<Tab label="rsx!">
 
 ```rust
 use blenderui::prelude::*;
@@ -34,6 +37,28 @@ fn card(title: &str) {
     }
 }
 ```
+
+</Tab>
+<Tab label="gpui builders">
+
+```rust
+use blenderui::prelude::*;
+use blenderui::vars;
+
+fn card(title: &str) -> impl IntoElement {
+    div().styled().p_4().rounded_xl()
+        .initial(vars! { opacity: 0, y: 20 })
+        .animate(vars! { opacity: 1, y: 0 })
+        .exit(vars! { opacity: 0, scale: 0.95 })
+        .while_hover(vars! { scale: 1.03 })
+        .while_tap(vars! { scale: 0.97 })
+        .transition(vars! { type: "spring", stiffness: 400, damping: 30 })
+        .child(title.to_string())
+}
+```
+
+</Tab>
+</Tabs>
 
 `{{ ... }}` is an object of values (double braces, as in JSX). Outside `rsx!` the same object is written `vars! { ... }`.
 
@@ -79,6 +104,9 @@ Every ease of GSAP, Motion, CSS and Blender works by name: `none`, `power1` to `
 
 An element taken out of the view normally disappears at once. `presence` keeps it until its `exit` animation ends:
 
+<Tabs sync="rust-syntax" label="Rust syntax">
+<Tab label="rsx!">
+
 ```rust
 use blenderui::motion::presence;
 
@@ -93,6 +121,25 @@ rsx! {
     </body>
 }
 ```
+
+</Tab>
+<Tab label="gpui builders">
+
+```rust
+use blenderui::motion::presence;
+use blenderui::vars;
+
+body().children(presence(self.open, || {
+    div().key("panel")
+        .initial(vars! { opacity: 0, y: 12 })
+        .animate(vars! { opacity: 1, y: 0 })
+        .exit(vars! { opacity: 0, y: -12 })
+        .transition(vars! { duration: 0.25, ease: "power2.out" })
+}))
+```
+
+</Tab>
+</Tabs>
 
 ## Motion values
 

@@ -12,6 +12,10 @@
 > - Widgets (kit nodes) have no draw transform or opacity: `x`, `y`, `scale`, `rotate` and `opacity` apply to
 >   HTML elements, and a widget animates its own values.
 
+> **Reading the rest of this page:** it is the original proposal. Where a sample below uses something that was
+> not built, it says so in a comment (`// not built`): nested-object `variants` and `staggerChildren` in Rust,
+> and `AnimatePresence` modes, `LayoutGroup`, `layoutId` and `MotionConfig` in React.
+
 GSAP's and Motion's APIs, both, on one animation core in the kit (C), so Rust, JavaScript,
 Python, Lua and C all animate the same way and none of them carries its own engine. Code
 written for GSAP or Motion should port by changing the import; where BUI can't do
@@ -106,6 +110,7 @@ fn card(title: &str) {
 fn list(items: Vec<Item>) {
     let (open, set_open) = use_state(true);
     rsx! {
+        // not built: `variants` in rsx! take [("name", vars! { .. })] pairs, and there is no staggerChildren
         <motion.ul variants={{
                 hidden: { opacity: 0 },
                 show:   { opacity: 1, transition: { staggerChildren: 0.05, delayChildren: 0.1 } },
@@ -320,6 +325,7 @@ import { motion, AnimatePresence, LayoutGroup, MotionConfig, useAnimate, useMoti
             whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} whileInView={{ opacity: 1 }}
             transition={{ type: 'spring', stiffness: 400 }} layout layoutId="tab"
             drag="x" dragConstraints={{ left: 0, right: 300 }} />
+{/* not built: AnimatePresence only passes its children through (an exit runs on any removal), and has no `mode` */}
 <AnimatePresence mode="wait">{open && <motion.div key="m" exit={{ opacity: 0 }} />}</AnimatePresence>
 <motion.NumberSlider animate={{ value: 0.8 }} />   {/* Blender widgets animate too */}
 ```

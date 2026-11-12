@@ -15,8 +15,8 @@ A slider that eases to 80, a progress bar that fills with a spring, a row of wid
 ## Animate a widget
 
 ```python
-from bui import gsap, motion
-from bui.components import NumberSlider, ProgressBar
+from blenderui import gsap, motion
+from blenderui.components import NumberSlider, ProgressBar
 
 volume = NumberSlider("Volume", 10, min=0, max=100)
 bar = ProgressBar(0.0)
@@ -38,7 +38,7 @@ NumberSlider("Volume", initial={"value": 0}, animate={"value": 0.8})
 ```python
 from types import SimpleNamespace
 
-from bui import gsap
+from blenderui import gsap
 
 gsap.from_(rows, value=0, stagger=0.05)          # `from` is a Python keyword, so `from_`
 gsap.from_to(swatch, {"color": "#000"}, {"color": "#f80", "duration": 1})
@@ -61,7 +61,7 @@ t.pause(); t.progress(0.5); t.time_scale(2); t.reverse(); t.kill()
 ## Motion
 
 ```python
-from bui import motion
+from blenderui import motion
 
 motion.animate(items, {"value": 1}, duration=1, ease="linear",
                delay=motion.stagger(0.25, from_="last"))
