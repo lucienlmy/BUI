@@ -539,6 +539,8 @@ typedef struct BKGeom {
   float x, y, relx, rely, width, height, relwidth, relheight;
   unsigned has; /* place: which of width/height/relwidth/relheight were given */
   int reqw, reqh;
+  bool has_clip; /* draw (and take the pointer) only inside `clip` (x, y, w, h), whatever the parent */
+  int clip[4];
 } BKGeom;
 
 /* Node images (image/draw.c): intrinsic size, and drawn at it centered in `r`. */

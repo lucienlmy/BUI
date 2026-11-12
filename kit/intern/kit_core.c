@@ -451,11 +451,25 @@ void bk_arrange(BKNode *n, int x, int y, int w, int h)
   }
 }
 
+static void draw_tree_in(BKNode *n);
+
 void bk_draw_tree(BKNode *n)
 {
   if (!NODE_VISIBLE(n)) {
     return;
   }
+  const BKGeom *g = n->geom;
+  if (g && g->has_clip) { /* a host that clips what it places (a widget under `overflow: hidden`) */
+    bk_clip_push(g->clip[0], g->clip[1], g->clip[2], g->clip[3]);
+    draw_tree_in(n);
+    bk_clip_pop();
+    return;
+  }
+  draw_tree_in(n);
+}
+
+static void draw_tree_in(BKNode *n)
+{
   if (n->cls->draw_tree) {
     n->cls->draw_tree(n);
     return;
@@ -494,6 +508,12 @@ bool bk_contains(const BKNode *n, int x, int y)
 BKNode *bk_hit(BKNode *n, int x, int y)
 {
   if (!NODE_VISIBLE(n) || !bk_contains(n, x, y)) {
+    return NULL;
+  }
+  const BKGeom *g = n->geom;
+  if (g && g->has_clip &&
+      (x < g->clip[0] || y < g->clip[1] || x >= g->clip[0] + g->clip[2] || y >= g->clip[1] + g->clip[3]))
+  {
     return NULL;
   }
   if (n->cls->hit) {

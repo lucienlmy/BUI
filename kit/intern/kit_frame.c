@@ -95,6 +95,11 @@ void BK_geom_set(BKNode *n, const char *key, double v)
   else if (K("reqwidth")) g->reqw = iv;
   else if (K("reqheight")) g->reqh = iv;
   else if (K("reset_place")) { g->x = g->y = g->relx = g->rely = 0; g->has = 0; }
+  else if (K("clipx")) { g->clip[0] = iv; g->has_clip = true; }
+  else if (K("clipy")) { g->clip[1] = iv; g->has_clip = true; }
+  else if (K("clipw")) { g->clip[2] = iv; g->has_clip = true; }
+  else if (K("cliph")) { g->clip[3] = iv; g->has_clip = true; }
+  else if (K("noclip")) g->has_clip = false;
 #undef K
   if (fresh || memcmp(&old, g, sizeof(old)) != 0) { /* unchanged: no relayout */
     bk_relayout(n);

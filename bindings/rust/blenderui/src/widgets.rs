@@ -315,6 +315,8 @@ pub(crate) struct WidgetNode {
     seen: bool,
     /// the canvas it is on (see `Painter`)
     seg: u32,
+    /// the part of it that shows (device pixels), when something clips it
+    clip: Option<[i32; 4]>,
 }
 
 /// The kit widgets of one window, keyed by element key.
@@ -346,7 +348,7 @@ impl Widgets {
                 sys::BK_node_add(parent, node, -1);
                 sys::BK_geom_set_manager(node, sys::BK_GEOM_PLACE);
             }
-            let w = WidgetNode { node, spec: spec.clone(), seen: true, seg: 0 };
+            let w = WidgetNode { node, spec: spec.clone(), seen: true, seg: 0, clip: None };
             sync(node, None, spec);
             w
         });
@@ -394,6 +396,28 @@ impl Widgets {
                 let i = c.intersect(&b);
                 i.size.width > 0.0 && i.size.height > 0.0
             });
+            // cut where an ancestor's `overflow` clips it (nothing set when all of it shows)
+            let cut = clip.filter(|c| c.intersect(&b) != b).map(|c| {
+                let c = c.intersect(&b);
+                let (x0, y0) = ((c.origin.x * scale).floor(), (c.origin.y * scale).floor());
+                let (x1, y1) = (((c.origin.x + c.size.width) * scale).ceil(), ((c.origin.y + c.size.height) * scale).ceil());
+                [x0 as i32, y0 as i32, (x1 - x0) as i32, (y1 - y0) as i32]
+            });
+            if cut != w.clip {
+                w.clip = cut;
+                // SAFETY: our live node; plain numbers.
+                unsafe {
+                    match cut {
+                        Some(c) => {
+                            sys::BK_geom_set(w.node, c"clipx".as_ptr(), f64::from(c[0]));
+                            sys::BK_geom_set(w.node, c"clipy".as_ptr(), f64::from(c[1]));
+                            sys::BK_geom_set(w.node, c"clipw".as_ptr(), f64::from(c[2]));
+                            sys::BK_geom_set(w.node, c"cliph".as_ptr(), f64::from(c[3]));
+                        }
+                        None => sys::BK_geom_set(w.node, c"noclip".as_ptr(), 1.0),
+                    }
+                }
+            }
             unsafe {
                 sys::BK_geom_set(w.node, c"x".as_ptr(), (b.origin.x * scale).round() as f64);
                 sys::BK_geom_set(w.node, c"y".as_ptr(), (b.origin.y * scale).round() as f64);
