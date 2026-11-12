@@ -53,7 +53,7 @@ typedef struct Label {
 struct BKMotion {
   /* -- every frame */
   bool timeline : 1, call : 1, paused : 1, reversed : 1, yoyo : 1, rendered : 1, started : 1, killed : 1,
-      resolved : 1;
+      resolved : 1, olinked : 1;
   int refs;
   int run;      /* in the global timeline: its index in G.run */
   int repeat;
@@ -77,6 +77,7 @@ struct BKMotion {
   void *data;
   BKEase ease;
   /* -- rarely */
+  BKMotion *oprev, *onext; /* the target's other motions (see ObjEntry) */
   int overwrite;
   BKMotion *prev, *next; /* in a timeline's children, in order of start */
   void (*free_data)(void *data);
@@ -120,7 +121,9 @@ static struct {
   BKMotion **run;
   int nrun, cap_run;
   double (*clock)(void); /* the kit's clock (BK_anim_set_clock), or NULL */
-} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL, NULL, 0, 0, NULL};
+  struct ObjEntry *objs; /* tweens by target; open addressing like the drivers */
+  int nobjs, cap_objs;
+} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL, NULL, 0, 0, NULL, NULL, 0, 0};
 
 /* a motion runs: the host draws frames again */
 static void wake(const BKMotion *m)
@@ -161,6 +164,104 @@ static Driver *driver_find(void *obj, int prop)
     }
   }
   return NULL;
+}
+
+/* Every tween by its target: a target going away stops all of its motions (started or not,
+ * overwriting or not) by walking its own, never every motion. */
+typedef struct ObjEntry {
+  void *obj; /* NULL: empty, TOMB: deleted */
+  BKMotion *head;
+} ObjEntry;
+
+static ObjEntry *obj_find(void *obj)
+{
+  if (!G.cap_objs) {
+    return NULL;
+  }
+  for (uint32_t i = driver_hash(obj, 0) & (G.cap_objs - 1), k = 0; k < (uint32_t)G.cap_objs;
+       i = (i + 1) & (G.cap_objs - 1), k++)
+  {
+    ObjEntry *e = &G.objs[i];
+    if (!e->obj) {
+      return NULL;
+    }
+    if (e->obj == obj) {
+      return e;
+    }
+  }
+  return NULL;
+}
+
+static ObjEntry *obj_entry(void *obj);
+
+static void objs_grow(void)
+{
+  ObjEntry *old = G.objs;
+  const int old_cap = G.cap_objs;
+  G.cap_objs = old_cap ? old_cap * 2 : 64;
+  G.objs = (ObjEntry *)MEM_callocN(sizeof(ObjEntry) * (size_t)G.cap_objs, "anim objects");
+  G.nobjs = 0;
+  for (int i = 0; i < old_cap; i++) {
+    if (old[i].obj && old[i].obj != TOMB) {
+      obj_entry(old[i].obj)->head = old[i].head;
+    }
+  }
+  MEM_SAFE_FREE(old);
+}
+
+/* the entry for `obj`, made when there is none */
+static ObjEntry *obj_entry(void *obj)
+{
+  ObjEntry *e = obj_find(obj);
+  if (e) {
+    return e;
+  }
+  if ((G.nobjs + 1) * 2 > G.cap_objs) {
+    objs_grow();
+  }
+  for (uint32_t i = driver_hash(obj, 0) & (G.cap_objs - 1);; i = (i + 1) & (G.cap_objs - 1)) {
+    if (!G.objs[i].obj || G.objs[i].obj == TOMB) {
+      G.objs[i] = (ObjEntry){obj, NULL};
+      G.nobjs++;
+      return &G.objs[i];
+    }
+  }
+}
+
+static void obj_link(BKMotion *m)
+{
+  ObjEntry *e = obj_entry(m->obj);
+  m->oprev = NULL;
+  m->onext = e->head;
+  if (e->head) {
+    e->head->oprev = m;
+  }
+  e->head = m;
+  m->olinked = true;
+}
+
+static void obj_unlink(BKMotion *m)
+{
+  if (!m->olinked) {
+    return;
+  }
+  if (m->oprev) {
+    m->oprev->onext = m->onext;
+  }
+  else {
+    ObjEntry *e = obj_find(m->obj);
+    if (e) {
+      e->head = m->onext;
+      if (!m->onext) {
+        e->obj = TOMB;
+      }
+    }
+  }
+  if (m->onext) {
+    m->onext->oprev = m->oprev;
+  }
+  m->oprev = m->onext = NULL;
+  m->olinked = false;
 }
 
 static void driver_set(void *obj, int prop, BKMotion *m, int track);
@@ -269,6 +370,7 @@ static void detach(BKMotion *m);
 
 static void motion_free(BKMotion *m)
 {
+  obj_unlink(m);
   free_tracks(m);
   if (m->cls && m->cls->release) {
     m->cls->release(m->obj);
@@ -948,6 +1050,9 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
   uint8_t *bp = (uint8_t *)(block + off_byte);
   m->cls = cls;
   m->obj = obj;
+  if (obj) {
+    obj_link(m);
+  }
   if (cls && cls->retain) {
     cls->retain(obj);
   }
@@ -1161,7 +1266,9 @@ void BK_motion_kill(BKMotion *m)
       m->tracks[i].killed = true;
     }
   }
-  for (BKMotion *c = m->first; c; c = c->next) {
+  /* `next` first: killing a child detaches it (clearing its links, maybe freeing it) */
+  for (BKMotion *c = m->first, *next; c; c = next) {
+    next = c->next;
     BK_motion_kill(c);
   }
   detach(m);
@@ -1358,53 +1465,13 @@ static void kill_tween(BKMotion *c, void *obj, int prop)
   }
 }
 
-static void kill_target(BKMotion *tl, void *obj, int prop)
-{
-  for (BKMotion *c = tl->first, *next; c; c = next) {
-    next = c->next;
-    if (c->timeline) {
-      kill_target(c, obj, prop);
-    }
-    else {
-      kill_tween(c, obj, prop);
-    }
-  }
-}
-
 void BK_anim_kill_target(void *obj, int prop)
 {
-  if (!G.root || !obj) {
-    return;
-  }
-  /* one property: the motion driving it, from the drivers hash (no walk over every motion) */
-  Driver *d = prop >= 0 ? driver_find(obj, prop) : NULL;
-  if (d && d->m) {
-    BKMotion *m = d->m;
-    const int ti = d->track;
-    driver_drop(m, ti);
-    m->tracks[ti].killed = true;
-    bool any = false;
-    for (int i = 0; i < m->ntracks; i++) {
-      any |= !m->tracks[i].killed;
-    }
-    if (!any) {
-      BK_motion_kill(m);
-    }
-    return;
-  }
-  /* every property, or motions made without overwrite: a walk over every motion */
-  for (int i = 0; i < G.nrun;) {
-    BKMotion *c = G.run[i];
-    BK_motion_retain(c);
-    if (c->timeline) {
-      kill_target(c, obj, prop);
-    }
-    else {
-      kill_tween(c, obj, prop);
-    }
-    if (i < G.nrun && G.run[i] == c) {
-      i++;
-    }
+  ObjEntry *e = obj ? obj_find(obj) : NULL;
+  for (BKMotion *c = e ? e->head : NULL, *next; c; c = next) {
+    next = c->onext;
+    BK_motion_retain(c); /* stopping its last track lets go of the timeline's hold */
+    kill_tween(c, obj, prop);
     BK_motion_release(c);
   }
 }
@@ -1422,6 +1489,17 @@ void bk_motion_exit(void)
   G.cap_run = 0;
   MEM_SAFE_FREE(G.drivers);
   G.ndrivers = G.cap_drivers = 0;
+  for (int i = 0; i < G.cap_objs; i++) { /* motions still held keep no stale links */
+    if (G.objs[i].obj && G.objs[i].obj != TOMB) {
+      for (BKMotion *c = G.objs[i].head, *next; c; c = next) {
+        next = c->onext;
+        c->oprev = c->onext = NULL;
+        c->olinked = false;
+      }
+    }
+  }
+  MEM_SAFE_FREE(G.objs);
+  G.nobjs = G.cap_objs = 0;
   G.root_time = G.last_now = 0.0;
   G.ticked = false;
 }

@@ -512,6 +512,59 @@ static void test_kit_nodes(void)
   printf("kit nodes: a slider's value, a frame's bg; freeing a node stops its motions\n");
 }
 
+static void test_kill(void)
+{
+  /* a target going away stops a motion that has not started (a delay): it never writes it */
+  Obj gone = {0};
+  BKMotion *running = to(&gone, BK_PROP_X, 100.0f, linear(1.0)); /* drives x: the drivers table knows it */
+  step(0.25);
+  BKMotionVars dv = linear(1.0);
+  dv.delay = 0.5;
+  BKMotion *delayed = to(&gone, BK_PROP_X, 100.0f, dv); /* on x too, but not started: not in it */
+  BKMotion *other = to(&gone, BK_PROP_Y, 100.0f, linear(1.0));
+  step(0.125);
+  BK_anim_kill_target(&gone, BK_PROP_X); /* every motion of x: the running one and the one waiting */
+  CHECK(!BK_motion_is_active(running) && BK_motion_is_active(other));
+  const float x_then = gone.x;
+  step(2.0); /* the waiting motion's start comes and goes: it never writes x */
+  CHECK(gone.x == x_then);
+  BK_anim_kill_target(&gone, -1);
+  CHECK(!BK_motion_is_active(other));
+  BK_motion_release(running);
+  BK_motion_release(delayed);
+  BK_motion_release(other);
+
+  /* a motion without overwrite is stopped too (it isn't in the drivers table) */
+  Obj free_obj = {0};
+  BKMotionVars nv = linear(1.0);
+  nv.overwrite = BK_OVERWRITE_NONE;
+  BKMotion *plain = to(&free_obj, BK_PROP_X, 100.0f, nv);
+  step(0.25);
+  BK_anim_kill_target(&free_obj, BK_PROP_X);
+  CHECK(!BK_motion_is_active(plain));
+  BK_motion_release(plain);
+
+  /* killing a timeline stops every child, also when the caller let go of them */
+  Obj a = {0}, b = {0}, c = {0};
+  BKMotion *tl = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+  BKMotion *ta = to(&a, BK_PROP_X, 100.0f, linear(1.0)), *tb = to(&b, BK_PROP_X, 100.0f, linear(1.0)),
+           *tc = to(&c, BK_PROP_X, 100.0f, linear(1.0));
+  BK_timeline_add(tl, ta, "0");
+  BK_timeline_add(tl, tb, "0");
+  BK_timeline_add(tl, tc, "0");
+  BK_motion_release(ta); /* the timeline holds ta alone: killing it frees it */
+  step(0.25);
+  CHECK(BK_motion_is_active(tb) && BK_motion_is_active(tc));
+  BK_motion_kill(tl);
+  CHECK(!BK_motion_is_active(tb) && !BK_motion_is_active(tc)); /* every child, not only the first */
+  step(1.0);
+  CHECK(NEAR(a.x, 25.0, 1e-3) && NEAR(b.x, 25.0, 1e-3) && NEAR(c.x, 25.0, 1e-3)); /* none went on */
+  BK_motion_release(tb);
+  BK_motion_release(tc);
+  BK_motion_release(tl);
+  printf("kill: a target's motions, started or not; a timeline's children\n");
+}
+
 static void test_no_allocation_per_frame(void)
 {
   Obj objs[64] = {{0}};
@@ -549,6 +602,7 @@ int main(void)
   test_timelines();
   test_overwrite_and_springs();
   test_lag_smoothing();
+  test_kill();
   test_kit_nodes();
   test_no_allocation_per_frame();
   BK_anim_exit();

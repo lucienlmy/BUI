@@ -172,11 +172,9 @@ impl Arena {
         let s = self.at(i);
         let (key, live) = (s.key, s.live);
         let obj: *mut c_void = (&raw mut *s).cast();
-        for p in &s.props {
-            // SAFETY: the slot is alive; per property is a hash lookup (all of an
-            // object's motions would be a walk over every motion)
-            unsafe { sys::BK_anim_kill_target(obj, p.id) };
-        }
+        // SAFETY: the slot is alive. Every motion of it, started or not: the engine finds them
+        // by their target, so a motion still waiting for its delay can't write a freed slot.
+        unsafe { sys::BK_anim_kill_target(obj, -1) };
         if let Some(g) = &mut self.at(i).gest {
             g.end_exit();
         }
