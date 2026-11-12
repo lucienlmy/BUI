@@ -492,10 +492,11 @@ fn host_object<'js>(ctx: &Ctx<'js>, argv: Vec<String>) -> rquickjs::Result<Objec
         Ok(())
     });
     f!("commit", |ctx: Ctx<'js>, w: u32, ops: TypedArray<'js, i32>, strings: Vec<String>, animated: bool,
-                  motion: Opt<Array<'js>>| -> rquickjs::Result<()> {
+                  motion: Opt<Option<Array<'js>>>| -> rquickjs::Result<()> {
         // SAFETY: copied right away, before JavaScript can detach or resize the buffer
         let ops = unsafe { ops.as_slice() }.to_vec();
-        let (props, bad) = motion_props(motion.0)?;
+        // absent, `undefined` and `null` all mean no motion props
+        let (props, bad) = motion_props(motion.0.flatten())?;
         command(Command::Commit(w, ops, strings, animated, props));
         // the batch is applied; the prop that couldn't be read is reported
         bad.map_or(Ok(()), |e| Err(Exception::throw_message(&ctx, &e)))
@@ -692,6 +693,19 @@ mod tests {
         let (n, bad, kinds) = props_of("[12, 'x', 13, { left: 0, right: 100 }, 3, { width: 80, ease: 'linear' }, 7, { x: { __buiMotionValue: 4 } }]");
         assert_eq!((n, bad), (4, None));
         assert_eq!(kinds, ["Drag", "DragConstraints", "Target", "Style"]);
+    }
+
+    /// `commit` is called with `undefined` for no motion props (the prelude always passes the argument).
+    #[test]
+    fn commit_takes_undefined_for_no_motion_props() {
+        let rt = Runtime::new().expect("runtime");
+        let cx = Context::full(&rt).expect("context");
+        cx.with(|ctx| {
+            let f = Function::new(ctx.clone(), |motion: Opt<Option<Array<'_>>>| motion.0.flatten().is_some()).expect("fn");
+            ctx.globals().set("f", f).expect("global");
+            let got: Vec<bool> = ctx.eval("[f(), f(undefined), f(null), f([])]").expect("calls");
+            assert_eq!(got, [false, false, false, true]);
+        });
     }
 
     #[test]
