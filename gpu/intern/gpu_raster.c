@@ -2997,7 +2997,14 @@ static int gpu_text_glyphs(BuiRaster *r, TextRun *e, float x, float y, const flo
       if (!key || gw <= 0 || gh <= 0 || !bui_gpu_mask(r->gpu, key, g_text_gen, bits, gw, gh, &ax, &ay)) {
         continue;
       }
-      for (int k = 0; k < passes; k++) {
+      /* a FreeType bitmap is emboldened already (glyph_get): its passes are not drawn twice */
+      int atlas_passes = passes;
+#if TEXT_FT
+      if (g_faces[fs->face].ft && fs->ft_size) {
+        atlas_passes = 1;
+      }
+#endif
+      for (int k = 0; k < atlas_passes; k++) {
         const int px = (int)ox + gx + k, py = (int)base + gy;
         int x0, y0, x1, y1;
         if (!clip_box(r, (float)px, (float)py, (float)(px + gw), (float)(py + gh), &x0, &y0, &x1, &y1)) {
