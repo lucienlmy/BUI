@@ -19,6 +19,8 @@ impl Render for Page {
                     transition={{ duration: 1, ease: "none" }} />
                 <motion.div id="p" style="width: 40px; height: 20px" layout="position"
                     transition={{ duration: 1, ease: "none" }} />
+                <motion.div id="o" style="width: 40px; height: 20px" layout={false}
+                    transition={{ duration: 1, ease: "none" }} />
             </body>
         }
     }
@@ -48,12 +50,14 @@ fn layout_animation() {
             cx.notify();
         });
         cx.draw(w);
+        assert!((y(cx, w, "o") - 100.0).abs() < 0.6, "no layout animation: it is there at once: {}", y(cx, w, "o"));
         assert!((y(cx, w, "p") - 30.0).abs() < 0.6, "seen where it was: {}", y(cx, w, "p"));
         ms(cx, w, 500);
         assert!((y(cx, w, "p") - 55.0).abs() < 0.6, "halfway to 80: {}", y(cx, w, "p"));
         ms(cx, w, 600);
         assert!((y(cx, w, "p") - 80.0).abs() < 0.6, "there: {}", y(cx, w, "p"));
         assert!((y(cx, w, "m") - 60.0).abs() < 0.6, "the other too: {}", y(cx, w, "m"));
+        assert!((y(cx, w, "o") - 100.0).abs() < 0.6, "layout={{false}} jumps: {}", y(cx, w, "o"));
         assert!(!cx.window(w).unwrap().is_animating());
     });
 }

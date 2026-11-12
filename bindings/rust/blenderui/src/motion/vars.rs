@@ -391,9 +391,22 @@ pub(crate) struct TrackBuf {
     pub last: f32,
 }
 
+#[cfg(test)]
+mod track_tests {
+    use super::TrackBuf;
+
+    #[test]
+    fn no_keyframes_is_no_track() {
+        assert!(TrackBuf::read(&[]).is_none());
+    }
+}
+
 impl TrackBuf {
     /// `None` when a keyframe isn't a value this engine reads.
     pub(crate) fn read(keys: &[Value]) -> Option<Self> {
+        if keys.is_empty() {
+            return None; // no keyframe: nothing to move to (the engine would read one that isn't there)
+        }
         let mut reads: SmallVec<[Read; 4]> = SmallVec::new();
         for k in keys {
             reads.push(k.read()?);

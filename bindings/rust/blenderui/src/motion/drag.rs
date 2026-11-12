@@ -44,7 +44,7 @@ impl Elements {
         for &key in path.iter().rev() {
             let Some(&i) = self.els.keys.get(&key) else { continue };
             let s = self.els.at(i);
-            let Some(spec) = s.gest.as_ref().and_then(|g| g.drag) else { continue };
+            let Some(spec) = s.gest.as_ref().and_then(|g| g.drag).filter(|d| d.x || d.y) else { continue };
             let value = |id: i32| s.props.iter().find(|p| p.id == id).and_then(|p| p.cur).map_or(0.0, |r| r.v[0]);
             let from = (value(sys::BK_PROP_X), value(sys::BK_PROP_Y));
             let obj: *mut std::ffi::c_void = (&raw mut *s).cast();

@@ -192,14 +192,16 @@ impl From<Vars> for DragConstraints {
 /// and how big; `"position"`; `"size"`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Layout {
+    /// `layout={false}`: changes of its box don't animate.
+    Off,
     Both,
     Position,
     Size,
 }
 
 impl From<bool> for Layout {
-    fn from(_: bool) -> Self {
-        Self::Both
+    fn from(on: bool) -> Self {
+        if on { Self::Both } else { Self::Off }
     }
 }
 
@@ -429,7 +431,12 @@ impl Div {
     /// Animate changes of its box (Motion's `layout`): `true`, `"position"`, `"size"`.
     #[must_use]
     pub fn layout(mut self, l: impl Into<Layout>) -> Self {
-        self.motion_mut().set(Entry::Layout(l.into()));
+        let l = l.into();
+        let m = self.motion_mut();
+        m.0.retain(|e| !matches!(e, Entry::Layout(_)));
+        if l != Layout::Off {
+            m.0.push(Entry::Layout(l));
+        }
         self
     }
 

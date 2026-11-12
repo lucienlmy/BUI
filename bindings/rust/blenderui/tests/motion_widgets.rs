@@ -37,7 +37,8 @@ fn redraw_keeps_widgets() {
         let w = cx.open_window(opts, |_, cx| cx.new(|_| Page)).unwrap().id;
         cx.draw(w);
         let b = cx.element_bounds(w, "btn").expect("the button has a box");
-        let (x, y) = (b.origin.x as usize + 4, (b.origin.y + b.size.height / 2.0) as usize);
+        let scale = cx.window(w).map_or(1.0, |w| w.scale_factor()); // the pixels are device pixels
+        let (x, y) = (((b.origin.x + 4.0) * scale) as usize, ((b.origin.y + b.size.height / 2.0) * scale) as usize);
         assert!(lit(cx, w, x, y), "the button draws");
         cx.advance_clock(Duration::from_millis(300));
         assert!(lit(cx, w, x, y), "the button is still there after a redraw");

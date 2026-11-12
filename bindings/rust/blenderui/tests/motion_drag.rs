@@ -15,6 +15,8 @@ impl Render for Page {
                     drag="x" dragConstraints={{ left: 0, right: 100 }} dragMomentum={false} />
                 <motion.div id="b" style="position: absolute; left: 0; top: 100px; width: 50px; height: 50px; background: blue"
                     drag="x" />
+                <motion.div id="off" style="position: absolute; left: 100px; top: 200px; width: 50px; height: 50px; background: green"
+                    drag={false} />
             </body>
         }
     }
@@ -72,5 +74,15 @@ fn drag() {
             ms(cx, w, 16);
         }
         assert!(x(cx, w, "b") > at_release + 20.0, "carried on: {at_release} -> {}", x(cx, w, "b"));
+
+        // drag={false}: no drag at all
+        cx.simulate_press(w, 125.0, 225.0);
+        for k in 1..=4 {
+            ms(cx, w, 16);
+            cx.simulate_mouse_move(w, 125.0 + 20.0 * k as f32, 225.0);
+        }
+        cx.simulate_release(w, 205.0, 225.0);
+        ms(cx, w, 16);
+        assert_eq!(x(cx, w, "off"), 100.0, "drag={{false}} stays");
     });
 }
