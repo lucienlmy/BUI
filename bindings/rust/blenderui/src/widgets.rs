@@ -373,7 +373,7 @@ impl Widgets {
     }
 
     /// Place every widget at its laid-out bounds; free those not rendered.
-    pub(crate) fn place(&mut self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool, u32)>,
+    pub(crate) fn place(&mut self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool, u32, u32)>,
                         canvases: &[*mut sys::BKNode], scale: f32) {
         self.nodes.retain(|key, w| {
             if !w.seen || !at.contains_key(key) {
@@ -382,7 +382,7 @@ impl Widgets {
                 return false;
             }
             w.seen = false;
-            let (b, clip, visible, seg) = at[key];
+            let (b, clip, visible, seg, _) = at[key];
             // on the canvas its paint order puts it on (above what comes before, below what overlaps it)
             let seg = seg.min(canvases.len() as u32 - 1);
             if w.seg != seg {
@@ -403,6 +403,29 @@ impl Widgets {
             }
             true
         });
+        self.order(at, canvases);
+    }
+
+    /// The kit draws a canvas's widgets in the order they are its children, and the topmost child gets
+    /// the pointer: each canvas's widgets are put in paint order (`z-index` among widgets, later
+    /// siblings over earlier ones), not in the order they were made.
+    fn order(&self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool, u32, u32)>,
+             canvases: &[*mut sys::BKNode]) {
+        let mut want: Vec<(u32, *mut sys::BKNode)> = Vec::new();
+        for (k, &canvas) in canvases.iter().enumerate() {
+            want.clear();
+            want.extend(self.nodes.iter().filter(|(_, w)| w.seg as usize == k)
+                .map(|(key, w)| (at[key].4, w.node)));
+            want.sort_unstable_by_key(|&(rank, _)| rank);
+            for (i, &(_, node)) in want.iter().enumerate() {
+                // SAFETY: our canvas and widget nodes; moving a node within its parent
+                unsafe {
+                    if sys::BK_node_child(canvas, i as i32) != node {
+                        sys::BK_node_add(canvas, node, i as i32);
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn key_of(&self, node: *mut sys::BKNode) -> Option<Key> {

@@ -337,9 +337,9 @@ impl Painter {
         self.segments.len() + 1
     }
 
-    /// The segment each painted widget is in.
-    pub(crate) fn widget_segments(&self) -> HashMap<Key, u32> {
-        self.widgets.iter().map(|&(k, s, _)| (k, s)).collect()
+    /// Each painted widget's segment and its place in paint order.
+    pub(crate) fn widget_order(&self) -> HashMap<Key, (u32, u32)> {
+        self.widgets.iter().enumerate().map(|(rank, &(k, seg, _))| (k, (seg, rank as u32))).collect()
     }
 
     /// A widget is painted here (in paint order): it draws on top of its

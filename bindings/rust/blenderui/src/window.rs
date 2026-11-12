@@ -1286,10 +1286,11 @@ impl Window {
         let _rest = span(Phase::Widgets);
         let mut at = HashMap::new(); // empty (no allocation) without form widgets
         if frame.nodes.iter().any(|n| matches!(n.content, Content::Widget(_))) {
-            let segment = self.painter.widget_segments();
+            let order = self.painter.widget_order();
             for n in &frame.nodes {
                 if matches!(n.content, Content::Widget(_)) {
-                    at.insert(n.key, (n.bounds, n.clip, n.visible, segment.get(&n.key).copied().unwrap_or(0)));
+                    let (seg, rank) = order.get(&n.key).copied().unwrap_or((0, u32::MAX));
+                    at.insert(n.key, (n.bounds, n.clip, n.visible, seg, rank));
                 }
             }
         }
