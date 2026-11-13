@@ -409,8 +409,12 @@ fn motion_props(list: Option<Array<'_>>) -> rquickjs::Result<(Vec<Option<view::m
     let mut first = None;
     for pair in items.chunks_exact(2) {
         let which = pair[0].as_number().map_or(-1, |n| n as i32);
-        let value = motion_any(&pair[1], MOTION_DEPTH)?;
-        out.push(Some(match view::motion::MotionProp::parse(which, &value) {
+        // a value that can't be read (nested too deeply ...) skips that prop, not the batch
+        let parsed = match motion_any(&pair[1], MOTION_DEPTH) {
+            Ok(value) => view::motion::MotionProp::parse(which, &value),
+            Err(e) => Err(e.to_string().into()),
+        };
+        out.push(Some(match parsed {
             Ok(p) => p,
             Err(e) => {
                 first.get_or_insert(e);

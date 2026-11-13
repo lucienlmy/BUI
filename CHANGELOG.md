@@ -109,6 +109,7 @@ All notable changes to **blenderui** (BUI). The format follows
   reads the setting when it starts.
 
 ### Fixed
+- **Animation: review fixes.** Adding a timeline to itself or to one of its own children is refused instead of recursing forever; a nested `exiting_scope` restores the outer scope; a canvas item's clip and a line's thickness count in `hititems` hit testing; the JS view frees removed nodes once nothing is leaving; a Motion prop nested too deeply is skipped in the QuickJS host without dropping its commit.
 - **Rust: form widgets and overlays** (issue #35). An element painted after a `<TextArea>`, `<Button>` or other form widget
   (a dialog with `z-index`, a later sibling) now draws over it and takes the pointer there: widgets sit on the canvas
   their paint order puts them on, above what comes before and below what overlaps them. A widget partly cut by an
