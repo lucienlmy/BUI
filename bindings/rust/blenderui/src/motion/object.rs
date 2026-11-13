@@ -242,7 +242,7 @@ impl DynTarget {
 
 /// Motion's `variants`: names (interned once) to vars.
 pub fn variants(v: &Any) -> Result<Vec<(&'static str, DynVars)>, String> {
-    map("variants", v)?.iter().map(|(name, vars)| Ok((intern_str(name), DynVars::parse(map(name, vars)?)?))).collect()
+    map("variants", v)?.iter().map(|(name, vars)| Ok((intern_str(name)?, DynVars::parse(map(name, vars)?)?))).collect()
 }
 
 /// Spelling-insensitive: `repeatDelay`, `repeat_delay`, `repeat-delay`.
@@ -262,6 +262,12 @@ fn num(k: &str, v: &Any) -> Result<f64, String> {
         Any::Num(n) => Ok(*n),
         _ => Err(format!("`{k}` takes a number")),
     }
+}
+
+/// A time in seconds: a number (NaN is an error, a negative one is none).
+/// Switch to the C engine's own check when it exposes one.
+fn time(k: &str, v: &Any) -> Result<f64, String> {
+    super::tween::clamp_time(num(k, v)?).ok_or_else(|| format!("`{k}` takes a number of seconds, not NaN"))
 }
 
 fn flag(k: &str, v: &Any) -> Result<bool, String> {
@@ -315,9 +321,9 @@ fn option(slot: Slot, t: &mut Transition, eases: &mut Vec<(Slot, EaseSrc)>, even
           "restspeed" => rest_speed, "power" => power, "timeconstant" => time_constant, "min" => min, "max" => max,
           "bouncestiffness" => bounce_stiffness, "bouncedamping" => bounce_damping);
     match n.as_str() {
-        "duration" => t.duration = Some(num(k, v)?),
-        "delay" => t.delay = Some(num(k, v)?),
-        "repeatdelay" => t.repeat_delay = Some(num(k, v)?),
+        "duration" => t.duration = Some(time(k, v)?),
+        "delay" => t.delay = Some(time(k, v)?),
+        "repeatdelay" => t.repeat_delay = Some(time(k, v)?),
         "timescale" => t.time_scale = Some(num(k, v)?),
         // Motion's Infinity and GSAP's -1: forever
         "repeat" => t.repeat = Some(num(k, v).map(|r| if r.is_finite() && r >= 0.0 { r as i32 } else { -1 })?),
@@ -395,24 +401,68 @@ fn value(k: &str, v: &Any) -> Result<Value, String> {
     })
 }
 
-fn interned<T: Copy>(name: &str, table: &OnceLock<Mutex<HashMap<Box<str>, T>>>, make: impl FnOnce() -> T) -> T {
+/// How many distinct names each table keeps. A name interned stays for the
+/// run (the keys and variants that hold it are `&'static`, and nothing says
+/// when the last one goes), so the table is bounded instead: a program that
+/// makes up names without end is told so, not left to leak. CSS has a few
+/// hundred properties and an app a few dozen variants.
+const MAX_NAMES: usize = 4096;
+
+type Table<T> = OnceLock<Mutex<HashMap<Box<str>, T>>>;
+
+/// `name`'s entry in `table`, made by `make` the first time.
+fn interned<T: Copy>(name: &str, table: &Table<T>, make: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
     let mut m = table.get_or_init(Mutex::default).lock().unwrap_or_else(PoisonError::into_inner);
-    *m.entry(name.into()).or_insert_with(make)
+    if let Some(&t) = m.get(name) {
+        return Ok(t);
+    }
+    if m.len() >= MAX_NAMES {
+        return Err(format!("`{name}`: more than {MAX_NAMES} distinct names (property and variant names are fixed at build time, not made up)"));
+    }
+    let t = make()?;
+    m.insert(name.into(), t);
+    Ok(t)
 }
 
 /// A property key by its runtime name: one per distinct name, for good
-/// (like `vars!`'s statics).
+/// (like `vars!`'s statics), at most [`MAX_NAMES`].
 fn intern_key(name: &str) -> Result<&'static Key, String> {
-    static KEYS: OnceLock<Mutex<HashMap<Box<str>, &'static Key>>> = OnceLock::new();
-    let c = text(name, name)?;
-    Ok(interned(name, &KEYS, || {
-        let c: &'static CStr = Box::leak(c.into_boxed_c_str());
-        &*Box::leak(Box::new(Key::new(c)))
-    }))
+    static KEYS: Table<&'static Key> = OnceLock::new();
+    interned(name, &KEYS, || {
+        let c: &'static CStr = Box::leak(text(name, name)?.into_boxed_c_str());
+        Ok(&*Box::leak(Box::new(Key::new(c))))
+    })
 }
 
 /// A variant's name, interned (the element's variants take `&'static str`).
-fn intern_str(name: &str) -> &'static str {
-    static NAMES: OnceLock<Mutex<HashMap<Box<str>, &'static str>>> = OnceLock::new();
-    interned(name, &NAMES, || Box::leak(name.into()))
+fn intern_str(name: &str) -> Result<&'static str, String> {
+    static NAMES: Table<&'static str> = OnceLock::new();
+    interned(name, &NAMES, || Ok(Box::leak(name.into())))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn made_up_names_are_bounded() {
+        // a table of its own: the real ones are the process's
+        static TABLE: Table<&'static str> = OnceLock::new();
+        let made = (0..100_000).filter(|i| {
+            let name = format!("prop{i}");
+            interned(&name, &TABLE, || Ok(Box::leak(name.clone().into()))).is_ok()
+        }).count();
+        assert_eq!(made, MAX_NAMES, "no more names than the bound are kept (and leaked)");
+        assert!(interned("prop0", &TABLE, || Err("known".into())).is_ok(), "known names still answer");
+        assert!(interned("prop99999", &TABLE, || Err("new".into())).is_err(), "a name past the bound is an error");
+        assert!(intern_key("opacity").is_ok() && intern_str("hidden").is_ok());
+    }
+
+    #[test]
+    fn times_are_checked() {
+        assert_eq!(time("duration", &Any::Num(-1.0)), Ok(0.0));
+        assert!(time("duration", &Any::Num(f64::NAN)).is_err());
+        assert!(time("duration", &Any::Str("1".into())).is_err());
+        assert!(DynVars::parse(&[("delay".into(), Any::Num(f64::NAN))]).is_err());
+    }
 }

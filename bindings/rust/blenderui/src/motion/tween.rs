@@ -148,6 +148,31 @@ pub enum Targets {
     Selector(Cow<'static, str>),
 }
 
+impl Targets {
+    /// The elements `selector` names, or why it can't (combinators and
+    /// pseudo-classes aren't read; the `From` conversions don't check, and a
+    /// selector they can't read does nothing).
+    pub fn selector(selector: impl Into<Cow<'static, str>>) -> Result<Self, String> {
+        let s = selector.into();
+        Selector::check(&s)?;
+        Ok(Self::Selector(s))
+    }
+}
+
+/// `seconds` as the engine takes it: negative is none, NaN is no value.
+/// (One place for the Rust side; the C engine checks its own options too.)
+pub(crate) fn clamp_time(seconds: f64) -> Option<f64> {
+    (!seconds.is_nan()).then(|| seconds.max(0.0))
+}
+
+/// `t` with its times clamped (NaN ones unset: the defaults).
+pub(super) fn clean(mut t: Transition) -> Transition {
+    for x in [&mut t.duration, &mut t.delay, &mut t.repeat_delay] {
+        *x = x.and_then(clamp_time);
+    }
+    t
+}
+
 impl From<MotionValue> for Targets {
     fn from(v: MotionValue) -> Self {
         Self::Values(smallvec::smallvec![v])
@@ -191,6 +216,7 @@ pub(crate) fn at(seconds: f64) -> CString {
 /// Start `vars` on `targets`; `from`: GSAP's from(); `flavor`: whose defaults.
 fn start(targets: Targets, vars: Vars, from: bool, flavor: Flavor) -> Tween {
     let Vars { props, transition, events, .. } = vars;
+    let transition = clean(transition);
     match targets {
         // one value: one tween (of its first property)
         Targets::Values(v) if v.len() == 1 => {
@@ -217,16 +243,19 @@ fn start(targets: Targets, vars: Vars, from: bool, flavor: Flavor) -> Tween {
                         unsafe { sys::BK_timeline_add(tl.raw(), m.raw(), at(off).as_ptr()) };
                     }
                 }
-                Targets::Selector(sel) => queue(Pending {
-                    selector: Selector::parse(&sel),
-                    props: props.into_owned(),
-                    transition: each,
-                    from,
-                    flavor,
-                    hold: hold(&tl),
-                    timeline: tl.clone(),
-                    matched: 0,
-                }),
+                Targets::Selector(sel) => match Selector::parse(&sel) {
+                    Ok(selector) => queue(Pending {
+                        selector,
+                        props: props.into_owned(),
+                        transition: each,
+                        from,
+                        flavor,
+                        hold: hold(&tl),
+                        timeline: tl.clone(),
+                        matched: 0,
+                    }),
+                    Err(why) => super::pending::rejected(&why),
+                },
             }
             crate::hooks::wake_all();
             tl
@@ -309,7 +338,7 @@ impl std::ops::Deref for Timeline {
 
 impl Timeline {
     fn new(vars: &Vars) -> Self {
-        let v = vars.transition.engine(Flavor::Gsap, 0, 1, 0.0);
+        let v = clean(vars.transition.clone()).engine(Flavor::Gsap, 0, 1, 0.0);
         super::sync();
         // SAFETY: options read during the call.
         Self(Tween::from_raw(unsafe { sys::BK_timeline(&raw const v) }))

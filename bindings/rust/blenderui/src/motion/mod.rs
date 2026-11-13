@@ -18,7 +18,8 @@
 //! Every ease of GSAP, Motion, CSS and Blender is there by name; springs and
 //! inertia are solved in closed form. Objects of literals (`vars!{}`, rsx's
 //! `{{ }}`) are `static`s: their property ids and eases are resolved once per
-//! call site, and a frame allocates nothing.
+//! call site, and a frame of moving values (a redraw) allocates nothing and
+//! walks only the animated elements and what is under them.
 
 mod drag;
 mod ease;
@@ -41,6 +42,7 @@ pub use scroll::{Scroll, use_element_scroll, use_scroll};
 pub(crate) use scroll::update as update_scroll;
 pub use spec::{Drag, DragConstraints, InView, Layout, Spec, Target, Variants, When};
 pub(crate) use element::{Elements, Gestures};
+pub use pending::unmatched_selectors;
 pub(crate) use pending::{end_pending, pending};
 pub use object::{Any, DynTarget, DynVars, events, variants};
 pub use motion_value::{MotionValue, use_motion_value, use_spring, use_transform, use_velocity};
@@ -95,6 +97,8 @@ pub(crate) fn tick() {
         // forgotten before they're freed).
         unsafe { sys::BK_anim_tick(now()) };
     }
+    // the values that spring after others see where the engine moved them
+    motion_value::follow_sources();
 }
 
 /// A motion is about to start: the engine runs on this thread's clock (not
@@ -117,6 +121,15 @@ pub(crate) fn sync() {
 pub(crate) fn active() -> bool {
     // SAFETY: no arguments.
     USED.get() && unsafe { sys::BK_anim_active() != 0 }
+}
+
+/// How many slots and boxes this thread's redraws have visited (a redraw
+/// walks the animated elements and what is under them, not the whole frame):
+/// for tests and benchmarks.
+#[doc(hidden)]
+#[must_use]
+pub fn redraw_work() -> u64 {
+    element::redraw_work()
 }
 
 /// Reduced motion (Motion's `reducedMotion="always"`, the OS setting):
