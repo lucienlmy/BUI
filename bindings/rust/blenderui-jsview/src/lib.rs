@@ -354,10 +354,7 @@ impl JsView {
 
     /// Nodes whose exit animations ended go now (and the nodes JavaScript freed meanwhile).
     fn reap(&mut self) {
-        if self.leaving.is_empty() {
-            return;
-        }
-        let mut k = 0;
+        let mut k = 0; // (nothing leaving still drains `freed` below)
         while k < self.leaving.len() {
             let (parent, child, id) = self.leaving[k];
             if blenderui::motion::exit_done(id) {
