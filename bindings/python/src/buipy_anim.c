@@ -651,13 +651,7 @@ static int vars_read(const Opts *o, int flavor, int prop, int nkeys, float to, B
                BK_MOTION_TWEEN_KIND;
   }
   if (flavor == FLAVOR_MOTION) { /* Motion's getDefaultTransition, and its keyframes */
-    v->duration = nkeys > 1 ? 0.8 : 0.3;
-    if (!o->o[O_TYPE] && !o->o[O_DURATION] && nkeys <= 1) {
-      v->ease = BK_ease_bezier(0.25f, 0.1f, 0.35f, 1.0f);
-    }
-    else {
-      BK_ease_parse("easeInOut", &v->ease);
-    }
+    BK_motion_vars_motion_defaults(nkeys, o->o[O_TYPE] || o->o[O_DURATION], &v->duration, &v->ease);
   }
   double d;
   int got;
@@ -665,11 +659,7 @@ static int vars_read(const Opts *o, int flavor, int prop, int nkeys, float to, B
     return 0;
   }
   if (got) {
-    if (d < 0.0) {
-      PyErr_SetString(PyExc_ValueError, "'duration' can't be negative");
-      return 0;
-    }
-    v->duration = d;
+    v->duration = d; /* negative is 0, NaN an error (BK_motion_vars_check below) */
   }
   if (has_ease && !ease_read(o->o[O_EASE], &v->ease)) {
     return 0;
@@ -681,12 +671,14 @@ static int vars_read(const Opts *o, int flavor, int prop, int nkeys, float to, B
     }
   }
   if (o->o[O_REPEAT]) {
-    const long rep = PyLong_AsLong(o->o[O_REPEAT]);
-    if (rep == -1 && PyErr_Occurred()) {
+    int overflow;
+    const long long rep = PyLong_AsLongLongAndOverflow(o->o[O_REPEAT], &overflow);
+    if (rep == -1 && !overflow && PyErr_Occurred()) {
       PyErr_SetString(PyExc_TypeError, "'repeat' must be an int (-1: forever)");
       return 0;
     }
-    v->repeat = (int)rep;
+    /* any size: the engine's clamp, not a cast of ours */
+    v->repeat = BK_motion_clamp_repeat(overflow ? (double)overflow * 1e300 : (double)rep);
   }
   if (opt_num(o, O_REPEAT_DELAY, &v->repeat_delay) < 0 || !opt_flag(o, O_YOYO, &v->yoyo) ||
       !opt_flag(o, O_PAUSED, &v->paused) || !opt_flag(o, O_REVERSED, &v->reversed) ||
@@ -721,6 +713,10 @@ static int vars_read(const Opts *o, int flavor, int prop, int nkeys, float to, B
       }
       v->overwrite = t ? BK_OVERWRITE_AUTO : BK_OVERWRITE_NONE;
     }
+  }
+  if (!BK_motion_vars_check(v)) {
+    PyErr_SetString(PyExc_ValueError, "'duration', 'delay', 'repeat_delay' and 'time_scale' must be finite numbers");
+    return 0;
   }
   v->kind = kind;
   if (kind == BK_MOTION_SPRING_KIND) {
@@ -785,6 +781,10 @@ static int stagger_read(const Opts *o, BKStagger *s)
     else if (strcmp(name, "grid") == 0) {
       float g[2];
       if (!floats_read(x, g, 2, "stagger 'grid': [rows, columns]")) {
+        return -1;
+      }
+      if (!(g[0] >= -1.0f && g[0] <= 65536.0f && g[1] >= -1.0f && g[1] <= 65536.0f)) { /* NaN too */
+        PyErr_SetString(PyExc_ValueError, "stagger 'grid': rows and columns are whole numbers up to 65536");
         return -1;
       }
       s->grid_rows = (int)g[0];
@@ -1319,6 +1319,15 @@ QUERY(total_duration, BK_motion_total_duration, PyFloat_FromDouble)
 QUERY(is_active, BK_motion_is_active, PyBool_FromLong)
 #undef QUERY
 
+/* the engine's setters return 0 for a NaN or infinity: that is a ValueError */
+static int finite_or_raise(int ok)
+{
+  if (!ok) {
+    PyErr_SetString(PyExc_ValueError, "a time, progress or scale must be a finite number");
+  }
+  return ok;
+}
+
 /* GSAP's getter / setter pairs: no argument reads, one sets (and returns the motion) */
 #define ACCESSOR(name, get, set, check) \
   static PyObject *motion_##name(MotionObject *self, PyObject *const *args, Py_ssize_t n) \
@@ -1332,8 +1341,7 @@ QUERY(is_active, BK_motion_is_active, PyBool_FromLong)
       return NULL; \
     } \
     check; \
-    set(self->m, v); \
-    return chain(self); \
+    return finite_or_raise(set(self->m, v)) ? chain(self) : NULL; \
   }
 ACCESSOR(progress, BK_motion_progress, BK_motion_set_progress, (void)0)
 ACCESSOR(time, BK_motion_time, BK_motion_seek, (void)0)
@@ -1361,8 +1369,7 @@ static PyObject *motion_total_progress(MotionObject *self, PyObject *const *args
     PyErr_SetString(PyExc_TypeError, "total_progress(): one number, or none to read it");
     return NULL;
   }
-  BK_motion_set_total_progress(self->m, v);
-  return chain(self);
+  return finite_or_raise(BK_motion_set_total_progress(self->m, v)) ? chain(self) : NULL;
 }
 
 static PyObject *motion_seek(MotionObject *self, PyObject *arg)
@@ -1371,8 +1378,7 @@ static PyObject *motion_seek(MotionObject *self, PyObject *arg)
   if (t == -1.0 && PyErr_Occurred()) {
     return NULL;
   }
-  BK_motion_seek(self->m, t);
-  return chain(self);
+  return finite_or_raise(BK_motion_seek(self->m, t)) ? chain(self) : NULL;
 }
 
 /* paused() / reversed(): read; paused(True) pauses, reversed(True) plays backwards */
@@ -1423,6 +1429,19 @@ static const char *position_read(PyObject *pos, char buf[64])
   return buf;
 }
 
+/* the engine answers -1 for a position that isn't GSAP's (or names a label that isn't there) */
+static int position_ok(double at, PyObject *pos)
+{
+  if (at < 0.0) {
+    PyErr_Format(PyExc_ValueError,
+                 "bad position %R: a number, \"+=n\", \"-=n\", \"<\", \">\", \"<n\", \">n\", an existing label "
+                 "(with \"+=n\" / \"-=n\"), or \"n%%\"",
+                 pos ? pos : Py_None);
+    return 0;
+  }
+  return 1;
+}
+
 static int is_timeline(MotionObject *self)
 {
   if (!self->timeline) {
@@ -1449,8 +1468,7 @@ static PyObject *motion_add(MotionObject *self, PyObject *args, PyObject *kw)
     PyErr_SetString(PyExc_ValueError, "a timeline can't hold itself");
     return NULL;
   }
-  BK_timeline_add(self->m, ((MotionObject *)child)->m, p);
-  return chain(self);
+  return position_ok(BK_timeline_add(self->m, ((MotionObject *)child)->m, p), pos) ? chain(self) : NULL;
 }
 
 static PyObject *motion_add_label(MotionObject *self, PyObject *args, PyObject *kw)
@@ -1466,8 +1484,7 @@ static PyObject *motion_add_label(MotionObject *self, PyObject *args, PyObject *
   if (!p) {
     return NULL;
   }
-  BK_timeline_label(self->m, name, p);
-  return Py_NewRef(self);
+  return position_ok(BK_timeline_label(self->m, name, p), pos) ? Py_NewRef(self) : NULL;
 }
 
 static PyObject *motion_label_time(MotionObject *self, PyObject *arg)
@@ -1527,8 +1544,8 @@ static PyObject *motion_call(MotionObject *self, PyObject *args, PyObject *kw)
   if (!data) {
     return NULL;
   }
-  BK_timeline_call(self->m, call_dispatch, data, call_free, p); /* the call owns `data` */
-  return chain(self);
+  /* the call owns `data` (freed when the position is bad) */
+  return position_ok(BK_timeline_call(self->m, call_dispatch, data, call_free, p), pos) ? chain(self) : NULL;
 }
 
 static PyMethodDef motion_methods[] = {

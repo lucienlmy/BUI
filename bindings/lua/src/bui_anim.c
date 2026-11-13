@@ -393,7 +393,7 @@ static void read_var(lua_State *L, Parse *p, int id, const char *key, int allow)
       break;
     case V_REPEAT: {
       const double r = num_opt(L, p, key);
-      v->repeat = (r < 0.0 || r >= 1e9) ? -1 : (int)r; /* -1, math.huge: forever */
+      v->repeat = BK_motion_clamp_repeat(r); /* -1, math.huge: forever; the engine's cap */
       break;
     }
     case V_REPEAT_DELAY:
@@ -714,18 +714,18 @@ static void parse_finish(lua_State *L, Parse *p)
     maxkeys = p->tracks[i].nkeys > maxkeys ? p->tracks[i].nkeys : maxkeys;
   }
   if (p->flavor == FLAVOR_MOTION) { /* Motion's defaults (getDefaultTransition) */
+    double duration;
+    BKEase ease;
+    BK_motion_vars_motion_defaults(maxkeys, has(t, V_TYPE) || has(t, V_DURATION), &duration, &ease);
     if (!has(t, V_DURATION)) {
-      v->duration = maxkeys > 1 ? 0.8 : 0.3;
+      v->duration = duration;
     }
     if (!has(t, V_EASE)) {
-      const int plain = !has(t, V_TYPE) && !has(t, V_DURATION) && maxkeys <= 1;
-      if (plain) {
-        v->ease = BK_ease_bezier(0.25f, 0.1f, 0.35f, 1.0f);
-      }
-      else {
-        BK_ease_parse("easeInOut", &v->ease);
-      }
+      v->ease = ease;
     }
+  }
+  if (!BK_motion_vars_check(v)) { /* negative is 0; NaN and infinity are errors */
+    luaL_error(L, "%s: duration, delay, repeatDelay and timeScale must be finite numbers", p->fn);
   }
   for (int i = 0; i < p->ntracks; i++) {
     BKTrack *tr = &p->tracks[i];
@@ -1018,9 +1018,17 @@ CONTROL(l_complete, BK_motion_complete)
 CONTROL(l_kill, BK_motion_kill)
 #undef CONTROL
 
+/* the engine's setters return 0 for a NaN or infinity */
+static void check_finite(lua_State *L, int ok)
+{
+  if (!ok) {
+    luaL_error(L, "a time, progress or scale must be a finite number");
+  }
+}
+
 static int l_seek(lua_State *L)
 {
-  BK_motion_seek(check_motion(L, 1), luaL_checknumber(L, 2));
+  check_finite(L, BK_motion_seek(check_motion(L, 1), luaL_checknumber(L, 2)));
   lua_settop(L, 1);
   return 1;
 }
@@ -1034,7 +1042,7 @@ static int l_seek(lua_State *L)
       lua_pushnumber(L, get(m)); \
       return 1; \
     } \
-    set(m, luaL_checknumber(L, 2)); \
+    check_finite(L, set(m, luaL_checknumber(L, 2))); \
     lua_settop(L, 1); \
     return 1; \
   }
@@ -1214,6 +1222,15 @@ static const char *read_position(lua_State *L, int idx, char *buf, size_t size)
   return luaL_checkstring(L, idx);
 }
 
+/* the engine answers -1 for a position that isn't GSAP's (or names a label that isn't there) */
+static void check_position(lua_State *L, double at, const char *fn, const char *pos)
+{
+  if (at < 0.0) {
+    luaL_error(L, "%s: bad position '%s' (a number, \"+=n\", \"-=n\", \"<\", \">\", \"<n\", \">n\", an existing "
+                  "label with \"+=n\" or \"-=n\", or \"n%%\")", fn, pos);
+  }
+}
+
 /* gsap.timeline({defaults = {...}, repeat_, yoyo, paused, onComplete, ...}) */
 static int l_gsap_timeline(lua_State *L)
 {
@@ -1249,8 +1266,9 @@ static int timeline_op(lua_State *L, int op)
   lua_pushvalue(L, 1);
   const int self = lua_gettop(L);
   BKMotion *m = gsap_motion(L, op, 2, tl->has_defaults ? &tl->defaults : NULL, 1);
-  BK_timeline_add(tl->m, m, pos);
+  const double at = BK_timeline_add(tl->m, m, pos);
   BK_motion_release(m); /* the timeline holds it */
+  check_position(L, at, "timeline", pos);
   lua_settop(L, self);
   return 1;
 }
@@ -1269,7 +1287,8 @@ static int l_tl_add(lua_State *L)
     return luaL_error(L, "timeline:add: a timeline can't hold itself");
   }
   char buf[32];
-  BK_timeline_add(tl->m, child, read_position(L, 3, buf, sizeof(buf)));
+  const char *pos = read_position(L, 3, buf, sizeof(buf));
+  check_position(L, BK_timeline_add(tl->m, child, pos), "timeline:add", pos);
   lua_settop(L, 1);
   return 1;
 }
@@ -1279,7 +1298,8 @@ static int l_tl_add_label(lua_State *L)
 {
   LTimeline *tl = check_timeline(L, 1);
   char buf[32];
-  BK_timeline_label(tl->m, luaL_checkstring(L, 2), read_position(L, 3, buf, sizeof(buf)));
+  const char *pos = read_position(L, 3, buf, sizeof(buf));
+  check_position(L, BK_timeline_label(tl->m, luaL_checkstring(L, 2), pos), "timeline:addLabel", pos);
   lua_settop(L, 1);
   return 1;
 }
@@ -1298,7 +1318,7 @@ static void add_call(lua_State *L, BKMotion *tl, int fn, int params, const char 
     lua_pushvalue(L, params);
     c->args = luaL_ref(L, LUA_REGISTRYINDEX);
   }
-  BK_timeline_call(tl, on_call, c, calls_free, pos);
+  check_position(L, BK_timeline_call(tl, on_call, c, calls_free, pos), "timeline:call", pos); /* it owns `c` */
 }
 
 /* tl:call(fn, position) or tl:call(fn, {params}, position) (GSAP's order) */

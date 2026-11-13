@@ -14,6 +14,8 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
+#include <ctype.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -54,8 +56,11 @@ struct BKMotion {
   /* -- every frame */
   bool timeline : 1, call : 1, paused : 1, reversed : 1, yoyo : 1, rendered : 1, started : 1, killed : 1,
       resolved : 1, olinked : 1,
-      open : 1; /* a timeline with a child that repeats for ever: it plays until killed */
+      open : 1,       /* a timeline with a child that repeats for ever: it plays until killed */
+      rendering : 1;  /* a timeline rendering its children (a callback can't render it again) */
   int refs;
+  unsigned stamp;     /* the pass of the timeline render that last rendered it (see render_timeline) */
+  unsigned edits;     /* a timeline: counts its children's coming and going */
   int run;      /* in the global timeline: its index in G.run */
   int repeat;
   int kind;
@@ -124,7 +129,9 @@ static struct {
   double (*clock)(void); /* the kit's clock (BK_anim_set_clock), or NULL */
   struct ObjEntry *objs; /* tweens by target; open addressing like the drivers */
   int nobjs, cap_objs;
-} G = {NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL, NULL, 0, 0, NULL, NULL, 0, 0};
+  unsigned pass;  /* timeline renders so far (they stamp the children they rendered) */
+  bool in_tick;   /* BK_anim_tick is running: a callback's motion doesn't tick the clock again */
+} G ={NULL, 0, 0, 0, false, 1.0, 0.5, 0.033, false, false, NULL, 0, 0, NULL, NULL, NULL, 0, 0, NULL, NULL, 0, 0};
 
 /* a motion runs: the host draws frames again */
 static void wake(const BKMotion *m)
@@ -340,15 +347,58 @@ static void set_dur(BKMotion *m, double dur)
   m->inv_cycle = dur + m->rdelay > 0.0 ? 1.0 / (dur + m->rdelay) : 0.0;
 }
 
+/* What comes in from outside (BUI_anim.h, BK_motion_vars_check): a time is 0 .. MAX_TIME, a
+ * delay -MAX_TIME .. MAX_TIME, and NaN is 0 (the bindings reject it before it gets here). */
+static double sane_time(double t)
+{
+  return t > 0.0 ? BK_MIN(t, BK_MOTION_MAX_TIME) : 0.0;
+}
+
+static double sane_delay(double d)
+{
+  return d == d ? BK_CLAMP(d, -BK_MOTION_MAX_TIME, BK_MOTION_MAX_TIME) : 0.0;
+}
+
+int BK_motion_clamp_repeat(double repeat)
+{
+  if (repeat != repeat) {
+    return 0;
+  }
+  return repeat < 0.0 || repeat == (double)INFINITY ? -1 : (int)BK_MIN(repeat, (double)BK_MOTION_MAX_REPEAT);
+}
+
+int BK_motion_vars_check(BKMotionVars *v)
+{
+  const bool ok = isfinite(v->duration) && isfinite(v->delay) && isfinite(v->repeat_delay) &&
+                  isfinite(v->time_scale);
+  v->duration = sane_time(v->duration);
+  v->delay = sane_delay(v->delay);
+  v->repeat_delay = sane_time(v->repeat_delay);
+  v->repeat = BK_motion_clamp_repeat(v->repeat);
+  v->time_scale = v->time_scale > 0.0 && v->time_scale < 1e300 ? v->time_scale : 1.0;
+  return ok;
+}
+
+void BK_motion_vars_motion_defaults(int nkeys, int custom, double *r_duration, BKEase *r_ease)
+{
+  *r_duration = nkeys > 1 ? 0.8 : 0.3;
+  if (!custom && nkeys <= 1) {
+    *r_ease = BK_ease_bezier(0.25f, 0.1f, 0.35f, 1.0f);
+  }
+  else {
+    BK_ease_parse("easeInOut", r_ease);
+  }
+}
+
 /* a motion with `extra` zeroed bytes after it (a tween's tracks and keyframes: one block) */
 static BKMotion *motion_alloc(const BKMotionVars *v, size_t extra)
 {
   BKMotion *m = (BKMotion *)MEM_callocN(sizeof(BKMotion) + extra, "BKMotion");
   m->refs = 1;
-  m->ts = v && v->time_scale > 0.0 ? v->time_scale : 1.0;
-  m->repeat = v ? v->repeat : 0;
-  m->rdelay = v ? BK_MAX(0.0, v->repeat_delay) : 0.0;
-  set_dur(m, v ? BK_MAX(0.0, v->duration) : 0.0);
+  m->ts = v && v->time_scale > 0.0 && v->time_scale < 1e300 ? v->time_scale : 1.0;
+  m->repeat = v ? BK_motion_clamp_repeat(v->repeat) : 0;
+  m->rdelay = v ? sane_time(v->repeat_delay) : 0.0;
+  set_dur(m, v ? sane_time(v->duration) : 0.0);
   m->yoyo = v && v->yoyo;
   m->paused = v && v->paused;
   m->reversed = v && v->reversed;
@@ -428,10 +478,14 @@ double BK_motion_total_duration(const BKMotion *m)
   if (!m) {
     return 0.0;
   }
-  if (m->repeat < 0 || m->open) {
+  if (m->open) {
     return NEVER;
   }
-  return m->dur * (m->repeat + 1) + m->rdelay * m->repeat;
+  if (m->repeat < 0) { /* for ever, unless an iteration takes no time: that is one evaluation */
+    return m->dur + m->rdelay > 0.0 ? NEVER : 0.0;
+  }
+  /* doubles: durations and repeats are capped (BK_MOTION_MAX_*), their product can't overflow */
+  return m->dur * ((double)m->repeat + 1.0) + m->rdelay * (double)m->repeat;
 }
 
 double BK_motion_duration(const BKMotion *m)
@@ -645,10 +699,12 @@ static double iteration_time(const BKMotion *m, double T, int *r_iter)
     return T;
   }
   const double cycle = m->dur + m->rdelay;
-  /* T >= 0: the cast is floor, without a call; times the inverse: no division */
-  int iter = cycle > 0.0 ? (int)(T * m->inv_cycle) : 0;
-  if (m->repeat >= 0 && iter > m->repeat) {
-    iter = m->repeat;
+  /* T >= 0: the cast is floor, without a call; times the inverse: no division. Clamped before
+   * the cast (a tiny cycle makes a huge count), and NaN is the first iteration. */
+  int iter = 0;
+  if (cycle > 0.0) {
+    const double n = T * m->inv_cycle, last = m->repeat >= 0 ? (double)m->repeat : (double)INT_MAX;
+    iter = n < last ? (int)n : (n >= last ? (int)last : 0);
   }
   double it = T - iter * cycle;
   it = BK_MIN(it, m->dur);
@@ -686,23 +742,51 @@ static void render_tween(BKMotion *m, double it)
   }
 }
 
+/* one child of a timeline at the timeline's time `it` (it held while its callbacks run) */
+static void render_child(const BKMotion *tl, BKMotion *c, double it, double prev_it)
+{
+  BK_motion_retain(c);
+  if (c->call) { /* a callback fires when the playhead crosses it, either way */
+    const double at = start_in_parent(c);
+    if ((prev_it < at && it >= at) || (prev_it > at && it <= at) || (!tl->rendered && it >= at && at == 0.0)) {
+      c->fn(c, BK_EV_MOTION_COMPLETE, c->fn_data);
+    }
+  }
+  else {
+    render(c, local_at(c, it), false);
+  }
+  BK_motion_release(c);
+}
+
+/* The children in order. A callback may kill, add or move children (even the timeline): the
+ * timeline counts such edits, and when it did, the walk goes on with the first child not yet
+ * rendered in this pass (the pass number is stamped on each) instead of the `next` it took
+ * before the callback, which may be gone. The timeline can't be rendered again from one of
+ * its own callbacks (the walk in progress would run on stale times); a seek there takes
+ * effect on the next frame. */
 static void render_timeline(BKMotion *tl, double it, double prev_it)
 {
-  for (BKMotion *c = tl->first, *next; c; c = next) {
-    next = c->next;
-    if (c->call) { /* a callback fires when the playhead crosses it, either way */
-      const double at = start_in_parent(c);
-      if ((prev_it < at && it >= at) || (prev_it > at && it <= at) || (!tl->rendered && it >= at && at == 0.0)) {
-        BK_motion_retain(c);
-        c->fn(c, BK_EV_MOTION_COMPLETE, c->fn_data);
-        BK_motion_release(c);
-      }
-      continue;
-    }
-    BK_motion_retain(c);
-    render(c, local_at(c, it), false);
-    BK_motion_release(c);
+  if (tl->rendering) {
+    return;
   }
+  tl->rendering = true;
+  BK_motion_retain(tl); /* a callback can kill it */
+  const unsigned pass = ++G.pass;
+  for (BKMotion *c = tl->first; c;) {
+    BKMotion *next = c->next;
+    const unsigned edits = tl->edits;
+    c->stamp = pass;
+    render_child(tl, c, it, prev_it);
+    if (tl->edits != edits) {
+      next = tl->first;
+      while (next && next->stamp == pass) {
+        next = next->next;
+      }
+    }
+    c = next;
+  }
+  tl->rendering = false;
+  BK_motion_release(tl);
 }
 
 /* render `m` at total time `T` (clamped); `force` renders even if the time didn't change */
@@ -798,6 +882,7 @@ static void link_child(BKMotion *tl, BKMotion *c)
   while (after && start_in_parent(after) > s) {
     after = after->prev;
   }
+  tl->edits++;
   c->parent = tl;
   c->prev = after;
   c->next = after ? after->next : tl->first;
@@ -844,8 +929,9 @@ static void detach(BKMotion *m)
   if (p->recent == m) {
     p->recent = NULL;
   }
+  p->edits++;
   m->parent = m->prev = m->next = NULL;
-  if (p->timeline && p != G.root) {
+  if (!p->killed) { /* a timeline being killed measures once, after its children */
     timeline_measure(p);
   }
   BK_motion_release(m); /* the parent's hold */
@@ -891,8 +977,9 @@ static void place(BKMotion *tl, BKMotion *m, double at)
 
 static void start_now(BKMotion *m, double delay)
 {
-  /* nothing ran: frames didn't tick the clock, so it's behind; a motion starts now */
-  if (G.clock && !G.host_clock && !BK_anim_active()) {
+  /* nothing ran: frames didn't tick the clock, so it's behind; a motion starts now (not from a
+   * callback of a tick: that one is the clock) */
+  if (G.clock && !G.host_clock && !G.in_tick && !BK_anim_active()) {
     BK_anim_tick(G.clock());
   }
   place(root(), m, G.root_time + delay);
@@ -921,68 +1008,125 @@ static double label_add(BKMotion *tl, const char *name, double at)
   return at;
 }
 
-/* GSAP's position parameter */
-static double position(BKMotion *tl, const char *pos)
+/* A plain decimal number at `s` (a sign, digits, a point, an exponent): strtod alone also
+ * takes "nan", "inf" and hex. `r_end` is after it. */
+static bool scan_number(const char *s, double *r_value, const char **r_end)
+{
+  const char *p = s + (*s == '+' || *s == '-');
+  size_t digits = 0;
+  for (; isdigit((unsigned char)*p); p++, digits++) {
+  }
+  if (*p == '.') {
+    for (p++; isdigit((unsigned char)*p); p++, digits++) {
+    }
+  }
+  if (!digits) {
+    return false;
+  }
+  if (*p == 'e' || *p == 'E') {
+    const char *q = p + 1 + (p[1] == '+' || p[1] == '-');
+    if (isdigit((unsigned char)*q)) {
+      for (; isdigit((unsigned char)*q); q++) {
+      }
+      p = q;
+    }
+  }
+  char buf[64];
+  const size_t len = (size_t)(p - s);
+  if (len >= sizeof(buf)) {
+    return false;
+  }
+  memcpy(buf, s, len);
+  buf[len] = '\0';
+  *r_value = strtod(buf, NULL);
+  *r_end = p;
+  return isfinite(*r_value);
+}
+
+/* The offset that ends a position, all of `s`: "+=n" / "-=n" (`bare`: or "n", "+n", "-n"),
+ * with a "%" after n for a share of the last added's duration. */
+static bool read_offset(const char *s, bool bare, double *r_amount, bool *r_percent)
+{
+  double sign = 1.0, n;
+  const char *end;
+  if ((s[0] == '+' || s[0] == '-') && s[1] == '=') {
+    sign = s[0] == '-' ? -1.0 : 1.0;
+    s += 2;
+  }
+  else if (!bare) {
+    return false;
+  }
+  if (!scan_number(s, &n, &end)) {
+    return false;
+  }
+  *r_percent = *end == '%';
+  end += *r_percent;
+  *r_amount = sign * n;
+  return !*end;
+}
+
+/* GSAP's position parameter, all of it and nothing else: a number, "+=n", "-=n", "<", ">",
+ * "<n", ">n" (n may be signed), "label", "label+=n", "label-=n", "n%" (of the timeline), and
+ * a "%" after any n (of the last added). "" is the end. -1 when it isn't one of them, or the
+ * label doesn't exist. */
+static double position(const BKMotion *tl, const char *pos)
 {
   const double end = tl->dur;
   if (!pos || !*pos) {
     return end;
   }
-  char *rest;
-  const double num = strtod(pos, &rest);
-  if (rest != pos && !*rest) {
-    return BK_MAX(0.0, num); /* an absolute time */
+  double n;
+  const char *e;
+  if (scan_number(pos, &n, &e) && (!*e || (*e == '%' && !e[1]))) {
+    return sane_time(*e ? n / 100.0 * end : n); /* an absolute time, or a share of the timeline */
   }
   const BKMotion *r = tl->recent;
   const double rs = r ? start_in_parent(r) : end;
   const double rtotal = r ? BK_motion_total_duration(r) : 0.0;
-  const double re = r ? rs + (rtotal >= NEVER ? 0.0 : rtotal / r->ts) : end;
+  const double rdur = r ? (rtotal >= NEVER ? r->dur : rtotal) / r->ts : 0.0;
   double base = end;
   const char *off = pos;
   if (pos[0] == '<' || pos[0] == '>') {
-    base = pos[0] == '<' ? rs : re;
+    base = pos[0] == '<' ? rs : rs + (r ? rdur : 0.0);
     off = pos + 1;
   }
   else if ((pos[0] == '+' || pos[0] == '-') && pos[1] == '=') {
     off = pos;
   }
-  else { /* a label, maybe with "+=1" / "-=1" after it */
-    const char *op = strstr(pos, "+=");
-    if (!op) {
-      op = strstr(pos, "-=");
+  else { /* a label that exists, maybe with "+=1" / "-=1" after it */
+    const char *op = pos;
+    while (*op && !((*op == '+' || *op == '-') && op[1] == '=')) {
+      op++;
     }
     char name[64];
-    const size_t len = op ? (size_t)(op - pos) : strlen(pos);
+    const size_t len = (size_t)(op - pos);
     if (len >= sizeof(name)) {
-      return end;
+      return -1.0;
     }
     memcpy(name, pos, len);
     name[len] = '\0';
-    double lt = BK_timeline_label_time(tl, name);
-    if (lt < 0.0) {
-      lt = label_add(tl, name, end); /* GSAP: an unknown label is made at the end */
+    base = BK_timeline_label_time(tl, name);
+    if (base < 0.0) {
+      return -1.0;
     }
-    base = lt;
-    off = op ? op : "";
+    off = op;
   }
   if (!*off) {
-    return BK_MAX(0.0, base);
+    return sane_time(base);
   }
-  double sign = 1.0;
-  if ((off[0] == '+' || off[0] == '-') && off[1] == '=') {
-    sign = off[0] == '-' ? -1.0 : 1.0;
-    off += 2;
+  double amount;
+  bool percent;
+  if (!read_offset(off, pos[0] == '<' || pos[0] == '>', &amount, &percent)) {
+    return -1.0;
   }
-  const double v = strtod(off, &rest);
-  const double amount = *rest == '%' ? v / 100.0 * (r ? rtotal / r->ts : 0.0) : v;
-  return BK_MAX(0.0, base + sign * amount);
+  return sane_time(base + (percent ? amount / 100.0 * rdur : amount));
 }
 
 static void ensure_placed(BKMotion *m);
 
 double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *pos)
 {
-  if (!tl || !child || !tl->timeline) {
+  if (!tl || !child || !tl->timeline || tl->killed || child->killed) { /* killed stays killed */
     return 0.0;
   }
   /* a timeline can't be its own ancestor: it would recurse for ever */
@@ -992,6 +1136,9 @@ double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *pos)
     }
   }
   const double at = position(tl, pos);
+  if (at < 0.0) {
+    return -1.0;
+  }
   place(tl, child, at);
   /* GSAP: a timeline that had finished (or was empty) plays on with what is added to it */
   if (!tl->parent && tl != G.root && !tl->paused && !tl->killed) {
@@ -1002,7 +1149,11 @@ double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *pos)
 
 double BK_timeline_label(BKMotion *tl, const char *name, const char *pos)
 {
-  return tl && name ? label_add(tl, name, position(tl, pos)) : 0.0;
+  if (!tl || !name || !tl->timeline) {
+    return 0.0;
+  }
+  const double at = position(tl, pos);
+  return at < 0.0 ? -1.0 : label_add(tl, name, at);
 }
 
 double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, void (*free_data)(void *data),
@@ -1043,12 +1194,60 @@ BKMotionVars BK_motion_vars_default(void)
   return v;
 }
 
+/* a track the engine can read: values for every key, finite */
+static bool track_valid(const BKTrack *in)
+{
+  if (!in->values || in->nkeys < 1 || in->nkeys > 65536 || in->n < 1 || in->n > 4) {
+    return false;
+  }
+  for (int i = 0; i < in->nkeys * in->n; i++) {
+    if (!isfinite(in->values[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/* a spring or inertia from outside: NaN and infinity are the defaults */
+static void physics_sane(BKMotionVars *v)
+{
+  const BKSpring ds = BK_spring_default();
+  BKSpring *s = &v->spring;
+  s->stiffness = finite_or(s->stiffness, ds.stiffness);
+  s->damping = finite_or(s->damping, ds.damping);
+  s->mass = finite_or(s->mass, ds.mass);
+  s->velocity = finite_or(s->velocity, 0.0f);
+  s->rest_delta = finite_or(s->rest_delta, 0.0f);
+  s->rest_speed = finite_or(s->rest_speed, 0.0f);
+  const BKInertia di = BK_inertia_default(0.0f);
+  BKInertia *in = &v->inertia;
+  in->velocity = finite_or(in->velocity, 0.0f);
+  in->power = finite_or(in->power, di.power);
+  in->time_constant = finite_or(in->time_constant, di.time_constant);
+  in->min = finite_or(in->min, di.min);
+  in->max = finite_or(in->max, di.max);
+  in->bounce_stiffness = finite_or(in->bounce_stiffness, di.bounce_stiffness);
+  in->bounce_damping = finite_or(in->bounce_damping, di.bounce_damping);
+  in->rest_delta = finite_or(in->rest_delta, di.rest_delta);
+}
+
 BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int ntracks,
                    const BKMotionVars *vars)
 {
-  const BKMotionVars dv = BK_motion_vars_default();
-  const BKMotionVars *v = vars ? vars : &dv;
+  BKMotionVars sane = vars ? *vars : BK_motion_vars_default();
+  const BKMotionVars *v = &sane;
+  physics_sane(&sane);
   ntracks = BK_MAX(0, ntracks);
+  bool valid = ntracks == 0 || tracks;
+  for (int i = 0; valid && i < ntracks; i++) {
+    valid = track_valid(&tracks[i]);
+  }
+  if (!valid) { /* the boundary: nothing past here reads a track that isn't there */
+    if (v->free_data && v->data) {
+      v->free_data(v->data);
+    }
+    return NULL;
+  }
   /* the tracks' sizes: keys (gsap.to: from where it is now; gsap.from: then to where it is) */
   size_t nfloat = 0, nease = 0, nbyte = 0;
   for (int i = 0; i < ntracks; i++) {
@@ -1137,12 +1336,13 @@ BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int
       t->ph = (BKPhysics *)(block + off_phys) + i;
     }
   }
-  set_dur(m, v->kind == BK_MOTION_TWEEN_KIND ? BK_MAX(0.0, v->duration) : 0.0);
+  set_dur(m, v->kind == BK_MOTION_TWEEN_KIND ? sane_time(v->duration) : 0.0);
   if (v->kind != BK_MOTION_TWEEN_KIND) {
     resolve(m); /* physics: the duration comes from the distance */
   }
-  start_now(m, v->delay); /* a negative delay starts it partway (Motion) */
-  if (v->immediate || (m->dur == 0.0 && v->delay <= 0.0)) {
+  const double delay = sane_delay(v->delay);
+  start_now(m, delay); /* a negative delay starts it partway (Motion) */
+  if (v->immediate || (m->dur == 0.0 && delay <= 0.0)) {
     render(m, local_at(m, G.root_time), true);
   }
   return m;
@@ -1153,7 +1353,7 @@ BKMotion *BK_timeline(const BKMotionVars *vars)
   BKMotion *m = motion_new(vars);
   m->timeline = true;
   set_dur(m, 0.0);
-  start_now(m, vars ? BK_MAX(0.0, vars->delay) : 0.0);
+  start_now(m, vars ? sane_time(vars->delay) : 0.0);
   return m;
 }
 
@@ -1163,10 +1363,11 @@ BKMotion *BK_timeline(const BKMotionVars *vars)
 /** \name Controls
  * \{ */
 
-/* a motion out of every timeline (it ended, or was killed) goes back in the global one */
+/* a motion out of every timeline (it ended) goes back in the global one; a killed one stays
+ * out (the controls check, as they have no use for it) */
 static void ensure_placed(BKMotion *m)
 {
-  if (!m->parent) {
+  if (!m->parent && !m->killed) {
     place(root(), m, G.root_time - (m->reversed ? -1.0 : 1.0) * m->t / m->ts);
     m->anchor_local = m->t;
     m->anchor_parent = G.root_time;
@@ -1175,7 +1376,7 @@ static void ensure_placed(BKMotion *m)
 
 void BK_motion_play(BKMotion *m)
 {
-  if (!m) {
+  if (!m || m->killed) {
     return;
   }
   ensure_placed(m);
@@ -1195,7 +1396,7 @@ void BK_motion_pause(BKMotion *m)
 
 void BK_motion_resume(BKMotion *m)
 {
-  if (m && m->paused) {
+  if (m && m->paused && !m->killed) {
     ensure_placed(m);
     m->anchor_parent = parent_time(m);
     m->paused = false;
@@ -1205,7 +1406,7 @@ void BK_motion_resume(BKMotion *m)
 
 void BK_motion_reverse(BKMotion *m)
 {
-  if (!m) {
+  if (!m || m->killed) {
     return;
   }
   ensure_placed(m);
@@ -1215,20 +1416,24 @@ void BK_motion_reverse(BKMotion *m)
   wake(m);
 }
 
-void BK_motion_seek(BKMotion *m, double time)
+int BK_motion_seek(BKMotion *m, double time)
 {
-  if (!m) {
-    return;
+  if (!isfinite(time)) {
+    return 0;
+  }
+  if (!m || m->killed) {
+    return 1;
   }
   ensure_placed(m);
   m->anchor_parent = parent_time(m);
   m->anchor_local = BK_CLAMP(time, 0.0, BK_motion_total_duration(m));
   render(m, m->anchor_local, true);
+  return 1;
 }
 
 void BK_motion_restart(BKMotion *m)
 {
-  if (!m) {
+  if (!m || m->killed) {
     return;
   }
   m->started = false;
@@ -1238,8 +1443,11 @@ void BK_motion_restart(BKMotion *m)
   wake(m);
 }
 
-void BK_motion_set_progress(BKMotion *m, double progress)
+int BK_motion_set_progress(BKMotion *m, double progress)
 {
+  if (!isfinite(progress)) {
+    return 0;
+  }
   if (m) {
     const int iter = m->iteration;
     double it = BK_CLAMP(progress, 0.0, 1.0) * m->dur;
@@ -1248,30 +1456,39 @@ void BK_motion_set_progress(BKMotion *m, double progress)
     }
     BK_motion_seek(m, iter * (m->dur + m->rdelay) + it);
   }
+  return 1;
 }
 
-void BK_motion_set_total_progress(BKMotion *m, double progress)
+int BK_motion_set_total_progress(BKMotion *m, double progress)
 {
+  if (!isfinite(progress)) {
+    return 0;
+  }
   if (m) {
     const double total = BK_motion_total_duration(m);
     BK_motion_seek(m, BK_CLAMP(progress, 0.0, 1.0) * (total >= NEVER ? m->dur : total));
   }
+  return 1;
 }
 
-void BK_motion_set_time_scale(BKMotion *m, double scale)
+int BK_motion_set_time_scale(BKMotion *m, double scale)
 {
+  if (!isfinite(scale)) {
+    return 0;
+  }
   if (m && scale > 0.0) {
     reanchor(m);
-    m->ts = scale;
+    m->ts = BK_MIN(scale, 1e300);
     if (m->parent && m->parent->timeline) {
       timeline_measure(m->parent);
     }
   }
+  return 1;
 }
 
 void BK_motion_complete(BKMotion *m)
 {
-  if (m) {
+  if (m && !m->killed) {
     const double total = BK_motion_total_duration(m);
     BK_motion_seek(m, total >= NEVER ? m->dur : total);
     m->paused = true;
@@ -1294,6 +1511,9 @@ void BK_motion_kill(BKMotion *m)
   for (BKMotion *c = m->first, *next; c; c = next) {
     next = c->next;
     BK_motion_kill(c);
+  }
+  if (m->timeline) {
+    timeline_measure(m); /* once: its children left without measuring (see detach) */
   }
   detach(m);
 }
@@ -1380,8 +1600,8 @@ float BK_motion_velocity(const BKMotion *m, int prop)
 
 int BK_anim_tick(double now)
 {
-  if (G.ticked && now == G.last_now) {
-    return BK_anim_active();
+  if ((G.ticked && now == G.last_now) || !isfinite(now) || G.in_tick) {
+    return BK_anim_active(); /* the same time, no time, or a callback of this very tick */
   }
   double dt = G.ticked ? now - G.last_now : 0.0;
   if (dt > G.lag_threshold) {
@@ -1395,6 +1615,7 @@ int BK_anim_tick(double now)
     return 0; /* nothing was ever started: nothing to keep */
   }
   r->t = r->it_time = G.root_time;
+  G.in_tick = true;
   for (int i = 0; i < G.nrun;) {
     BKMotion *c = G.run[i];
     BK_motion_retain(c);
@@ -1410,6 +1631,7 @@ int BK_anim_tick(double now)
     }
     BK_motion_release(c);
   }
+  G.in_tick = false;
   if (!G.nrun && G.root == r) { /* all done: the global timeline goes until the next start */
     G.root = NULL;
     BK_motion_release(r);
@@ -1503,8 +1725,14 @@ void BK_anim_kill_target(void *obj, int prop)
 void bk_motion_exit(void)
 {
   if (G.root) {
-    while (G.nrun) {
-      BK_motion_kill(G.run[G.nrun - 1]);
+    while (G.nrun) { /* every one leaves, killed or not (a kill alone ends nothing for a killed one) */
+      BKMotion *m = G.run[G.nrun - 1];
+      BK_motion_retain(m);
+      BK_motion_kill(m);
+      if (m->parent == G.root) {
+        detach(m);
+      }
+      BK_motion_release(m);
     }
     BK_motion_release(G.root);
     G.root = NULL;
@@ -1526,6 +1754,7 @@ void bk_motion_exit(void)
   G.nobjs = G.cap_objs = 0;
   G.root_time = G.last_now = 0.0;
   G.ticked = false;
+  G.in_tick = false;
 }
 
 void BK_anim_exit(void)
@@ -1600,7 +1829,7 @@ void BK_stagger(const BKStagger *s, int count, double *r_offsets)
     if (eased) {
       f = BK_ease_eval(&s->ease, (float)f);
     }
-    r_offsets[i] = s->amount > 0.0 ? f * s->amount : f * dmax * s->each;
+    r_offsets[i] = sane_time(s->amount > 0.0 ? f * s->amount : f * dmax * s->each); /* a start, finite */
   }
 }
 

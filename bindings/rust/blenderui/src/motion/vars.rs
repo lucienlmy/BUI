@@ -112,13 +112,12 @@ impl Transition {
             (k, _) => k,
         };
         if flavor == Flavor::Motion {
-            // Motion's defaults (getDefaultTransition, and its keyframes generator)
-            v.duration = if nkeys > 1 { 0.8 } else { 0.3 };
-            v.ease = if self.kind == Kind::Auto && self.duration.is_none() && nkeys <= 1 {
-                Ease::bezier(0.25, 0.1, 0.35, 1.0).0
-            } else {
-                super::ease::ease(c"easeInOut").0
-            };
+            // Motion's defaults (getDefaultTransition, and its keyframes generator): the engine's
+            let custom = self.kind != Kind::Auto || self.duration.is_some();
+            // SAFETY: both are valid out-pointers; `nkeys` is a small count.
+            unsafe {
+                sys::BK_motion_vars_motion_defaults(nkeys as i32, i32::from(custom), &raw mut v.duration, &raw mut v.ease);
+            }
         }
         if let Some(d) = self.duration {
             v.duration = d;
@@ -127,7 +126,8 @@ impl Transition {
             v.ease = e.0;
         }
         v.delay = self.delay.unwrap_or(0.0);
-        v.repeat = self.repeat.unwrap_or(0);
+        // SAFETY: plain values; the engine's clamp (-1 forever, at most BK_MOTION_MAX_REPEAT).
+        v.repeat = unsafe { sys::BK_motion_clamp_repeat(f64::from(self.repeat.unwrap_or(0))) };
         v.repeat_delay = self.repeat_delay.unwrap_or(0.0);
         v.yoyo = i32::from(self.yoyo.unwrap_or(false));
         v.time_scale = self.time_scale.unwrap_or(1.0);

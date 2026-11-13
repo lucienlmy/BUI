@@ -69,14 +69,17 @@ typedef struct BKEase {
  *            cubic-bezier(x1, y1, x2, y2), linear(0, 0.25 75%, 1)
  *   Blender: constant, linear, bezier (its default keyframe ease), and its easing types
  *            (sine .. elastic) with .in / .out / .inOut
- * Returns 1, or 0 for a name it doesn't know (`r_ease` then linear). */
+ * Returns 1, or 0 for a name it doesn't know, a malformed one, or a full ease pool (`r_ease`
+ * then linear). The same curve parsed again reuses its table. */
 int BK_ease_parse(const char *name, BKEase *r_ease);
 /* The eased value of `t` (0 .. 1; outside it, the curve goes on). */
 float BK_ease_eval(const BKEase *e, float t);
 /* Motion's array form, and CSS's cubic-bezier(). */
 BKEase BK_ease_bezier(float x1, float y1, float x2, float y2);
 /* A curve through (x, y) points, x ascending from 0 to 1 (a Blender curve widget, Motion's
- * keyframe arrays): kept in the ease pool. */
+ * keyframe arrays): kept in the ease pool (the same points share one table). 0 for fewer than
+ * 2 points, a non-finite one, or a full pool (BK_EASE_POOL_MAX tables). */
+#define BK_EASE_POOL_MAX 65535
 int BK_ease_points(const float (*xy)[2], int n, BKEase *r_ease);
 /* GSAP's CustomEase: an SVG path ("M0,0 C0.2,0.8 0.4,1 1,1"), normalized to 0..1. */
 int BK_ease_path(const char *svg_path, BKEase *r_ease);
@@ -102,9 +105,11 @@ BKSpring BK_spring_default(void);
 BKSpring BK_spring_bounce(float bounce, float visual_duration);
 /* Motion's older form: the stiffness and damping that settle in `duration` with `bounce`. */
 BKSpring BK_spring_duration(float duration, float bounce, float velocity, float mass);
-/* Position and velocity `t` seconds into a spring from `from` to `to`. */
+/* Position and velocity `t` seconds into a spring from `from` to `to`. A mass, stiffness or
+ * damping of 0 (or less) is the smallest the formulas allow. */
 void BK_spring_eval(const BKSpring *s, float from, float to, double t, float *r_pos, float *r_vel);
-/* When it settles (seconds): a spring's duration in a timeline. */
+/* When it settles (seconds, at most 20): a spring's duration in a timeline. Closed form (the
+ * last time it is outside the rest thresholds), within a step of Motion's 120 Hz stepping. */
 double BK_spring_settle(const BKSpring *s, float from, float to);
 
 typedef struct BKInertia {
@@ -195,7 +200,7 @@ typedef void (*BKMotionFn)(BKMotion *m, int event, void *data);
 typedef struct BKMotionVars {
   double duration;      /* seconds (0.5); springs and inertia compute theirs */
   double delay;         /* seconds before it starts (negative: it starts that far in) */
-  int repeat;           /* -1 forever */
+  int repeat;           /* -1 forever; else at most BK_MOTION_MAX_REPEAT */
   double repeat_delay;
   int yoyo;
   double time_scale;    /* 1 */
@@ -215,8 +220,29 @@ typedef struct BKMotionVars {
 
 BKMotionVars BK_motion_vars_default(void);
 
+/* The one contract for what a binding hands in (BK_tween / BK_timeline apply it too, so a
+ * binding that skips the check is still safe):
+ *   duration, repeat_delay  negative is 0; at most BK_MOTION_MAX_TIME
+ *   delay                   within +- BK_MOTION_MAX_TIME (negative starts partway)
+ *   repeat                  BK_motion_clamp_repeat
+ *   NaN or infinity         is no number: BK_motion_vars_check returns 0 (the binding raises
+ *                           its language's error); the engine itself reads them as 0 */
+#define BK_MOTION_MAX_REPEAT 1000000
+#define BK_MOTION_MAX_TIME 1e9
+/* A repeat count from a number of any size: < 0 or infinity is -1 (forever), NaN is 0, and
+ * a count is at most BK_MOTION_MAX_REPEAT. */
+int BK_motion_clamp_repeat(double repeat);
+/* Normalizes `v` in place by that contract; 0 when a time or the time scale isn't finite. */
+int BK_motion_vars_check(BKMotionVars *v);
+/* Motion's defaults (getDefaultTransition, and its keyframes) for a motion of `nkeys` keyframes:
+ * 0.3 s (0.8 s for keyframes) and its bezier ease, or "easeInOut" when `custom` (a type or a
+ * duration was given). The bindings override them with what the user wrote. */
+void BK_motion_vars_motion_defaults(int nkeys, int custom, double *r_duration, BKEase *r_ease);
+
 /* A tween of `obj`'s properties. Starts (in the global timeline) unless paused or added to
- * a timeline. The handle is yours (BK_motion_release). */
+ * a timeline. The handle is yours (BK_motion_release). NULL (and `vars->data` freed) when a
+ * track has no values, no keys (`nkeys` < 1), `n` outside 1 .. 4, a non-finite value, or
+ * `tracks` is NULL with `ntracks` > 0. */
 BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int ntracks,
                    const BKMotionVars *vars);
 /* A timeline: motions placed at times (BK_timeline_add). */
@@ -224,9 +250,10 @@ BKMotion *BK_timeline(const BKMotionVars *vars);
 /* Place `child` (taken from wherever it was) at `position`, GSAP's position parameter:
  * "1.5" absolute, "+=0.5" / "-=0.5" after / before the end, "<" / ">" the start / end of
  * the last added, "<0.2" / ">-0.1", "label", "label+=1", "50%" of the timeline, "" = the
- * end. Returns the time it starts at. */
+ * end. Returns the time it starts at, or -1 (nothing placed) for a position that isn't one of
+ * these or names a label that doesn't exist. */
 double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *position);
-/* A label at `position`; and a callback there (gsap's call()). */
+/* A label at `position`; and a callback there (gsap's call()): -1 for a bad position. */
 double BK_timeline_label(BKMotion *tl, const char *name, const char *position);
 double BK_timeline_call(BKMotion *tl, BKMotionFn fn, void *data, void (*free_data)(void *data),
                         const char *position);
@@ -251,10 +278,12 @@ void BK_motion_pause(BKMotion *m);
 void BK_motion_resume(BKMotion *m);
 void BK_motion_reverse(BKMotion *m);
 void BK_motion_restart(BKMotion *m);
-void BK_motion_seek(BKMotion *m, double time);
-void BK_motion_set_progress(BKMotion *m, double progress);   /* of one iteration */
-void BK_motion_set_total_progress(BKMotion *m, double progress);
-void BK_motion_set_time_scale(BKMotion *m, double scale);
+/* A motion that was killed stays killed: play, resume, reverse and the seeks do nothing to it.
+ * The seeks (and the time scale) return 0, changing nothing, for a NaN or infinity. */
+int BK_motion_seek(BKMotion *m, double time);
+int BK_motion_set_progress(BKMotion *m, double progress);   /* of one iteration */
+int BK_motion_set_total_progress(BKMotion *m, double progress);
+int BK_motion_set_time_scale(BKMotion *m, double scale);
 void BK_motion_complete(BKMotion *m);  /* to its end now (Motion's complete) */
 void BK_motion_kill(BKMotion *m);      /* stopped where it is, out of its timeline */
 int BK_motion_is_active(const BKMotion *m);

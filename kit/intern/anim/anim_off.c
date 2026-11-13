@@ -29,6 +29,9 @@ const char *BK_anim_prop_name(int prop) { (void)prop; return NULL; }
 int BK_anim_parse_value(const char *text, float r_value[4], int *r_unit, int *r_rel) { (void)text; (void)r_value; *r_unit = 0; *r_rel = 0; return 0; }
 
 BKMotionVars BK_motion_vars_default(void) { BKMotionVars v; memset(&v, 0, sizeof(v)); return v; }
+int BK_motion_clamp_repeat(double repeat) { (void)repeat; return 0; }
+int BK_motion_vars_check(BKMotionVars *v) { (void)v; return 1; }
+void BK_motion_vars_motion_defaults(int nkeys, int custom, double *r_duration, BKEase *r_ease) { (void)nkeys; (void)custom; *r_duration = 0.0; memset(r_ease, 0, sizeof(*r_ease)); }
 BKMotion *BK_tween(const BKAnimClass *cls, void *obj, const BKTrack *tracks, int ntracks, const BKMotionVars *vars) { (void)cls; (void)obj; (void)tracks; (void)ntracks; if (vars && vars->free_data && vars->data) vars->free_data(vars->data); return NULL; }
 BKMotion *BK_timeline(const BKMotionVars *vars) { if (vars && vars->free_data && vars->data) vars->free_data(vars->data); return NULL; }
 double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *position) { (void)tl; (void)child; (void)position; return 0.0; }
@@ -42,10 +45,10 @@ void BK_motion_pause(BKMotion *m) { (void)m; }
 void BK_motion_resume(BKMotion *m) { (void)m; }
 void BK_motion_reverse(BKMotion *m) { (void)m; }
 void BK_motion_restart(BKMotion *m) { (void)m; }
-void BK_motion_seek(BKMotion *m, double time) { (void)m; (void)time; }
-void BK_motion_set_progress(BKMotion *m, double progress) { (void)m; (void)progress; }
-void BK_motion_set_total_progress(BKMotion *m, double progress) { (void)m; (void)progress; }
-void BK_motion_set_time_scale(BKMotion *m, double scale) { (void)m; (void)scale; }
+int BK_motion_seek(BKMotion *m, double time) { (void)m; (void)time; return 1; }
+int BK_motion_set_progress(BKMotion *m, double progress) { (void)m; (void)progress; return 1; }
+int BK_motion_set_total_progress(BKMotion *m, double progress) { (void)m; (void)progress; return 1; }
+int BK_motion_set_time_scale(BKMotion *m, double scale) { (void)m; (void)scale; return 1; }
 void BK_motion_complete(BKMotion *m) { (void)m; }
 void BK_motion_kill(BKMotion *m) { (void)m; }
 int BK_motion_is_active(const BKMotion *m) { (void)m; return 0; }

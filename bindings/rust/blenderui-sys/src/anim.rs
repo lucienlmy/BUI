@@ -175,6 +175,10 @@ unsafe extern "C" {
     pub fn BK_anim_parse_value(text: *const c_char, r_value: *mut c_float, r_unit: *mut c_int,
                                r_rel: *mut c_int) -> c_int;
     pub fn BK_motion_vars_default() -> BKMotionVars;
+    pub fn BK_motion_clamp_repeat(repeat: c_double) -> c_int;
+    pub fn BK_motion_vars_check(v: *mut BKMotionVars) -> c_int;
+    pub fn BK_motion_vars_motion_defaults(nkeys: c_int, custom: c_int, r_duration: *mut c_double,
+                                          r_ease: *mut BKEase);
     pub fn BK_tween(cls: *const BKAnimClass, obj: *mut c_void, tracks: *const BKTrack, ntracks: c_int,
                     vars: *const BKMotionVars) -> *mut BKMotion;
     pub fn BK_timeline(vars: *const BKMotionVars) -> *mut BKMotion;
@@ -190,10 +194,10 @@ unsafe extern "C" {
     pub fn BK_motion_resume(m: *mut BKMotion);
     pub fn BK_motion_reverse(m: *mut BKMotion);
     pub fn BK_motion_restart(m: *mut BKMotion);
-    pub fn BK_motion_seek(m: *mut BKMotion, time: c_double);
-    pub fn BK_motion_set_progress(m: *mut BKMotion, progress: c_double);
-    pub fn BK_motion_set_total_progress(m: *mut BKMotion, progress: c_double);
-    pub fn BK_motion_set_time_scale(m: *mut BKMotion, scale: c_double);
+    pub fn BK_motion_seek(m: *mut BKMotion, time: c_double) -> c_int;
+    pub fn BK_motion_set_progress(m: *mut BKMotion, progress: c_double) -> c_int;
+    pub fn BK_motion_set_total_progress(m: *mut BKMotion, progress: c_double) -> c_int;
+    pub fn BK_motion_set_time_scale(m: *mut BKMotion, scale: c_double) -> c_int;
     pub fn BK_motion_complete(m: *mut BKMotion);
     pub fn BK_motion_kill(m: *mut BKMotion);
     pub fn BK_motion_is_active(m: *const BKMotion) -> c_int;
