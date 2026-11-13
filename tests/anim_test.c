@@ -377,6 +377,18 @@ static void test_timelines(void)
     CHECK(NEAR(loop2.x, 50.0, 1e-3));
     step(1.0); /* 2.5 into it: back down */
     CHECK(NEAR(loop2.x, 50.0, 1e-3));
+    /* a loop of timelines (a in b in a, or a in a) is refused, not recursed into */
+    {
+      BKMotion *ca = BK_timeline(&(BKMotionVars){.time_scale = 1.0}), *cb = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+      BK_timeline_add(ca, cb, "0");
+      BK_timeline_add(cb, ca, "0");
+      BK_timeline_add(ca, ca, "0");
+      CHECK(BK_motion_duration(ca) == 0.0 && BK_motion_duration(cb) == 0.0);
+      BK_motion_kill(ca);
+      BK_motion_kill(cb);
+      BK_motion_release(ca);
+      BK_motion_release(cb);
+    }
     BK_motion_kill(ltl);
     BK_motion_kill(outer);
     BK_motion_release(ltl);

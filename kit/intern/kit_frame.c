@@ -915,7 +915,9 @@ static bool citem_bbox_ex(const CItem *ci, float b[4], bool tight)
     y0 = BK_MIN(y0, p[k + 1]);
     y1 = BK_MAX(y1, p[k + 1]);
   }
-  float m = tight ? 0.0f : (it->width > 0 ? it->width : 1.0f) + 3.0f;
+  /* a line has no area: a hit gets it at least a few pixels of thickness around it */
+  float m = tight ? (it->type == BK_ITEM_LINE ? BK_MAX(it->width * 0.5f, 3.0f) : 0.0f) :
+                    (it->width > 0 ? it->width : 1.0f) + 3.0f;
   if (it->type == BK_ITEM_TEXT && tight) {
     if (!ci->text) {
       return false;
@@ -1802,6 +1804,12 @@ static BKNode *canvas_hit(BKNode *n, int x, int y)
     if (!it->hidden && !it->no_hit && citem_bbox_ex(&d->items[i], b, true) && px >= b[0] &&
         px < b[2] && py >= b[1] && py < b[3])
     {
+      /* what the item's clip cuts away can't be hit (as it isn't drawn) */
+      if (it->clip_on && (px < it->clip[0] || px >= it->clip[0] + it->clip[2] || py < it->clip[1] ||
+                          py >= it->clip[1] + it->clip[3]))
+      {
+        continue;
+      }
       return n;
     }
   }

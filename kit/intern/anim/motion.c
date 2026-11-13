@@ -982,8 +982,14 @@ static void ensure_placed(BKMotion *m);
 
 double BK_timeline_add(BKMotion *tl, BKMotion *child, const char *pos)
 {
-  if (!tl || !child || !tl->timeline || tl == child) {
+  if (!tl || !child || !tl->timeline) {
     return 0.0;
+  }
+  /* a timeline can't be its own ancestor: it would recurse for ever */
+  for (const BKMotion *a = tl; a; a = a->parent) {
+    if (a == child) {
+      return 0.0;
+    }
   }
   const double at = position(tl, pos);
   place(tl, child, at);
