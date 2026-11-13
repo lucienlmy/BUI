@@ -201,12 +201,16 @@ impl std::fmt::Debug for Video {
     }
 }
 
-/// `<video src>` elements' players, kept by the window by `src` (one player
-/// per file and window) with the attributes last applied, so a re-render
-/// changes the player only when an attribute did.
+/// `<video src>` elements' players, kept by the window by `src` and by which
+/// element of that `src` it is in the document (the n-th this render), with the
+/// attributes last applied: a re-render changes a player only when its own
+/// attribute did, and two elements of one file (say, with different `audioeffects`)
+/// have a player each instead of flipping one's attributes every render.
 #[derive(Default)]
 pub(crate) struct VideoCache {
-    players: HashMap<String, (Rc<Video>, VideoAttrs)>,
+    players: HashMap<(String, usize), (Rc<Video>, VideoAttrs)>,
+    /// How many of each `src` this render has asked for.
+    seen: HashMap<String, usize>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq)]
@@ -219,17 +223,29 @@ pub(crate) struct VideoAttrs {
 }
 
 impl VideoCache {
+    /// A render starts: the elements are counted again from the first.
+    pub(crate) fn begin_pass(&mut self) {
+        self.seen.clear();
+    }
+
     pub(crate) fn get(&mut self, src: &str, attrs: VideoAttrs) -> Option<Rc<Video>> {
-        if let Some((v, had)) = self.players.get_mut(src) {
+        let nth = self.seen.entry(src.to_owned()).or_insert(0);
+        let key = (src.to_owned(), *nth);
+        *nth += 1;
+        self.player(key, attrs)
+    }
+
+    fn player(&mut self, key: (String, usize), attrs: VideoAttrs) -> Option<Rc<Video>> {
+        if let Some((v, had)) = self.players.get_mut(&key) {
             if *had != attrs {
                 apply(v, had, &attrs);
                 *had = attrs;
             }
             return Some(v.clone());
         }
-        let v = Rc::new(Video::new(src)?);
+        let v = Rc::new(Video::new(&key.0)?);
         apply(&v, &VideoAttrs { autoplay: true, ..VideoAttrs::default() }, &attrs);
-        self.players.insert(src.to_owned(), (v.clone(), attrs));
+        self.players.insert(key, (v.clone(), attrs));
         Some(v)
     }
 }
@@ -249,5 +265,28 @@ fn apply(v: &Video, had: &VideoAttrs, now: &VideoAttrs) {
     }
     if had.poster != now.poster {
         v.set_poster(now.poster.as_deref().unwrap_or(""));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two elements of one file with different attributes each keep their own player, and
+    /// later renders hand back the same players with nothing re-applied.
+    #[test]
+    fn same_src_elements_do_not_share_a_player() {
+        let mut cache = VideoCache::default();
+        let plain = VideoAttrs { autoplay: true, ..VideoAttrs::default() };
+        let fx = VideoAttrs { audio_effects: true, ..plain.clone() };
+        for _ in 0..3 {
+            cache.begin_pass();
+            let (Some(a), Some(b)) = (cache.get("x.mp4", plain.clone()), cache.get("x.mp4", fx.clone())) else {
+                return; // no kit video here
+            };
+            assert!(!Rc::ptr_eq(&a, &b));
+            assert!(!a.audio_effects() && b.audio_effects());
+        }
+        assert_eq!(cache.players.len(), 2);
     }
 }

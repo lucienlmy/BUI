@@ -2233,6 +2233,7 @@ pub(crate) fn layout(root: AnyElement, viewport: (f32, f32), state: &UiState, ca
         caches.matched.map.clear();
         caches.matched.author = caches.author.hash;
     }
+    caches.images.videos.begin_pass();
     let ua_styled = ua_styled_stylesheet();
     let LayoutCaches { styles, text, images, author, taffy, box_of, acc, matched, recon, text_box, containers,
                        wrap_widths, anim, .. } = caches;
