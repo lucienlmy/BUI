@@ -30,8 +30,11 @@ from typing import Callable, List, Optional
 import buipy
 
 from bui import _realtk, filebrowser, host
-from bui.components.core import (EV_ACTIVATE, EV_CHANGE, EV_CLICK, EV_DOUBLE, EV_ENTER,  # noqa: F401
-                                 EV_KEY, EV_LEAVE, EV_MOTION, EV_PRESS, EV_RELEASE,
+from bui._qtinputs import (AbstractButtonMore, AbstractSpinBoxMore, ComboBoxMore, DoubleSpinBoxMore, LabelMore, LineEditMore, ProgressBarMore, RangeMore,
+                           PushButtonMore, SliderMore, SpinBoxMore, TabWidgetMore)
+from bui._qtwidget import QWidgetMore
+from bui.components.core import (EV_ACTIVATE, EV_CHANGE, EV_CLICK, EV_CONFIGURE, EV_DOUBLE,  # noqa: F401
+                                 EV_ENTER, EV_KEY, EV_LEAVE, EV_MOTION, EV_PRESS, EV_RELEASE,
                                  EV_RENAME, EV_SUBMIT, EV_TOGGLE, EV_WHEEL)
 from bui.components.menus import MenuItem
 from bui.tksyntax import PhotoImage, color as _tk_color
@@ -63,6 +66,25 @@ class Qt:
     ScrollBarAlwaysOff, ScrollBarAsNeeded = 1, 0
     ItemIsEditable, ItemIsSelectable, ItemIsEnabled = 2, 1, 32
     DisplayRole, UserRole = 0, 256
+    DecorationRole, EditRole, ToolTipRole, StatusTipRole, WhatsThisRole, CheckStateRole = 1, 2, 3, 4, 5, 10
+    ItemIsUserCheckable, ItemIsDragEnabled, ItemIsDropEnabled = 16, 4, 8
+    MatchExactly, MatchContains, MatchStartsWith, MatchEndsWith = 0, 1, 2, 3
+    NoFocus, TabFocus, ClickFocus, StrongFocus, WheelFocus = 0, 1, 2, 11, 15
+    NoContextMenu, DefaultContextMenu, ActionsContextMenu, CustomContextMenu = 0, 1, 2, 3
+    LeftToRight, RightToLeft = 0, 1
+    LeftDockWidgetArea, RightDockWidgetArea, TopDockWidgetArea, BottomDockWidgetArea = 1, 2, 4, 8
+    AllDockWidgetAreas, NoDockWidgetArea = 15, 0
+    LeftToolBarArea, RightToolBarArea, TopToolBarArea, BottomToolBarArea = 1, 2, 4, 8
+    ToolButtonIconOnly, ToolButtonTextOnly, ToolButtonTextBesideIcon, ToolButtonTextUnderIcon = 0, 1, 2, 3
+    ToolButtonFollowStyle = 4
+    WindowNoState, WindowMinimized, WindowMaximized, WindowFullScreen, WindowActive = 0, 1, 2, 4, 8
+    Widget, Window, Dialog, Tool, ToolTip = 0, 0x1, 0x3, 0xB, 0x13
+    FramelessWindowHint, WindowStaysOnTopHint, WindowStaysOnBottomHint = 0x800, 0x40000, 0x4000000
+    ElideLeft, ElideRight, ElideMiddle, ElideNone = 0, 1, 2, 3
+    NoArrow, UpArrow, DownArrow, LeftArrow, RightArrow = 0, 1, 2, 3, 4
+    TopLeftCorner, TopRightCorner, BottomLeftCorner, BottomRightCorner = 0, 1, 2, 3
+    TextDate, ISODate, RFC2822Date, ISODateWithMs = 0, 1, 8, 9
+    Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday = range(1, 8)
     white, black, red, green, blue, gray = "#ffffff", "#000000", "#ff0000", "#00ff00", \
         "#0000ff", "#808080"
 
@@ -95,7 +117,7 @@ class Signal:
             return self
         bound = obj.__dict__.get(self._name)
         if bound is None:
-            bound = BoundSignal(self._types)
+            bound = BoundSignal(self._types, obj)
             obj.__dict__[self._name] = bound
         return bound
 
@@ -104,9 +126,10 @@ Signal_ = pyqtSignal = Signal
 
 
 class BoundSignal:
-    def __init__(self, types=()):
+    def __init__(self, types=(), owner=None):
         self._slots: List[Callable] = []
         self._types = types
+        self._owner = owner  # its signals stay quiet while the owner's blockSignals(True) holds
 
     def connect(self, slot):
         self._slots.append(slot)
@@ -119,6 +142,8 @@ class BoundSignal:
             self._slots.remove(slot)
 
     def emit(self, *args):
+        if self._owner is not None and self._owner.__dict__.get("_blocked"):
+            return
         for slot in list(self._slots):
             try:
                 slot(*args)
@@ -400,8 +425,14 @@ class QMouseEvent(QEvent):
     def button(self):
         return self._button
 
+    def buttons(self):
+        return self._button
+
     def modifiers(self):
         return self._mods
+
+    def localPos(self):  # noqa: N802
+        return self.pos()
 
 
 class QKeyEvent(QEvent):
@@ -448,6 +479,42 @@ class QApplication:
     def instance():
         return QApplication._instance
 
+    @staticmethod
+    def primaryScreen():  # noqa: N802
+        from bui.qtgui import primary_screen
+        return primary_screen()
+
+    @staticmethod
+    def screens():
+        from bui.qtgui import primary_screen
+        screen = primary_screen()
+        return [screen] if screen is not None else []
+
+    @staticmethod
+    def clipboard():
+        from bui.qtcore import QClipboard
+        return QClipboard.instance()
+
+    @staticmethod
+    def setOrganizationName(name):  # noqa: N802
+        from bui.qtcore import QSettings
+        QSettings._org = str(name)
+
+    @staticmethod
+    def organizationName():  # noqa: N802
+        from bui.qtcore import QSettings
+        return QSettings._org
+
+    @staticmethod
+    def setApplicationName(name):  # noqa: N802
+        from bui.qtcore import QSettings
+        QSettings._app = str(name)
+
+    @staticmethod
+    def applicationName():  # noqa: N802
+        from bui.qtcore import QSettings
+        return QSettings._app
+
     def exec(self) -> int:
         for w in list(_pending_show):
             w._open()
@@ -471,7 +538,67 @@ class QApplication:
     def setStyle(self, *a):  # noqa: N802
         pass
 
-    setStyleSheet = setApplicationName = setStyle
+    setStyleSheet = setStyle
+
+    _font = None
+    _palette = None
+
+    @staticmethod
+    def allWidgets():  # noqa: N802
+        import gc
+        return [o for o in gc.get_objects() if isinstance(o, QWidget)]
+
+    @staticmethod
+    def topLevelWidgets():  # noqa: N802
+        return [w for w in QApplication.allWidgets() if w.parentWidget() is None]
+
+    @staticmethod
+    def _open_windows():
+        return [w for w in QApplication.topLevelWidgets() if w._window is not None and w._window.is_open]
+
+    @staticmethod
+    def focusWidget():  # noqa: N802
+        """The widget with the keyboard focus, in any open window."""
+        for w in QApplication._open_windows():
+            focus = w._ctx.focus if w._ctx is not None else None
+            if isinstance(focus, QWidget):
+                return focus
+        return None
+
+    @staticmethod
+    def activeWindow():  # noqa: N802
+        focus = QApplication.focusWidget()
+        if focus is not None:
+            return focus.window()
+        windows = QApplication._open_windows()
+        return windows[0] if windows else None
+
+    @staticmethod
+    def closeAllWindows():  # noqa: N802
+        for w in QApplication._open_windows():
+            w.close()
+
+    @staticmethod
+    def font(*a):
+        return QApplication._font or QFont()
+
+    @staticmethod
+    def setFont(font, *a):  # noqa: N802
+        """The default font of widgets that have none of their own."""
+        QApplication._font = font
+
+    @staticmethod
+    def palette(*a):
+        from bui.qtgui import QPalette
+        return QPalette(QApplication._palette)
+
+    @staticmethod
+    def setPalette(palette, *a):  # noqa: N802
+        """Every window's colors (Window and WindowText) and the default palette of new ones."""
+        QApplication._palette = palette
+        for w in QApplication.topLevelWidgets():
+            if w.type in ("frame", "canvas"):  # the window's own background
+                w.setPalette(palette)
 
 
 QCoreApplication = QApplication
@@ -656,11 +783,13 @@ def _kids(node):
     return buipy.KitNode.children.__get__(node)
 
 _EVENT_METHODS = ("mousePressEvent", "mouseReleaseEvent", "mouseMoveEvent",
-                  "mouseDoubleClickEvent", "keyPressEvent", "wheelEvent", "enterEvent",
-                  "leaveEvent")
+                  "mouseDoubleClickEvent", "keyPressEvent", "keyReleaseEvent", "wheelEvent", "enterEvent",
+                  "leaveEvent", "resizeEvent", "contextMenuEvent")
+EV_KEYRELEASE = 20
+_BUTTONS = {1: 1, 2: 4, 3: 2}  # the kit's button 1 / 2 / 3 -> Qt.LeftButton / MiddleButton / RightButton
 
 
-class QWidget(buipy.KitNode):
+class QWidget(QWidgetMore, buipy.KitNode):
     KIND = "frame"
 
     def __init__(self, parent=None, *args, **kw):
@@ -718,8 +847,8 @@ class QWidget(buipy.KitNode):
         return [c for c in _kids(self) if isinstance(c, QWidget)]
 
     def setLayout(self, layout):  # noqa: N802
-        if self._layout is not None:
-            self.remove(self._layout)
+        if self._layout is not None and self._layout.parent is not None:
+            self._layout.parent.remove(self._layout)
         self._layout = layout
         layout._owner = self
         if layout._margins is None:  # top-level layouts get Qt's default margin
@@ -784,11 +913,6 @@ class QWidget(buipy.KitNode):
     def setMinimumHeight(self, h):  # noqa: N802
         self.geom(int(self.geom_get("manager")), reqheight=int(h))
 
-    def setMinimumSize(self, w, h=None):  # noqa: N802
-        pass
-
-    setMaximumSize = setMaximumWidth = setMaximumHeight = setMinimumSize
-
     def width(self):
         if self._window is not None:
             return self._window.size[0]
@@ -844,7 +968,10 @@ class QWidget(buipy.KitNode):
         if self._parent_widget is None and self._layout is not None or self._window:
             self.show() if b else self.hide()
             return
+        was = self.isVisible()
         self.set("visible", bool(b))
+        if was != bool(b):
+            (self.showEvent if b else self.hideEvent)(QEvent())
 
     def isVisible(self):  # noqa: N802
         return bool(self.get("visible"))
@@ -855,6 +982,7 @@ class QWidget(buipy.KitNode):
             self._window = None
         else:
             self.set("visible", False)
+        self.hideEvent(QEvent())
 
     def setToolTip(self, text):  # noqa: N802
         self.set("description", str(text))
@@ -881,6 +1009,7 @@ class QWidget(buipy.KitNode):
                     pass
 
     def setFont(self, font):  # noqa: N802
+        self._font = font
         if isinstance(font, QFont) and font.bold():
             try:
                 self.set("bold", True)
@@ -896,11 +1025,8 @@ class QWidget(buipy.KitNode):
     def setAttribute(self, *a):  # noqa: N802
         pass
 
-    setWindowIcon = setWindowFlags = setFocusPolicy = setContentsMargins = setAttribute
+    setWindowIcon = setContentsMargins = setAttribute
     installEventFilter = setMouseTracking = setAutoFillBackground = setAttribute
-
-    def setFocus(self, *a):  # noqa: N802
-        pass
 
     def setCursor(self, *a):  # noqa: N802
         pass
@@ -909,7 +1035,7 @@ class QWidget(buipy.KitNode):
     def setWindowTitle(self, title):  # noqa: N802
         self._title = str(title)
         if self._window is not None:
-            self._window.title(self._title)
+            self._window.title(self._shown_title())  # "[*]" shows as "*" while modified
 
     def windowTitle(self):  # noqa: N802
         return self._title
@@ -917,6 +1043,7 @@ class QWidget(buipy.KitNode):
     def show(self):
         if self._parent_widget is not None:
             self.set("visible", True)
+            self.showEvent(QEvent())
             return
         if QApplication._instance is None or getattr(QApplication, "_running", False) \
                 or host._windows:
@@ -924,17 +1051,22 @@ class QWidget(buipy.KitNode):
         else:
             _pending_show.append(self)
             self._open()
+        self.showEvent(QEvent())
 
     def _open(self):
         if self._window is not None:
             return
         self._ctx = buipy.KitContext(self)
+        from bui.qtcore import bind_shortcuts
+        bind_shortcuts(self)
         if self._menubar is not None:
             self._ctx.set_header(self._menubar._node)
         size = self._size or tuple(max(a, b) for a, b in zip(self.natural(), (200, 100)))
         self._window = host.Window(self._ctx, self._title or "BUI", size)
         self._window.on_close = self._close_requested
         self._window.show()
+        self._window.title(self._shown_title())
+        self._apply_window_hints()
         _timers.flush()
         _schedule_paint()
 
@@ -966,6 +1098,7 @@ class QWidget(buipy.KitNode):
 
     def setMenuBar(self, menubar):  # noqa: N802
         self._menubar = menubar
+        menubar._owner = self  # its actions' shortcuts bind on this window
         if self._ctx is not None:
             self._ctx.set_header(menubar._node)
 
@@ -974,6 +1107,8 @@ class QWidget(buipy.KitNode):
         pass
 
     def update(self, *args):
+        if not self.updatesEnabled():
+            return
         if self._custom_paint:
             self._repaint()
         else:
@@ -1018,11 +1153,52 @@ class QWidget(buipy.KitNode):
     def leaveEvent(self, e):  # noqa: N802
         pass
 
+    def keyReleaseEvent(self, e):  # noqa: N802
+        pass
+
+    def resizeEvent(self, e):  # noqa: N802
+        pass
+
+    def contextMenuEvent(self, e):  # noqa: N802
+        e.ignore()
+
+    customContextMenuRequested = Signal(object)
+
+    def _context_menu(self, mouse):
+        """A right click, as Qt's contextMenuPolicy says: the handler, the widget's actions, or a signal."""
+        policy = self.contextMenuPolicy()
+        pos = mouse.pos()
+        if policy == Qt.DefaultContextMenu:
+            from bui.qtgui import QContextMenuEvent
+            self.contextMenuEvent(QContextMenuEvent(QContextMenuEvent.Mouse, pos))
+        elif policy == Qt.ActionsContextMenu and self.actions() and self.window()._ctx is not None:
+            from bui.qtactions import menu_items
+            x, y = self.absolutePos()
+            self.window()._ctx.open_menu(None, menu_items(self.actions()), None, (x + pos.x(), y + pos.y()))
+        elif policy == Qt.CustomContextMenu:
+            self.customContextMenuRequested.emit(pos)
+
+    def _mouse(self, ref, a, b):
+        mods, _, button = (ref or "0 1").partition(" ")
+        return QMouseEvent(a, b, _BUTTONS.get(int(button or 1), 1), _mods_qt(int(mods or 0)))
+
     def _on_event(self, kind, ref, a, b):
         if kind == EV_PRESS:
-            self.mousePressEvent(QMouseEvent(a, b))
+            e = self._mouse(ref, a, b)
+            self.mousePressEvent(e)
+            if e.button() == Qt.RightButton:
+                self._context_menu(e)
         elif kind == EV_RELEASE:
-            self.mouseReleaseEvent(QMouseEvent(a, b))
+            self.mouseReleaseEvent(self._mouse(ref, a, b))
+        elif kind == EV_CONFIGURE:
+            from bui.qtgui import QResizeEvent
+            old = getattr(self, "_last_size", QSize(-1, -1))
+            self._last_size = QSize(int(a), int(b))
+            self.resizeEvent(QResizeEvent(self._last_size, old))
+        elif kind == EV_KEYRELEASE:
+            text, _, keysym = (ref or "").partition("\t")
+            key = _KEYSYM_TO_QT.get(keysym, ord(keysym.upper()) if len(keysym) == 1 else 0)
+            self.keyReleaseEvent(QKeyEvent(key, text, _mods_qt(int(a))))
         elif kind == EV_MOTION:
             self.mouseMoveEvent(QMouseEvent(a, b))
         elif kind == EV_DOUBLE:
@@ -1062,17 +1238,86 @@ def _custom_widgets():
     return [o for o in gc.get_objects() if isinstance(o, QWidget) and o._custom_paint]
 
 
+_AREA_SIDE = {1: 2, 2: 3, 4: 0, 8: 1}  # Qt's left / right / top / bottom areas -> pack sides
+
+
 class QMainWindow(QWidget):
     def _setup(self):
         self._central = None
         self._status = None
+        self._toolbars = []  # (toolbar, area)
+        self._docks = []  # (dock, area)
+
+    def _repack(self):
+        """Pack order decides who gets the edges: status bar, toolbars, docks, then the central widget."""
+        order = [(self._status, 1)] if self._status is not None else []
+        order += [(t, _AREA_SIDE[a]) for t, a in self._toolbars] + [(d, _AREA_SIDE[a]) for d, a in self._docks]
+        for w, _ in order + ([(self._central, 0)] if self._central is not None else []):
+            if w.parent is self:
+                self.remove(w)
+        for w, side in order:
+            self.add(w)
+            w.geom(PACK, side=side, fill=2 if side >= 2 else 1)
+        if self._central is not None:
+            self.add(self._central)
+            self._central.geom(PACK, fill=3, expand=1)
 
     def setCentralWidget(self, w):  # noqa: N802
-        if self._central is not None:
+        if self._central is not None and self._central.parent is self:
             self.remove(self._central)
         self._central = w
-        self.add(w)
-        w.geom(PACK, fill=3, expand=1)
+        if w.parent is not None:
+            w.parent.remove(w)
+        self._repack()
+
+    def takeCentralWidget(self):  # noqa: N802
+        w = self._central
+        if w is not None:
+            self.remove(w)
+            self._central = None
+        return w
+
+    def addToolBar(self, *args):  # noqa: N802 - (toolbar) / (title) / (area, toolbar)
+        from bui.qtcontainers import QToolBar
+        area, bar = (args[0], args[1]) if len(args) == 2 else (Qt.TopToolBarArea, args[0])
+        if not isinstance(bar, QToolBar):
+            bar = QToolBar(str(bar))
+        self.removeToolBar(bar)
+        if bar.parent is not None:
+            bar.parent.remove(bar)
+        self._toolbars.append((bar, area))
+        self._repack()
+        return bar
+
+    def removeToolBar(self, bar):  # noqa: N802
+        self._toolbars = [(t, a) for t, a in self._toolbars if t is not bar]
+        if bar.parent is self:
+            self.remove(bar)
+
+    def toolBarArea(self, bar):  # noqa: N802
+        return next((a for t, a in self._toolbars if t is bar), 0)
+
+    def addDockWidget(self, area, dock, *a):  # noqa: N802
+        self.removeDockWidget(dock)
+        if dock.parent is not None:
+            dock.parent.remove(dock)
+        self._docks.append((dock, area))
+        self._repack()
+        dock.dockLocationChanged.emit(area)
+
+    def removeDockWidget(self, dock):  # noqa: N802
+        self._docks = [(d, a) for d, a in self._docks if d is not dock]
+        if dock.parent is self:
+            self.remove(dock)
+
+    def dockWidgetArea(self, dock):  # noqa: N802
+        return next((a for d, a in self._docks if d is dock), Qt.NoDockWidgetArea)
+
+    def setStatusBar(self, bar):  # noqa: N802
+        if self._status is not None and self._status.parent is self:
+            self.remove(self._status)
+        self._status = bar
+        self._repack()
 
     def centralWidget(self):  # noqa: N802
         return self._central
@@ -1084,9 +1329,7 @@ class QMainWindow(QWidget):
 
     def statusBar(self):  # noqa: N802
         if self._status is None:
-            self._status = QStatusBar()
-            self.add(self._status)
-            self._status.geom(PACK, side=1, fill=1)
+            self.setStatusBar(QStatusBar())
         return self._status
 
 
@@ -1102,274 +1345,35 @@ class QDialog(QWidget):
         return getattr(self, "_result", 0)
 
     exec_ = exec
+    finished = Signal(int)
+    Rejected, Accepted = 0, 1
+
+    def result(self):
+        return getattr(self, "_result", 0)
+
+    def setResult(self, r):  # noqa: N802
+        self._result = r
+
+    def done(self, r):
+        """Close with result r (accept() is done(1), reject() is done(0))."""
+        self._result = r
+        self.finished.emit(r)
+        self.close()
 
     def accept(self):
-        self._result = 1
         self.accepted.emit()
-        self.close()
+        self.done(self.Accepted)
 
     def reject(self):
-        self._result = 0
         self.rejected.emit()
-        self.close()
-
-
-class QFrame(QWidget):
-    NoFrame, Box, Panel, StyledPanel, HLine, VLine = range(6)
-
-    def setFrameShape(self, *a):  # noqa: N802
-        pass
-
-    setFrameShadow = setLineWidth = setFrameShape
-
-
-# ==========================================================================
-# Layouts
-
-
-class QLayout(buipy.KitNode):
-    def __init__(self, parent=None):
-        super().__init__("frame")
-        self._owner = None
-        self._items = []
-        self._spacing = round(0.3 * buipy.kit_unit())
-        self._margins = None
-        if isinstance(parent, QWidget):
-            parent.setLayout(self)
-
-    def setSpacing(self, s):  # noqa: N802
-        self._spacing = int(s)
-        self._relayout()
-
-    def spacing(self):
-        return self._spacing
-
-    def setContentsMargins(self, left, top=None, right=None, bottom=None):  # noqa: N802
-        if isinstance(left, QMargins):
-            left = left._v
-        self._margins = int(left)
-        self.set("padding", int(left))
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, i):  # noqa: N802
-        return _LayoutItem(self._items[i][0]) if 0 <= i < len(self._items) else None
-
-    def _relayout(self):
-        pass
-
-    def _adopt(self, w):
-        if isinstance(w, QWidget):
-            if w.parent is not None:
-                w.parent.remove(w)
-        self.add(w)
-
-
-class _LayoutItem:
-    def __init__(self, w):
-        self._w = w
-
-    def widget(self):
-        return self._w if isinstance(self._w, QWidget) else None
-
-    def layout(self):
-        return self._w if isinstance(self._w, QLayout) else None
-
-
-# Size policies (Qt defaults): which widgets take extra space.
-_H_EXPANDING = ("text", "slider", "progress", "dropdown", "textarea", "list", "tree", "tabs",
-                "canvas", "scroll", "number")
-_V_EXPANDING = ("textarea", "list", "tree", "tabs", "canvas", "scroll")
-
-
-def _expands(node, horizontal):
-    if isinstance(node, QLayout):
-        return any(_expands(c, horizontal) for c, _ in node._items)
-    if isinstance(node, QWidget) and node._policy is not None             and node._policy[0 if horizontal else 1] is not None:
-        p = node._policy[0 if horizontal else 1]
-        return p in (QSizePolicy.Expanding, QSizePolicy.MinimumExpanding)
-    kinds = _H_EXPANDING if horizontal else _V_EXPANDING
-    if isinstance(node, QWidget) and node._layout is not None:
-        return _expands(node._layout, horizontal)
-    return getattr(node, "type", "") in kinds or (
-        isinstance(node, QWidget) and node._custom_paint and not horizontal)
-
-
-class QMargins:
-    def __init__(self, left=0, top=0, right=0, bottom=0):
-        self._v = left
-
-
-class QSizePolicy:
-    Fixed, Minimum, Maximum, Preferred, Expanding, MinimumExpanding, Ignored = range(7)
-
-    def __init__(self, h=3, v=3):
-        self._h, self._v = h, v
-
-
-class QBoxLayout(QLayout):
-    LeftToRight, RightToLeft, TopToBottom, BottomToTop = range(4)
-    _vertical = True
-
-    def addWidget(self, w, stretch=0, alignment=0):  # noqa: N802
-        self._adopt(w)
-        self._items.append((w, stretch))
-        self._policies()
-
-    def addLayout(self, layout, stretch=0):  # noqa: N802
-        layout._owner = self._owner
-        self.add(layout)
-        self._items.append((layout, stretch))
-        self._policies()
-
-    def insertWidget(self, index, w, stretch=0, alignment=0):  # noqa: N802
-        self._adopt(w)
-        self._items.insert(index, (w, stretch))
-        self._reorder()
-        self._policies()
-
-    def addStretch(self, stretch=1):  # noqa: N802
-        spacer = buipy.KitNode("frame")
-        self.add(spacer)
-        self._items.append((spacer, max(1, stretch)))
-        self._policies()
-
-    def addSpacing(self, size):  # noqa: N802
-        spacer = buipy.KitNode("frame")
-        spacer.geom(0, **({"reqheight": int(size)} if self._vertical else
-                          {"reqwidth": int(size)}))
-        self.add(spacer)
-        self._items.append((spacer, 0))
-        self._policies()
-
-    def removeWidget(self, w):  # noqa: N802
-        self._items = [(i, s) for i, s in self._items if i is not w]
-        self.remove(w)
-        self._policies()
-
-    def setStretch(self, index, stretch):  # noqa: N802
-        w, _ = self._items[index]
-        self._items[index] = (w, stretch)
-        self._policies()
-
-    def _reorder(self):
-        for i, (w, _) in enumerate(self._items):
-            buipy.KitNode.add(self, w, i)
-
-    def _relayout(self):
-        self._policies()
-
-    def _policies(self):
-        """Qt box semantics on Tk's packer: items stack along the axis; extra
-        space goes to stretch factors, else to expanding widgets, else (for
-        horizontal boxes) is shared by all."""
-        v = self._vertical
-        any_stretch = any(s > 0 for _, s in self._items)
-        expanders = [w for w, s in self._items if (s > 0 if any_stretch else _expands(w, not v))]
-        if not v and not expanders:
-            expanders = [w for w, _ in self._items]
-        for k, (w, s) in enumerate(self._items):
-            gap = self._spacing if k else 0
-            w.geom(PACK, side=0 if v else 2, fill=1 if v else 2,
-                   expand=1 if w in expanders else 0,
-                   pady0=gap if v else 0, padx0=0 if v else gap)
-            if (v and _expands(w, True)) or not v:
-                w.geom(PACK, fill=3)
-            if v and w in expanders:
-                w.geom(PACK, fill=3)
-
-
-class QVBoxLayout(QBoxLayout):
-    _vertical = True
-
-
-class QHBoxLayout(QBoxLayout):
-    _vertical = False
-
-
-class QGridLayout(QLayout):
-    def addWidget(self, w, row=0, column=0, rowspan=1, columnspan=1, alignment=0):  # noqa: N802
-        self._adopt(w)
-        self._place(w, row, column, rowspan, columnspan, alignment)
-
-    def addLayout(self, layout, row=0, column=0, rowspan=1, columnspan=1, alignment=0):  # noqa: N802
-        layout._owner = self._owner
-        self.add(layout)
-        self._place(layout, row, column, rowspan, columnspan, alignment)
-
-    def _place(self, w, row, column, rowspan, columnspan, alignment):
-        self._items.append((w, (row, column)))
-        sticky = W | E | ((N | S) if _expands(w, False) else 0)
-        if alignment & Qt.AlignLeft:
-            sticky &= ~E
-        if alignment & Qt.AlignRight:
-            sticky &= ~W
-        g = self._spacing  # Qt spacing goes between cells, not around the edges
-        w.geom(GRID, row=row, column=column, rowspan=rowspan, columnspan=columnspan,
-               sticky=sticky, padx0=g if column else 0, pady0=g if row else 0)
-        if _expands(w, True):
-            self.grid_weight(1, column + columnspan - 1, 1.0)
-        if _expands(w, False):
-            self.grid_weight(0, row + rowspan - 1, 1.0)
-
-    def setColumnStretch(self, column, stretch):  # noqa: N802
-        self.grid_weight(1, int(column), float(stretch))
-
-    def setRowStretch(self, row, stretch):  # noqa: N802
-        self.grid_weight(0, int(row), float(stretch))
-
-    def setHorizontalSpacing(self, s):  # noqa: N802
-        self._spacing = int(s)
-
-    setVerticalSpacing = setHorizontalSpacing
-
-    def rowCount(self):  # noqa: N802
-        return 1 + max((r for _, (r, c) in self._items), default=-1)
-
-    def columnCount(self):  # noqa: N802
-        return 1 + max((c for _, (r, c) in self._items), default=-1)
-
-
-class QFormLayout(QGridLayout):
-    def addRow(self, label, field=None):  # noqa: N802
-        row = self.rowCount()
-        if field is None:
-            self.addWidget(label, row, 0, 1, 2)
-            return
-        if isinstance(label, str):
-            label = QLabel(label)
-            label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self.addWidget(label, row, 0)
-        if isinstance(field, QLayout):
-            self.addLayout(field, row, 1)
-        else:
-            self.addWidget(field, row, 1)
-        self.setColumnStretch(1, 1)
-
-
-class QStackedLayout(QLayout):
-    def addWidget(self, w):  # noqa: N802
-        self._adopt(w)
-        self._items.append((w, 0))
-        w.geom(PACK, fill=3, expand=1)
-        self.setCurrentIndex(getattr(self, "_current", 0))
-        return len(self._items) - 1
-
-    def setCurrentIndex(self, i):  # noqa: N802
-        self._current = i
-        for k, (w, _) in enumerate(self._items):
-            w.set("visible", k == i)
-
-    def currentIndex(self):  # noqa: N802
-        return getattr(self, "_current", 0)
+        self.done(self.Rejected)
 
 
 # ==========================================================================
 # Widgets
 
 
-class QLabel(QWidget):
+class QLabel(LabelMore, QWidget):
     KIND = "label"
 
     def __init__(self, text="", parent=None, **kw):
@@ -1389,6 +1393,7 @@ class QLabel(QWidget):
                  ("center" if a & Qt.AlignHCenter else "left"))
 
     def setPixmap(self, pm):  # noqa: N802
+        self._pixmap = pm
         self.set_image(pm.width(), pm.height(), pm._img.rgba())
 
     def setWordWrap(self, b):  # noqa: N802
@@ -1397,7 +1402,7 @@ class QLabel(QWidget):
     setTextFormat = setOpenExternalLinks = setWordWrap
 
 
-class QAbstractButton(QWidget):
+class QAbstractButton(AbstractButtonMore, QWidget):
     clicked = Signal(bool)
     pressed = Signal()
     released = Signal()
@@ -1410,21 +1415,40 @@ class QAbstractButton(QWidget):
         return self.get_str("text")
 
     def setIcon(self, icon):  # noqa: N802
-        name = getattr(icon, "name", "")
-        if name:
-            self.set("icon", name)
+        self._icon = icon
+        self.set("icon", getattr(icon, "name", "") or "NONE")
 
     def click(self):
         self._event(EV_CLICK, None, 0, 0)
 
+    def _event(self, kind, ref, a, b):
+        if kind == EV_CLICK:
+            if getattr(self, "menu", lambda: None)() is not None:
+                self.showMenu()
+                return
+            group = self.group()
+            exclusive = group.exclusive() if group is not None else self.autoExclusive()
+            if self.isCheckable() and not (self.isChecked() and exclusive):
+                self.toggle()
+            self.clicked.emit(self.isChecked())
+
     def animateClick(self, *a):  # noqa: N802
         self.click()
 
-    def setShortcut(self, *a):  # noqa: N802
-        pass
+    def setShortcut(self, key):  # noqa: N802
+        from bui.qtcore import QShortcut
+        if getattr(self, "_shortcut", None) is None:
+            self._shortcut = QShortcut(key, self, self.click)
+        else:
+            self._shortcut.setKey(key)
+
+    def shortcut(self):
+        from bui.qtcore import QKeySequence
+        s = getattr(self, "_shortcut", None)
+        return s.key() if s is not None else QKeySequence()
 
 
-class QPushButton(QAbstractButton):
+class QPushButton(PushButtonMore, QAbstractButton):
     KIND = "button"
 
     def __init__(self, text="", parent=None, **kw):
@@ -1432,18 +1456,6 @@ class QPushButton(QAbstractButton):
             text, parent = "", text
         super().__init__(parent)
         self.set("text", str(text))
-
-    def _event(self, kind, ref, a, b):
-        if kind == EV_CLICK:
-            self.clicked.emit(False)
-
-    def setDefault(self, b):  # noqa: N802
-        pass
-
-    setAutoDefault = setFlat = setDefault
-
-
-QToolButton = QPushButton
 
 
 class QCheckBox(QAbstractButton):
@@ -1461,11 +1473,22 @@ class QCheckBox(QAbstractButton):
     def text(self):
         return self.get_str("label")
 
+    def isCheckable(self):  # noqa: N802
+        return True
+
     def isChecked(self):  # noqa: N802
         return self.get("value") != 0
 
     def setChecked(self, b):  # noqa: N802
-        self.set("set_value", 1.0 if b else 0.0)
+        if bool(b) != self.isChecked():
+            self.set("set_value", 1.0 if b else 0.0)
+            self._state_changed()
+
+    def _state_changed(self):
+        on = self.isChecked()
+        self.toggled.emit(on)
+        self.stateChanged.emit(Qt.Checked if on else Qt.Unchecked)
+        self.checkStateChanged.emit(Qt.Checked if on else Qt.Unchecked)
 
     def checkState(self):  # noqa: N802
         return Qt.Checked if self.isChecked() else Qt.Unchecked
@@ -1478,18 +1501,17 @@ class QCheckBox(QAbstractButton):
 
     def click(self):
         self.toggle()
+        self.clicked.emit(self.isChecked())
 
     def _event(self, kind, ref, a, b):
         if kind == EV_CHANGE:
-            on = self.isChecked()
-            self.toggled.emit(on)
-            self.stateChanged.emit(Qt.Checked if on else Qt.Unchecked)
-            self.checkStateChanged.emit(Qt.Checked if on else Qt.Unchecked)
-            self.clicked.emit(on)
+            self._state_changed()
+            self.clicked.emit(self.isChecked())
 
 
 class QRadioButton(QAbstractButton):
     KIND = "radio"
+    _AUTO_EXCLUSIVE = True
 
     def __init__(self, text="", parent=None):
         super().__init__(parent)
@@ -1502,61 +1524,46 @@ class QRadioButton(QAbstractButton):
     def text(self):
         return self.get_str("label")
 
+    def isCheckable(self):  # noqa: N802
+        return True
+
     def isChecked(self):  # noqa: N802
         return self.get("value") != 0
 
     def setChecked(self, b):  # noqa: N802
         if bool(b) != self.isChecked():
             self.set("set_value", 1.0 if b else 0.0)
+            self._state_changed()
+
+    def _state_changed(self):
+        on = self.isChecked()
+        if on:  # Qt auto-exclusive: siblings turn off
+            for r in self._siblings():
+                r.setChecked(False)
+        self.toggled.emit(on)
 
     def click(self):
         self.setChecked(True)
+        self.clicked.emit(True)
 
     def _siblings(self):
         if self._group is not None:
-            return [r for r in self._group._buttons if r is not self]
+            return [r for r in self._group.buttons() if r is not self] if self._group.exclusive() else []
         container = self.parent
-        if container is None:
+        if container is None or not self.autoExclusive():
             return []
         return [c for c in _kids(container) if isinstance(c, QRadioButton) and c is not self]
 
     def _event(self, kind, ref, a, b):
         if kind == EV_CHANGE:
-            on = self.isChecked()
-            if on:  # Qt auto-exclusive: siblings turn off
-                for r in self._siblings():
-                    if r.isChecked():
-                        r.set("set_value", 0.0)
-            self.toggled.emit(on)
-            if on:
+            self._state_changed()
+            if self.isChecked():
                 self.clicked.emit(True)
 
 
-class QButtonGroup:
-    buttonClicked = Signal(object)
-    idClicked = Signal(int)
-
-    def __init__(self, parent=None):
-        self._buttons = []
-
-    def addButton(self, b, id=-1):  # noqa: N802, A002
-        self._buttons.append(b)
-        b._group = self
-        b.clicked.connect(lambda *a, b=b: (self.buttonClicked.emit(b),
-                                           self.idClicked.emit(self._buttons.index(b))))
-
-    def buttons(self):
-        return list(self._buttons)
-
-    def checkedButton(self):  # noqa: N802
-        for b in self._buttons:
-            if b.isChecked():
-                return b
-        return None
-
-
-class QLineEdit(QWidget):
+class QLineEdit(LineEditMore, QWidget):
     KIND = "text"
+    inputRejected = Signal()
     textChanged = Signal(str)
     textEdited = Signal(str)
     returnPressed = Signal()
@@ -1574,27 +1581,42 @@ class QLineEdit(QWidget):
         return self.get_str("value")
 
     def setText(self, t):  # noqa: N802
-        self.set("set_value", str(t))
+        old = self.text()
+        self.__dict__["_good"] = str(t)[:self.maxLength()]
+        self.__dict__["_modified_text"] = False  # Qt: setText resets the modified flag
+        self.set("set_value", self.__dict__["_good"])
+        if self.text() != old:
+            self.textChanged.emit(self.text())
 
     def clear(self):
         self.setText("")
 
-    def setPlaceholderText(self, t):  # noqa: N802
-        self.set("placeholder", str(t))
-
     def setReadOnly(self, b):  # noqa: N802
         self.set("enabled", not b)
 
+    Normal, NoEcho, Password, PasswordEchoOnEdit = 0, 1, 2, 3
+    _ECHO_MASK = {NoEcho: " ", Password: "•", PasswordEchoOnEdit: "•"}  # the kit's mask character
+
     def setEchoMode(self, m):  # noqa: N802
+        m = int(m)
+        self.__dict__["_echo"] = m
+        self.set("mask", self._ECHO_MASK.get(m, ""))
+
+    def echoMode(self):  # noqa: N802
+        return self.__dict__.get("_echo", self.Normal)
+
+    def setClearButtonEnabled(self, b):  # noqa: N802
         pass
 
-    setMaxLength = setValidator = setClearButtonEnabled = setAlignment = setEchoMode
+    setAlignment = setClearButtonEnabled
 
     def keyPressEvent(self, e):  # noqa: N802
         pass
 
     def _on_event(self, kind, ref, a, b):
         if kind == EV_CHANGE:
+            if not self._accept_edit():  # cut to maxLength, or refused by the validator
+                return
             self.textChanged.emit(self.text())
             self.textEdited.emit(self.text())
         elif kind == EV_SUBMIT:
@@ -1651,54 +1673,27 @@ class QTextEdit(QWidget):
 QPlainTextEdit = QTextEdit
 
 
-class QAbstractSlider(QWidget):
+class QAbstractSlider(SliderMore, RangeMore, QWidget):
+    actionTriggered = Signal(int)
     valueChanged = Signal(int)
     sliderMoved = Signal(int)
+    sliderPressed = Signal()
     sliderReleased = Signal()
     rangeChanged = Signal(int, int)
 
-    def _setup(self):
-        self.set("integer", True)
-        self.set("precision", 0)
-        self.set("min", 0.0)
-        self.set("max", 99.0)
-        self.set("step", 1.0)
-
-    def setRange(self, lo, hi):  # noqa: N802
-        self.set("min", float(lo))
-        self.set("max", float(hi))
-        self.rangeChanged.emit(int(lo), int(hi))
-
-    def setMinimum(self, v):  # noqa: N802
-        self.set("min", float(v))
-
-    def setMaximum(self, v):  # noqa: N802
-        self.set("max", float(v))
-
-    def minimum(self):
-        return int(self.get("min"))
-
-    def maximum(self):
-        return int(self.get("max"))
-
-    def value(self):
-        return int(round(self.get("value")))
-
-    def setValue(self, v):  # noqa: N802
-        self.set("set_value", float(v))
-
-    def setSingleStep(self, s):  # noqa: N802
-        self.set("step", float(s))
-
-    def setPageStep(self, s):  # noqa: N802
+    def setTickPosition(self, *a):  # noqa: N802 - accepted; Blender's sliders draw no ticks
         pass
 
-    setTickPosition = setTickInterval = setTracking = setPageStep
+    setTickInterval = setTickPosition
+
+    def _on_event(self, kind, ref, a, b):
+        if kind in (EV_PRESS, EV_RELEASE):
+            self.setSliderDown(kind == EV_PRESS)
+        QWidget._on_event(self, kind, ref, a, b)
 
     def _event(self, kind, ref, a, b):
         if kind == EV_CHANGE:
-            self.valueChanged.emit(self.value())
-            self.sliderMoved.emit(self.value())
+            self._moved()
 
 
 class QSlider(QAbstractSlider):
@@ -1708,39 +1703,42 @@ class QSlider(QAbstractSlider):
         if isinstance(orientation, QWidget):
             orientation, parent = Qt.Horizontal, orientation
         super().__init__(parent)
-
-    def setOrientation(self, o):  # noqa: N802
-        pass
+        self.setOrientation(orientation)
 
 
 class QDial(QSlider):
     pass
 
 
-class QSpinBox(QAbstractSlider):
+class QAbstractSpinBox(AbstractSpinBoxMore, QWidget):
+    """A Blender number field: drag it, click its arrows or type into it."""
     KIND = "number"
+    editingFinished = Signal()
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._prefix = ""
+    def prefix(self):
+        return ""
 
-    def setSuffix(self, s):  # noqa: N802
-        self.set("suffix", str(s))
+    def suffix(self):
+        return ""
 
-    def setPrefix(self, p):  # noqa: N802
-        self.set("label", str(p).rstrip(": "))
-
-    def stepUp(self):  # noqa: N802
-        self.setValue(self.value() + int(self.get("step")))
-
-    def stepDown(self):  # noqa: N802
-        self.setValue(self.value() - int(self.get("step")))
-
-    def text(self):
-        return str(self.value())
+    def cleanText(self):  # noqa: N802
+        return ""
 
 
-class QDoubleSpinBox(QSpinBox):
+class QSpinBox(SpinBoxMore, RangeMore, QAbstractSpinBox):
+    valueChanged = Signal(int)
+    textChanged = Signal(str)
+
+    def _value_changed(self):
+        self.valueChanged.emit(self.value())
+        self.textChanged.emit(self.text())
+
+    def _event(self, kind, ref, a, b):
+        if kind == EV_CHANGE:
+            self._value_changed()
+
+
+class QDoubleSpinBox(DoubleSpinBoxMore, QSpinBox):
     valueChanged = Signal(float)
 
     def _setup(self):
@@ -1749,18 +1747,9 @@ class QDoubleSpinBox(QSpinBox):
         self.set("precision", 2)
         self.set("step", 0.1)
 
-    def value(self):
-        return self.get("value")
-
-    def setDecimals(self, d):  # noqa: N802
-        self.set("precision", int(d))
-
-    def _event(self, kind, ref, a, b):
-        if kind == EV_CHANGE:
-            self.valueChanged.emit(self.value())
 
 
-class QProgressBar(QWidget):
+class QProgressBar(ProgressBarMore, QWidget):
     KIND = "progress"
     valueChanged = Signal(int)
 
@@ -1817,40 +1806,46 @@ class QProgressBar(QWidget):
         self.set("text", text if self._text_visible else "")
 
 
-class QComboBox(QWidget):
+class QComboBox(ComboBoxMore, QWidget):
     KIND = "dropdown"
     currentIndexChanged = Signal(int)
     currentTextChanged = Signal(str)
     activated = Signal(int)
+    textActivated = Signal(str)
 
     def _setup(self):
         self._items = []
         self._data = []
+        self._icons = []
 
-    def addItem(self, text, data=None):  # noqa: N802
-        if isinstance(text, QIcon):
-            text, data = data, None
-        self._items.append(str(text))
-        self._data.append(data)
-        self.set("items", self._items)
+    def addItem(self, *args):  # noqa: N802 - (text[, data]) or (icon, text[, data])
+        self.insertItem(self.count(), *args)
 
     def addItems(self, texts):  # noqa: N802
         for t in texts:
             self.addItem(t)
 
-    def insertItem(self, index, text, data=None):  # noqa: N802
+    def insertItem(self, index, *args):  # noqa: N802 - (index, text[, data]) or (index, icon, text[, data])
+        icon = args[0] if isinstance(args[0], QIcon) else None
+        text, *rest = args[1:] if icon is not None else args
+        if self.count() >= self.maxCount():
+            return
         self._items.insert(index, str(text))
-        self._data.insert(index, data)
-        self.set("items", self._items)
+        self._data.insert(index, rest[0] if rest else None)
+        self._icons.insert(index, icon)
+        self._sync()
+        if len(self._items) == 1:
+            self._index_changed()  # the first item becomes current (Qt)
 
     def removeItem(self, index):  # noqa: N802
         del self._items[index]
         del self._data[index]
-        self.set("items", self._items)
+        del self._icons[index]
+        self._sync()
 
     def clear(self):
-        self._items, self._data = [], []
-        self.set("items", [])
+        self._items, self._data, self._icons = [], [], []
+        self._sync()
 
     def count(self):
         return len(self._items)
@@ -1865,7 +1860,14 @@ class QComboBox(QWidget):
         return int(self.get("value")) if self._items else -1
 
     def setCurrentIndex(self, i):  # noqa: N802
+        old = self.currentIndex()
         self.set("set_value", float(i))
+        if self.currentIndex() != old:
+            self._index_changed()
+
+    def _index_changed(self):
+        self.currentIndexChanged.emit(self.currentIndex())
+        self.currentTextChanged.emit(self.currentText())
 
     def currentText(self):  # noqa: N802
         i = self.currentIndex()
@@ -1887,10 +1889,9 @@ class QComboBox(QWidget):
 
     def _event(self, kind, ref, a, b):
         if kind == EV_CHANGE:
-            i = self.currentIndex()
-            self.currentIndexChanged.emit(i)
-            self.currentTextChanged.emit(self.currentText())
-            self.activated.emit(i)
+            self._index_changed()
+            self.activated.emit(self.currentIndex())
+            self.textActivated.emit(self.currentText())
 
 
 class QListWidgetItem:
@@ -2240,9 +2241,10 @@ class QTableWidget(QWidget):
             self.cellDoubleClicked.emit(self.currentRow(), 0)
 
 
-class QTabWidget(QWidget):
+class QTabWidget(TabWidgetMore, QWidget):
     KIND = "tabs"
     currentChanged = Signal(int)
+    tabBarClicked = Signal(int)
 
     def _setup(self):
         self._pages, self._titles = [], []
@@ -2278,246 +2280,12 @@ class QTabWidget(QWidget):
 
     def _event(self, kind, ref, a, b):
         if kind == EV_CHANGE:
+            self.tabBarClicked.emit(int(a))
             self.currentChanged.emit(int(a))
-
-
-class QGroupBox(QWidget):
-    """Drawn as a Blender panel (header + body)."""
-
-    def __init__(self, title="", parent=None):
-        if isinstance(title, QWidget):
-            title, parent = "", title
-        super().__init__(parent)
-        self.set("text", str(title))
-        self.set("padding", round(0.3 * buipy.kit_unit()))
-
-    def setTitle(self, t):  # noqa: N802
-        self.set("text", str(t))
-
-    def title(self):
-        return self.get_str("text")
-
-
-class QScrollArea(QWidget):
-    KIND = "scroll"
-
-    def _setup(self):
-        self.set("rows", 10)
-
-    def setWidget(self, w):  # noqa: N802
-        for c in _kids(self):
-            self.remove(c)
-        self.add(w)
-
-    def setWidgetResizable(self, b):  # noqa: N802
-        pass
-
-    setHorizontalScrollBarPolicy = setVerticalScrollBarPolicy = setWidgetResizable
-
-
-class QStatusBar(QWidget):
-    KIND = "label"
-
-    def showMessage(self, text, timeout=0):  # noqa: N802
-        self.set("text", str(text))
-        if timeout:
-            _timers.after(timeout, self.clearMessage)
-
-    def clearMessage(self):  # noqa: N802
-        self.set("text", "")
-
-    def currentMessage(self):  # noqa: N802
-        return self.get_str("text")
 
 
 # ==========================================================================
 # Menus & actions
-
-
-class QAction:
-    triggered = Signal(bool)
-    toggled = Signal(bool)
-
-    def __init__(self, text="", parent=None, triggered=None):
-        if isinstance(text, QIcon):
-            text = parent if isinstance(parent, str) else ""
-        self._text = str(text)
-        self._shortcut = ""
-        self._checkable = False
-        self._checked = False
-        self._enabled = True
-        if triggered is not None:
-            self.triggered.connect(triggered)
-
-    def text(self):
-        return self._text
-
-    def setText(self, t):  # noqa: N802
-        self._text = str(t)
-
-    def setShortcut(self, s):  # noqa: N802
-        self._shortcut = str(s)
-
-    def shortcut(self):
-        return self._shortcut
-
-    def setCheckable(self, b):  # noqa: N802
-        self._checkable = bool(b)
-
-    def isCheckable(self):  # noqa: N802
-        return self._checkable
-
-    def setChecked(self, b):  # noqa: N802
-        self._checked = bool(b)
-        self.toggled.emit(self._checked)
-
-    def isChecked(self):  # noqa: N802
-        return self._checked
-
-    def setEnabled(self, b):  # noqa: N802
-        self._enabled = bool(b)
-
-    def isEnabled(self):  # noqa: N802
-        return self._enabled
-
-    def trigger(self):
-        if self._checkable:
-            self.setChecked(not self._checked)
-        self.triggered.emit(self._checked)
-
-    def setStatusTip(self, *a):  # noqa: N802
-        pass
-
-    setToolTip = setIcon = setStatusTip
-
-    def _item(self):
-        return MenuItem(self._text, self.trigger, shortcut=self._shortcut.replace("+", " ")
-                        if self._shortcut else None,
-                        checked=self._checked if self._checkable else None,
-                        enabled=self._enabled)
-
-
-class QMenu:
-    aboutToShow = Signal()
-    triggered = Signal(object)
-
-    def __init__(self, title="", parent=None):
-        if isinstance(title, QWidget):
-            title, parent = "", title
-        self._title = str(title)
-        self._actions = []
-        self._parent = parent
-
-    def title(self):
-        return self._title
-
-    def addAction(self, action, slot=None, shortcut=None):  # noqa: N802
-        if not isinstance(action, QAction):
-            action = QAction(action)
-            if slot is not None:
-                action.triggered.connect(lambda *a: slot())
-            if shortcut:
-                action.setShortcut(shortcut)
-        self._actions.append(action)
-        self._changed()
-        return action
-
-    def addMenu(self, menu):  # noqa: N802
-        if not isinstance(menu, QMenu):
-            menu = QMenu(menu)
-        menu._owner_menu = self
-        self._actions.append(menu)
-        self._changed()
-        return menu
-
-    def addSeparator(self):  # noqa: N802
-        self._actions.append("-")
-        self._changed()
-
-    def actions(self):
-        return [a for a in self._actions if isinstance(a, QAction)]
-
-    def clear(self):
-        self._actions = []
-        self._changed()
-
-    def _items(self):
-        out = []
-        for a in self._actions:
-            if a == "-":
-                out.append("-")
-            elif isinstance(a, QMenu):
-                out.append(MenuItem(a._title, submenu=a._items()))
-            else:
-                out.append(a._item())
-        return out
-
-    def _changed(self):
-        bar = getattr(self, "_bar", None) or getattr(getattr(self, "_owner_menu", None),
-                                                     "_bar", None)
-        if bar is not None:
-            bar._rebuild()
-
-    def exec(self, pos=None):
-        self.popup(pos)
-
-    exec_ = exec
-
-    def popup(self, pos=None):
-        win = self._window_widget()
-        if win is None or win._ctx is None:
-            return
-        at = (pos.x(), pos.y()) if pos is not None else None
-        self.aboutToShow.emit()
-        win._ctx.open_menu(None, self._items(), None, at)
-
-    def _window_widget(self):
-        p = self._parent
-        while p is not None and isinstance(p, QWidget) and p._parent_widget is not None:
-            p = p._parent_widget
-        if p is None:
-            for w in _custom_or_top():
-                return w
-        return p
-
-
-def _custom_or_top():
-    import gc
-    return [o for o in gc.get_objects() if isinstance(o, QWidget) and o._window is not None]
-
-
-class QMenuBar:
-    def __init__(self, parent=None):
-        self._menus: List[QMenu] = []
-        self._node = buipy.KitNode("menubar")
-
-    def addMenu(self, menu):  # noqa: N802
-        if not isinstance(menu, QMenu):
-            menu = QMenu(menu)
-        menu._bar = self
-        self._menus.append(menu)
-        self._rebuild()
-        return menu
-
-    def addAction(self, action):  # noqa: N802
-        return action
-
-    def _rebuild(self):
-        for c in self._node.children:
-            self._node.remove(c)
-        for m in self._menus:
-            b = buipy.KitNode("menubutton")
-            b.set("text", m._title)
-            b.set_menu(m._items())
-            self._node.add(b)
-
-    def absolutePos(self):  # noqa: N802
-        r = self._node.rect
-        return r[0], r[1]
-
-
-# ==========================================================================
-# QPainter (records into the widget's kit canvas)
 
 
 class QPainter:
@@ -2726,20 +2494,6 @@ class QPainter:
 # Dialog stubs (no blocking native dialogs)
 
 
-class QMessageBox:
-    Ok, Cancel, Yes, No = 0x400, 0x400000, 0x4000, 0x10000
-
-    @staticmethod
-    def information(parent, title, text, *a, **kw):
-        return QMessageBox.Ok
-
-    warning = critical = about = information
-
-    @staticmethod
-    def question(parent, title, text, *a, **kw):
-        return QMessageBox.Yes
-
-
 class QFileDialog:
     @staticmethod
     def _blender(kind, caption, directory, filter, multiple=False):  # noqa: A002
@@ -2794,4 +2548,22 @@ class QFileDialog:
             return ""
 
 
-QStackedWidget = QWidget
+
+# Qt's other widgets, models, dialogs and core classes: feature modules that build on the above
+from bui.qtactions import (QAction, QActionGroup, QButtonGroup, QMenu, QMenuBar,  # noqa: E402,F401
+                           QToolButton)
+from bui.qtlayouts import (QBoxLayout, QFormLayout, QGridLayout, QHBoxLayout, QLayout,  # noqa: E402,F401
+                           QLayoutItem, QMargins, QSizePolicy, QSpacerItem, QStackedLayout, QVBoxLayout,
+                           QWidgetItem)
+from bui.qtcontainers import (QDockWidget, QFrame, QGroupBox, QScrollArea, QSplitter,  # noqa: E402,F401
+                              QStackedWidget, QStatusBar, QTabBar, QToolBar, QToolBox)
+from bui.qtviews import (QAbstractItemModel, QAbstractListModel, QAbstractTableModel,  # noqa: E402,F401
+                         QItemSelectionModel, QListView, QModelIndex, QPersistentModelIndex,
+                         QStandardItem, QStandardItemModel, QStringListModel, QTableView, QTreeView)
+from bui.qtdialogs import QDialogButtonBox, QInputDialog, QMessageBox  # noqa: E402,F401
+from bui.qtcore import QClipboard, QKeySequence, QSettings, QShortcut  # noqa: E402,F401
+from bui.qtdates import (QCalendarWidget, QDate, QDateEdit, QDateTime, QDateTimeEdit, QTime,  # noqa: E402,F401
+                         QTimeEdit)
+from bui.qtgui import (QContextMenuEvent, QCursor, QDoubleValidator, QFontMetrics,  # noqa: E402,F401
+                       QFontMetricsF, QIntValidator, QPalette, QRegularExpression,
+                       QRegularExpressionValidator, QResizeEvent, QScreen, QTimerEvent, QValidator)

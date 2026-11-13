@@ -5,7 +5,7 @@ description: How much of each API BUI implements, in one place. tkinter, Qt, HTM
 section: Reference
 order: 40
 languages: ["python", "rust", "javascript", "c", "cpp", "imgui"]
-sources: ["SYNTAX_COVERAGE.md", "docs/rust.md", "docs/qt.md", "docs/imgui.md", "docs/tkinter.md", "docs/components.md", "README.md", "CHANGELOG.md"]
+sources: ["SYNTAX_COVERAGE.md", "docs/rust.md", "docs/qt.md", "docs/qt-coverage.md", "tools/qt_coverage.py", "docs/imgui.md", "docs/tkinter.md", "docs/components.md", "README.md", "CHANGELOG.md"]
 ---
 
 "Does BUI support X?" usually comes down to a number. This page collects every coverage figure in the repository, with how it was counted, so you can decide quickly and know exactly what you're getting.
@@ -15,7 +15,7 @@ sources: ["SYNTAX_COVERAGE.md", "docs/rust.md", "docs/qt.md", "docs/imgui.md", "
 | API | Coverage | Status |
 | --- | --- | --- |
 | tkinter and ttk | **7,846 of 7,846** public names | Complete |
-| Qt syntax | **About 220 of 920** public method names (~24%) on 25 core widget classes | Partial |
+| Qt syntax | **885 of 1,555** public methods, signals and slots (57%) on 36 core widget classes | Partial |
 | Blender components (Python) | **45** components | Complete |
 | HTML elements (Rust, JavaScript) | **113 of 113** | Complete |
 | CSS properties (Rust, JavaScript) | **261 of 745** W3C properties render, **129** more parse | Partial |
@@ -38,20 +38,17 @@ The modules covered: the `tkinter` package itself, `ttk`, `messagebox`, `filedia
 
 ## Qt syntax
 
-**About 220 of 920 public method names, across 25 core widget classes (~24%).** There's no Qt in the test environment, so the count comes from Qt's own widget headers (`reference/qtbase`).
+**885 of 1,555 public methods, signals, slots and event handlers on 36 core widget classes (57%), and 1,176 of 3,205 across all 142 exported widget and GUI classes (37%).** There's no Qt in the test environment, so `tools/qt_coverage.py` counts from Qt's own headers (`reference/qtbase`): public methods, slots, signals and overridable `*Event` handlers, per class.
 
 What's there: widgets and layouts (box, grid, form, stacked), signals, `QPainter`, menus and actions, timers and property animations, and the common value types. `setStyleSheet` understands `color`, `background` on containers and `font-weight: bold`.
 
 **Missing:**
 
-- Model/view: `QAbstractItemModel`, `QListView`, `QTreeView`, `QTableView`, delegates.
-- `QSplitter`, `QDockWidget`, `QToolBar`, `QStackedWidget` as a real class, `QToolBox`, `QDateEdit` and friends, `QCalendarWidget`.
-- Most of `QWidget`'s wider surface: focus-policy details, `setWindowFlags`, geometry helpers, `grab`.
-- Stylesheet selectors and pseudo-states, `QPalette`; `QGraphicsScene`; rich text.
-- `QSettings`, `QThread`, `QClipboard`, drag and drop, `QShortcut`, OpenGL widgets.
-- `QMessageBox` and `QInputDialog` as drawn dialogs.
+- `QThread`, `QGraphicsScene`, OpenGL widgets.
+- Delegates, editing inside views, multi-selection; floating docks.
+- Stylesheet selectors and pseudo-states; drag and drop; rich text; tristate check boxes and editable combo boxes.
 
-Anything not implemented raises `AttributeError`: nothing fails silently.
+Anything not implemented raises `AttributeError`. A few setters are accepted and ignored: window icons, cursors, word wrap, echo mode and the like (`docs/qt.md` lists them).
 
 <ComingSoon feature="Qt parity">
 The plan is to measure against PySide6 itself, run the same programs on real Qt and on BUI (as the tkinter suite does), fill in the classes above, and then add an `install()` so `import PySide6` programs run unchanged.

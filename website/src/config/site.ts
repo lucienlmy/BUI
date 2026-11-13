@@ -4,7 +4,7 @@ export const site = {
   name: "BUI",
   title: "BUI: Blender's interface, for your app",
   description:
-    "BUI is Blender's user interface as a standalone library. Drive it from tkinter, Qt-style Python, Blender components, Rust, JavaScript and React, Dear ImGui or C.",
+    "BUI is Blender's user interface as a standalone library. Drive it from tkinter, Qt-style Python, Blender components, Rust, JavaScript and React, Dear ImGui, C or D.",
   repo: "https://github.com/ppmpreetham/BUI",
   /** Base for "Edit this page" links: the docs live in website/src/content/docs. */
   editBase: "https://github.com/ppmpreetham/BUI/edit/main/website/src/content/docs/",

@@ -14,7 +14,7 @@ If you've written Qt before, you already know how to build this app: a `QApplica
 By the end you'll have an export dialog where dragging a slider moves a progress bar, and a button that reads every field.
 
 <Callout type="warning" title="Qt syntax is partial">
-The everyday widgets, layouts and signals in this tutorial work and are tested. But measured against Qt's own headers, only about a quarter of the methods on the main widget classes exist so far, and some classes (model/view, docks, toolbars, splitters) are missing. Anything not there raises `AttributeError`; nothing fails silently. The [Qt syntax guide](../../python/qt-syntax/) has the full list.
+The everyday widgets, layouts and signals in this tutorial work and are tested. But measured against Qt's own headers, a little over half of the methods on the core widget classes exist so far, and some classes (QThread, QGraphicsScene) are missing. Anything not there raises `AttributeError`, and a few setters are accepted and ignored. The [Qt syntax guide](../../python/qt-syntax/) has the full list.
 </Callout>
 
 <Callout type="note" title="What you need">

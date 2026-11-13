@@ -1,0 +1,75 @@
+{
+  "name": "@blender-ui/vue",
+  "version": "0.5.1",
+  "description": "Vue 3 for BUI: Blender's UI in native windows from Vue components, refs and single-file components. Node.js and Bun.",
+  "type": "module",
+  "main": "index.cjs",
+  "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "require": "./index.cjs",
+      "default": "./index.js"
+    },
+    "./register": "./register.js",
+    "./plugin": "./plugin.js",
+    "./compile": "./compile.js",
+    "./package.json": "./package.json"
+  },
+  "bui": {
+    "bunPlugin": "./plugin.js"
+  },
+  "files": [
+    "index.js",
+    "index.cjs",
+    "own.js",
+    "index.d.ts",
+    "model.js",
+    "props.js",
+    "compile.js",
+    "plugin.js",
+    "register.js",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "test": "node --import ./register.js --test test/*.test.js",
+    "prepublishOnly": "node --import ./register.js --test test/*.test.js",
+    "prepack": "node -e \"const fs=require('fs');for(const f of ['LICENSE','THIRD_PARTY_NOTICES.md'])fs.copyFileSync('../../'+f,f)\"",
+    "postpack": "node -e \"const fs=require('fs');for(const f of ['LICENSE','THIRD_PARTY_NOTICES.md'])fs.rmSync(f,{force:true})\""
+  },
+  "engines": {
+    "node": ">=22.15"
+  },
+  "dependencies": {
+    "@blender-ui/native": "^0.5.1"
+  },
+  "peerDependencies": {
+    "vue": "^3.5.0"
+  },
+  "devDependencies": {
+    "vue": "3.5.45"
+  },
+  "license": "GPL-3.0-or-later",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ppmpreetham/BUI.git",
+    "directory": "bindings/vue"
+  },
+  "homepage": "https://bui.preetham.top",
+  "bugs": {
+    "url": "https://github.com/ppmpreetham/BUI/issues"
+  },
+  "keywords": [
+    "vue",
+    "vue3",
+    "single-file-components",
+    "blender",
+    "ui",
+    "desktop",
+    "native",
+    "tailwind",
+    "bun"
+  ]
+}

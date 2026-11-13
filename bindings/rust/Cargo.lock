@@ -37,7 +37,7 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
 name = "blenderui"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui-macros",
  "blenderui-sys",
@@ -53,28 +53,28 @@ dependencies = [
 
 [[package]]
 name = "blenderui-imgui"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui-sys",
 ]
 
 [[package]]
 name = "blenderui-jsview"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui",
 ]
 
 [[package]]
 name = "blenderui-macros"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui-tailwind",
 ]
 
 [[package]]
 name = "blenderui-node"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui",
  "blenderui-jsview",
@@ -85,11 +85,11 @@ dependencies = [
 
 [[package]]
 name = "blenderui-paint"
-version = "0.5.0"
+version = "0.5.1"
 
 [[package]]
 name = "blenderui-qjs"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui",
  "blenderui-jsview",
@@ -98,25 +98,25 @@ dependencies = [
 
 [[package]]
 name = "blenderui-sys"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "cmake",
 ]
 
 [[package]]
 name = "blenderui-table"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui-paint",
 ]
 
 [[package]]
 name = "blenderui-tailwind"
-version = "0.5.0"
+version = "0.5.1"
 
 [[package]]
 name = "blenderui-vlist"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "blenderui-paint",
 ]

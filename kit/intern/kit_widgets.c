@@ -49,8 +49,8 @@ static int state_of(const BKNode *n)
   if (!(n->flags & NF_EMBOSS)) {
     st |= ST_NO_EMBOSS;
   }
-  if (n->flags & NF_SELECTED) {
-    st = (st & ~ST_HOVER) | ST_SELECT; /* part of a multi-drag */
+  if (n->flags & (NF_SELECTED | NF_SELECT)) {
+    st = (st & ~ST_HOVER) | ST_SELECT; /* part of a multi-drag, or held (UI_SELECT) */
   }
   if (n->flags & NF_ACTIVE_DEFAULT) {
     st |= ST_ACTIVE_DEFAULT;
@@ -1517,8 +1517,11 @@ static void separator_init(BKNode *n)
 
 static void separator_measure(BKNode *n, int *rw, int *rh)
 {
-  *rw = 0;
-  *rh = BK_MAX(1, (int)(n->factor * u()));
+  /* "vertical": a line across a row (uiButSeparatorLine.is_vertical) */
+  const int size = BK_MAX(1, (int)(n->factor * u()));
+  const bool vertical = (n->flags & NF_VERTICAL) != 0;
+  *rw = vertical ? size : 0;
+  *rh = vertical ? 0 : size;
 }
 
 static void separator_draw(BKNode *n)
@@ -1526,7 +1529,12 @@ static void separator_draw(BKNode *n)
   if (n->flags & NF_LINE) {
     float c[4];
     bk_rgba_alpha(bk_theme.text, 0.15f, c);
-    bk_fill_f(n->x, n->y + n->h / 2, n->w, 1, c);
+    if (n->flags & NF_VERTICAL) {
+      bk_fill_f(n->x + n->w / 2, n->y, 1, n->h, c);
+    }
+    else {
+      bk_fill_f(n->x, n->y + n->h / 2, n->w, 1, c);
+    }
   }
 }
 

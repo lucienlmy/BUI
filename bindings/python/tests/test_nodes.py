@@ -126,6 +126,71 @@ def test_value_field_and_view():
     assert ed.zoom > z
 
 
+def control_pos(ed, node, k):
+    """The center of control ``k``: below the header and the outputs, in the padded block."""
+    gx, gy = node.location
+    outs = sum(1 for s in node.strs("items") if s.startswith("o|"))
+    return to_screen(ed, gx + node.get("nwidth") / 2, gy + 20 + 5 + outs * 22 + 2.5 + k * 22 + 10)
+
+
+def test_node_controls():
+    events = []
+    n = Node("Tool", inputs=[("In", "float")], outputs=[("Out", "float")], location=(0, 0),
+             controls=[("button", "Run"), ("checkbox", "Wireframe", False),
+                       ("dropdown", "Mode", ["Fast", "Exact", "Slow"], 0)],
+             on_change=lambda node, what, v: events.append((what, v)))
+    ed = NodeEditor([n], fill=True)
+    app = App("nodes", (800, 500), ed, padding=0)
+    app.render_raster()
+    ed.set("zoom", 1.0)
+    ed.set("panx", 50.0)
+    ed.set("pany", 50.0)
+    app.render_raster()
+    # the block sits between the outputs and the inputs: the input socket moved down by it
+    gx, gy = n.location
+    ix, iy = to_screen(ed, gx, gy + 20 + 5 + 1 * 22 + (5 + 3 * 22) + 10)
+    ox, oy = out_socket(ed, n)
+    assert ix == to_screen(ed, 0, 0)[0] and iy > oy + 3 * 22, (iy, oy)
+    # a button reports its press (and no value)
+    app.press(*control_pos(ed, n, 0), M0)
+    app.release(*control_pos(ed, n, 0), M0)
+    app.render_raster()
+    assert events[-1] == ("control", (0, None)), events
+    # a checkbox toggles
+    app.press(*control_pos(ed, n, 1), M0)
+    app.release(*control_pos(ed, n, 1), M0)
+    assert events[-1] == ("control", (1, True)) and n.control_value(1) is True, events
+    app.press(*control_pos(ed, n, 1), M0)
+    app.release(*control_pos(ed, n, 1), M0)
+    assert n.control_value(1) is False
+    # a dropdown opens a menu of its options; the picked one is the new value
+    app.press(*control_pos(ed, n, 2), M0)
+    app.release(*control_pos(ed, n, 2), M0)
+    app.render_raster()
+    assert app.ctx.popup_count() == 1, "the dropdown's menu is open"
+    assert n.control_value(2) == 0
+    rows = app.ctx.menu_rows(0)
+    assert [r[0] for r in rows] == ["Fast", "Exact", "Slow"], rows
+    x, y, w, h = rows[2][1]
+    app.motion(x + 10, y + h // 2, M0)
+    app.press(x + 10, y + h // 2, M0)
+    app.release(x + 10, y + h // 2, M0)
+    app.render_raster()
+    assert app.ctx.popup_count() == 0 and n.control_value(2) == 2
+    assert events[-1] == ("control", (2, 2)), events
+    # pressing the control did not move or select the node
+    assert n.location == (0.0, 0.0)
+
+
+def test_node_controls_validated():
+    try:
+        Node("x", controls=[("slider", "S")])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("an unknown control kind was accepted")
+
+
 def test_area_header():
     picked = []
     ed = NodeEditor()

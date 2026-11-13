@@ -30,7 +30,7 @@ NODE_CLASS_COLORS = {
     "matte": "#5a3838", "distort": "#3e5a5b", "layout": "#6c696f", "pattern": "#4f4f4f",
 }
 
-EV_MOVED, EV_SELECT, EV_VALUE, EV_COLLAPSE, EV_LINKS, EV_DELETE, EV_ORDER = 1, 2, 3, 4, 10, 11, 12
+EV_MOVED, EV_SELECT, EV_VALUE, EV_COLLAPSE, EV_CONTROL, EV_LINKS, EV_DELETE, EV_ORDER = 1, 2, 3, 4, 5, 10, 11, 12
 
 
 def _rgba(color) -> tuple:
@@ -47,19 +47,32 @@ class Node(Component):
     ``(name, type)``. Types color the sockets: float, int, bool, vector, color,
     shader, geometry, string, object, image, collection, texture, material,
     rotation, menu, matrix. ``kind`` picks the header color (see
-    NODE_CLASS_COLORS) or pass ``color=``."""
+    NODE_CLASS_COLORS) or pass ``color=``.
+
+    ``controls`` put widgets in the node's body, between the outputs and the
+    inputs, as Blender's node buttons do: ``("button", "Run")``,
+    ``("checkbox", "Wireframe", True)`` and ``("dropdown", "Mode", ["Fast",
+    "Exact"], 0)`` (a label, the options, the chosen index). ``on_change(node,
+    "control", (index, value))`` runs when one is pressed or changed: the value
+    is None for a button, a bool for a checkbox and the chosen option's index
+    for a dropdown. ``control_value(index)`` reads it."""
 
     TYPE = "graphnode"
+    CONTROLS = ("button", "checkbox", "dropdown")
 
     def __init__(self, title: str = "Node", *, inputs: Sequence = (), outputs: Sequence = (),
                  location=(0.0, 0.0), width: float = 140.0, kind: str = "converter",
-                 color=None, collapsed: bool = False,
+                 color=None, collapsed: bool = False, controls: Sequence = (),
                  on_change: Optional[Callable[["Node", int, object], None]] = None):
         super().__init__()
         self.title = title
         self.on_change = on_change
         self._inputs = [tuple(i) for i in inputs]
         self._outputs = [tuple(o) for o in outputs]
+        self._controls = [tuple(c) for c in controls]
+        for c in self._controls:
+            if not c or c[0] not in self.CONTROLS:
+                raise ValueError("a node control is one of %s, not %r" % (self.CONTROLS, c[:1]))
         self.set("label", title)
         self.set("color", _rgba(color if color is not None else NODE_CLASS_COLORS.get(kind, "#4f4f4f")))
         self.location = location
@@ -72,6 +85,16 @@ class Node(Component):
         items = []
         for o in self._outputs:
             items.append("o|%s|%s" % (o[0], o[1] if len(o) > 1 else "float"))
+        for c in self._controls:
+            kind, label = c[0], str(c[1]) if len(c) > 1 else ""
+            if kind == "button":
+                items.append("b|%s" % label)
+            elif kind == "checkbox":
+                items.append("c|%s|%d" % (label, 1 if len(c) > 2 and c[2] else 0))
+            else:
+                options = [str(o) for o in (c[2] if len(c) > 2 else ())]
+                index = int(c[3]) if len(c) > 3 else 0
+                items.append("d|%s|%d|%s" % (label, min(max(index, 0), max(len(options) - 1, 0)), ";".join(options)))
         for i in self._inputs:
             value = ""
             if len(i) > 2 and i[2] is not None:
@@ -117,12 +140,28 @@ class Node(Component):
                 k += 1
         raise IndexError(index)
 
+    def control_value(self, index: int):
+        """The value of control ``index``: None (a button), a bool (a checkbox) or the
+        chosen option's index (a dropdown)."""
+        k = 0
+        for s in self.strs("items"):
+            parts = s.split("|")
+            if parts[0] in ("b", "c", "d"):
+                if k == index:
+                    if parts[0] == "b":
+                        return None
+                    return bool(int(parts[2])) if parts[0] == "c" else int(parts[2])
+                k += 1
+        raise IndexError(index)
+
     def _on_event(self, kind, ref, a, b):
         if kind != EV_CHANGE or self.on_change is None:
             return
         what = {EV_MOVED: "location", EV_SELECT: "select", EV_VALUE: "value",
-                EV_COLLAPSE: "collapsed"}.get(int(a))
-        if what == "value":
+                EV_COLLAPSE: "collapsed", EV_CONTROL: "control"}.get(int(a))
+        if what == "control":
+            self.on_change(self, "control", (int(b), self.control_value(int(b))))
+        elif what == "value":
             self.on_change(self, "value", (int(b), self.input_value(int(b))))
         elif what == "location":
             self.on_change(self, what, self.location)
@@ -138,12 +177,14 @@ class NodeEditor(Component):
 
     TYPE = "nodeeditor"
 
-    def __init__(self, nodes: Sequence[Node] = (), *, links: Sequence = (),
+    def __init__(self, nodes: Sequence[Node] = (), *, links: Sequence = (), height: float = None,
                  on_links: Optional[Callable[[list], None]] = None,
                  on_delete: Optional[Callable[[list], None]] = None, **kw):
         super().__init__(**{k: v for k, v in kw.items()
                             if k in ("description", "enabled", "visible", "weight", "fill")})
         self.on_links, self.on_delete = on_links, on_delete
+        if height:  # natural height in units (default 14)
+            self.set("height", float(height))
         self._nodes: list = []
         for n in nodes:
             self.add_node(n)
@@ -153,16 +194,63 @@ class NodeEditor(Component):
     def nodes(self) -> list:
         return list(self._nodes)
 
+    # `_nodes` mirrors the children, and a link names nodes by their index, so every way of editing
+    # the children (add, insert, remove, replace, clear) goes through here and re-encodes the links
+    def _relink(self, links) -> None:
+        self.links = [l for l in links if l[0] in self._nodes and l[2] in self._nodes]
+
+    def add(self, *components):
+        links = self.links
+        for c in components:
+            if c in self._nodes:
+                self._nodes.remove(c)  # adding a child again moves it to the end
+        self._nodes.extend(components)
+        result = super().add(*components)
+        self._relink(links)
+        return result
+
+    def insert(self, index: int, component):
+        links = self.links
+        if component in self._nodes:
+            self._nodes.remove(component)  # it moves
+        result = super().insert(index, component)
+        n = len(self._nodes)
+        self._nodes.insert(n if index < 0 or index > n else index, component)
+        self._relink(links)
+        return result
+
+    def remove(self, component):
+        links = self.links
+        if component in self._nodes:
+            self._nodes.remove(component)
+        super().remove(component)
+        self._relink(links)
+        return component
+
+    def replace(self, old, new):
+        links = self.links
+        if new in self._nodes:
+            self._nodes.remove(new)  # it moves into old's place
+        slot = self._nodes.index(old)  # ValueError for a non-child, as Component.replace
+        result = super().replace(old, new)
+        self._nodes[slot] = new
+        self._relink(links)
+        return result
+
+    def clear(self):
+        self._nodes.clear()
+        super().clear()
+        self.links = []
+        return self
+
     def add_node(self, node: Node) -> Node:
-        self._nodes.append(node)
         self.add(node)
         return node
 
     def remove_node(self, node: Node) -> None:
-        links = [l for l in self.links if l[0] is not node and l[2] is not node]
-        self._nodes.remove(node)
+        if node not in self._nodes:
+            raise ValueError("remove_node(): node is not in this editor")
         self.remove(node)
-        self.links = links
 
     @property
     def links(self) -> list:

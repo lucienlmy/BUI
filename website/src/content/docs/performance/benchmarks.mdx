@@ -119,6 +119,17 @@ More results, at 100 and 1,000 cells:
 - **Memory:** Svelte keeps 10–17 MB more than React with signals at 3,000 cells. A heap snapshot puts it in Svelte's own effects, closures and each-block items (about 1.9 KB per cell); BUI's nodes are the same objects for both.
 - **Startup:** with its runtime bundled, a Svelte app reaches its first frame within 10–15 ms of a React one on Node.js and Bun (it was 0.1–0.3 s later), and as fast as React's when built with `bui build`.
 
+### Vue, next to React and Svelte
+
+**What was measured:** `@blender-ui/vue` in a second session, with React and Svelte run again for comparison (`bench/cells.js --vue [--isolate]`, `bench/startup.js --vue`). Every variant ran at 49–56 FPS here, so compare these rows with each other, not with the tables above.
+
+<BenchTable id="jsVue3000" />
+
+<BenchTable id="jsVueStartup" />
+
+- **State in the root component re-renders everything, as in React:** Vue runs the render function and compares the 3,000 cells, 5.4–6.7 ms per update. **With the changing cell in a component of its own,** only that component re-renders: 25–27 µs and 107–112 MB, in line with Svelte's runes.
+- **Startup:** a cached start never loads Vue's SFC compiler (`vue/compiler-sfc`), which took Node.js from 209 to 125 ms and Bun from 189 to 101 ms. The standalone executables bundle compiled components and start in 66 and 77 ms.
+
 </Tab>
 <Tab label="Linux">
 

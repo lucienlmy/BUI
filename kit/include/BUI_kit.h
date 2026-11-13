@@ -39,8 +39,8 @@
  * the two can differ (a shared build, a binding). */
 #define BUI_KIT_VERSION_MAJOR 0
 #define BUI_KIT_VERSION_MINOR 5
-#define BUI_KIT_VERSION_PATCH 0
-#define BUI_KIT_VERSION_STRING "0.5.0"
+#define BUI_KIT_VERSION_PATCH 1
+#define BUI_KIT_VERSION_STRING "0.5.1"
 /* One number to compare: 0.4.0 is 400, 1.2.3 is 10203. */
 #define BUI_KIT_VERSION \
   (BUI_KIT_VERSION_MAJOR * 10000 + BUI_KIT_VERSION_MINOR * 100 + BUI_KIT_VERSION_PATCH)

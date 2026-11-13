@@ -18,9 +18,13 @@ Where the version lives (one source of truth per registry, all moved together):
 * Python: `bindings/python/bui/_version.py` (the wheel reads it).
 * Rust: `[workspace.package]` in `bindings/rust/Cargo.toml`, and the `version = "..."` of every
   sibling path dependency (`blenderui-sys = { path = "...", version = "..." }`).
+* D: `bindings/d/dub.json` and the hand-written `BUI_KIT_VERSION_*` constants in
+  `bindings/d/source/bui/kit.d` (they mirror `kit/include/BUI_kit.h`).
 * npm (only with `--npm`): every already-published package in `bindings/package.json`'s workspaces
   moves to the same version; a package not on npm yet keeps its own first version. All of them
   follow `@blender-ui/native` in their dependency range. npm versions are otherwise independent of the tag.
+* LuaRocks: `bindings/lua/blenderui-<version>-1.rockspec` (its version, its source tag and its file
+  name move; the old file is removed, as a rename).
 * `CHANGELOG.md`: `[Unreleased]` becomes a dated section and a fresh `[Unreleased]` opens.
 * The lock files (`Cargo.lock`, `bindings/package-lock.json`) are refreshed (best effort).
 
@@ -38,7 +42,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from check_versions import npm_packages
+from check_versions import npm_packages, rockspecs
 
 ROOT = Path(__file__).resolve().parent.parent
 RUST = ROOT / "bindings" / "rust"
@@ -94,9 +98,10 @@ def on_npm(name: str) -> bool:
         raise
 
 
-def plan_edits(new: str, npm: str | None) -> dict[Path, str]:
-    """Every file's new text, keyed by path. Nothing is written here."""
+def plan_edits(new: str, npm: str | None) -> tuple[dict[Path, str], list[Path]]:
+    """Every file's new text, keyed by path, and the files that go away (a rename's old name). Nothing is written here."""
     edits: dict[Path, str] = {}
+    gone: list[Path] = []
 
     def put(path: Path, text: str) -> None:
         if text != read(path):
@@ -110,6 +115,18 @@ def plan_edits(new: str, npm: str | None) -> dict[Path, str]:
         htext = re.sub(rf"(#define BUI_KIT_VERSION_{part}\s+)\d+", rf"\g<1>{value}", htext)
     htext = re.sub(r'(#define BUI_KIT_VERSION_STRING\s+")[^"]+(")', rf"\g<1>{new}\g<2>", htext)
     put(header, htext)
+
+    dub = ROOT / "bindings" / "d" / "dub.json"
+    text = read(dub)
+    text = re.sub(r'("version"\s*:\s*")[^"]+(")', rf"\g<1>{new}\g<2>", text, count=1)
+    put(dub, text)
+
+    dkit = ROOT / "bindings" / "d" / "source" / "bui" / "kit.d"
+    text = read(dkit)
+    for part, value in zip(("MAJOR", "MINOR", "PATCH"), new.split(".")):
+        text = re.sub(rf"(enum BUI_KIT_VERSION_{part}\s*=\s*)\d+", rf"\g<1>{value}", text)
+    text = re.sub(r'(enum BUI_KIT_VERSION_STRING\s*=\s*")[^"]+(")', rf"\g<1>{new}\g<2>", text)
+    put(dkit, text)
 
     ws = RUST / "Cargo.toml"
     text = read(ws)
@@ -128,6 +145,15 @@ def plan_edits(new: str, npm: str | None) -> dict[Path, str]:
                 line = re.sub(r'(version\s*=\s*")[^"]+(")', rf"\g<1>{new}\g<2>", line)
             out.append(line)
         put(toml, "".join(out))
+
+    # LuaRocks: the version is in the file name too, so the rockspec is renamed
+    (rock,) = rockspecs()
+    text = re.sub(r'(^version\s*=\s*")[^"]+(")', rf"\g<1>{new}-1\g<2>", read(rock), count=1, flags=re.M)
+    text = re.sub(r'(tag\s*=\s*"v)[^"]+(")', rf"\g<1>{new}\g<2>", text, count=1)
+    renamed = rock.with_name(f"blenderui-{new}-1.rockspec")
+    if renamed != rock:
+        edits[renamed] = text
+        gone.append(rock)
 
     if npm:
         # `npm` is patch, minor, major or X.Y.Z. Each already-published package moves by that kind
@@ -151,7 +177,7 @@ def plan_edits(new: str, npm: str | None) -> dict[Path, str]:
         today = datetime.date.today().isoformat()
         text = text.replace("## [Unreleased]", f"## [Unreleased]{nl}{nl}## [{new}] - {today}", 1)
         put(log, text)
-    return edits
+    return edits, gone
 
 
 def refresh_locks(npm: bool) -> list[Path]:
@@ -221,15 +247,19 @@ def main() -> int:
     new = next_version(cur, a.version)
     if new == cur:
         sys.exit(f"already at {cur}")
-    edits = plan_edits(new, a.npm)
+    edits, gone = plan_edits(new, a.npm)
     print(f"{cur} -> {new}" + (f"   (npm packages: {a.npm})" if a.npm else ""))
     for path in edits:
         print("  edit", path.relative_to(ROOT).as_posix())
+    for path in gone:
+        print("  remove", path.relative_to(ROOT).as_posix())
     if a.dry_run:
         return 0
     for path, text in edits.items():
         write(path, text)
-    touched = list(edits)
+    for path in gone:
+        path.unlink()
+    touched = list(edits) + gone
     if not a.no_lock:
         touched += refresh_locks(bool(a.npm))
 

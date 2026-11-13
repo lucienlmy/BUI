@@ -264,6 +264,39 @@ const svelte: Syntax = {
   source: "bindings/svelte/README.md",
 };
 
+const vue: Syntax = {
+  id: "vue",
+  label: "Vue",
+  title: "Vue 3, in a native window",
+  blurb:
+    "Refs, v-model, slots and scoped styles, unchanged. Vue's own runtime and compiler run through a custom renderer over BUI's DOM, so a ref change updates the nodes that show it.",
+  lang: "vue",
+  file: "Counter.vue",
+  code: `<script setup>
+import { ref } from "vue"
+import { Button, NumberSlider } from "@blender-ui/vue"
+const count = ref(0)
+const size = ref(2)
+</script>
+
+<template>
+  <main styled class="p-6 flex flex-col gap-3">
+    <span>Clicks: {{ count }}</span>
+    <Button @click="count++">Add one</Button>
+    <NumberSlider v-model="size" :min="0" :max="10" />
+  </main>
+</template>
+
+<!-- app.js: render(Counter, { title: "Counter", gpu: true }) -->`,
+  install: "npm install @blender-ui/vue vue",
+  shot: "js-vue-tasks",
+  fallback: "images/shots/js-vue-tasks-dark.png",
+  alt: "A task list in Vue on BUI: a Blender text field and button, checkboxes and a progress bar",
+  caption: "examples/site/js/TodoVue.vue, Vue on BUI",
+  docs: "docs/javascript/vue/",
+  source: "bindings/vue/README.md",
+};
+
 const dom: Syntax = {
   id: "dom",
   label: "DOM-like API",
@@ -460,7 +493,7 @@ int main(void)
 export const languages: Language[] = [
   { id: "python", tab: "Python", icon: "file-py", syntaxes: [tkinter, qt] },
   { id: "rust", tab: "Rust", icon: "file-rs", syntaxes: [rsx, gpui, htmlBuilder] },
-  { id: "javascript", tab: "JavaScript", icon: "file-js", syntaxes: [react, svelte, dom] },
+  { id: "javascript", tab: "JavaScript", icon: "file-js", syntaxes: [react, svelte, vue, dom] },
   { id: "imgui", tab: "Dear ImGui", icon: "squares-four", syntaxes: [imguiCpp, imguiC, imguiPy, imguiRust] },
   { id: "c", tab: "C", icon: "file-c", syntaxes: [c] },
 ];

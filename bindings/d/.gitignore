@@ -1,0 +1,8 @@
+.bui/
+.dub/
+dub.selections.json
+*.obj
+*.lib
+*.a
+*.exe
+*.pdb

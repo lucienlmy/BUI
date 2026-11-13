@@ -67,7 +67,7 @@ These work on every component, as constructor keywords or properties:
 | `enabled`, `visible` | Grey out or hide the component |
 | `weight=` | Its share of the width in a `Row` (default 1; `0` keeps its natural width) |
 | `x`, `y`, `w`, `h`, `rect` | Where it ended up after layout |
-| `add(*children)`, `remove(child)`, `children` | Edit the tree (on containers) |
+| `add(*children)`, `insert(index, child)`, `remove(child)`, `replace(old, new)`, `clear()`, `children` | Edit the tree (on containers; a `Panel` edits its body) |
 
 **Value components** (`NumberField`, `NumberSlider`, `Checkbox`, `Toggle`, `TextField`, `Dropdown`, `EnumRow`, `ColorSwatch`, `VectorField` …) also have:
 
@@ -234,6 +234,16 @@ name = filebrowser.ask("save", defaultextension=".txt")
 
 
 The kind is `"open"`, `"save"` or `"directory"`; cancelling returns `None`. `tkinter.filedialog` and `QFileDialog` use the same browser.
+
+The same browser is a component, `FileBrowser`, to put in any layout:
+
+```py
+from blenderui.components import FileBrowser
+
+browser = FileBrowser("~/renders", filters=["Images\t*.png *.jpg"],
+                      on_change=lambda folder: print("now in", folder),
+                      on_submit=lambda paths: print(paths))   # [] when cancelled
+```
 
 ## GPU rendering
 

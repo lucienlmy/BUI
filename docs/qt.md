@@ -4,10 +4,9 @@
 layouts, `clicked.connect(...)`) that runs on BUI's C kit, with Blender's
 look. Neither Qt nor PySide is needed.
 
-> **Status: partial.** The everyday subset below works and is tested.
-> Measured against Qt's widget headers, about 24% of the method names
-> on the main widget classes exist (about 220 of 920). See [Coverage](#coverage) for what's
-> missing and the plan.
+> **Status: partial.** Measured against Qt's own headers by
+> `tools/qt_coverage.py`: 885 of 1,555 public methods, signals, slots and event handlers on 36 core widget classes (57%), and 1,176 of 3,205 across all 142 exported widget and GUI classes (37%).
+> See [Coverage](#coverage) for what's missing.
 
 ![Qt syntax on BUI](images/qt.png)
 
@@ -83,17 +82,18 @@ is much lower. See [getting-started.md](getting-started.md#gpu-rendering).
 
 | Area | Classes |
 |---|---|
-| Application | `QApplication` (`exec`, `quit`, `processEvents`), `QTimer` (`singleShot`, `start`, `stop`, `timeout`), `QPropertyAnimation`, `QEasingCurve` |
+| Application | `QApplication` (`exec`, `quit`, `processEvents`, `topLevelWidgets`, `allWidgets`, `focusWidget`, `activeWindow`, `closeAllWindows`, the default `font` and `palette`), `QTimer` (`singleShot`, `start`, `stop`, `timeout`), `QPropertyAnimation`, `QEasingCurve` |
 | Windows | `QWidget`, `QMainWindow` (`setCentralWidget`, `menuBar`, `statusBar`), `QDialog` (`exec`, `accept`, `reject`), `QFrame` |
-| Layouts | `QVBoxLayout`, `QHBoxLayout` (`addWidget(stretch)`, `addLayout`, `addStretch`, `addSpacing`, `insertWidget`, `setSpacing`, `setContentsMargins`), `QGridLayout` (spans, alignment, stretch), `QFormLayout.addRow`, `QStackedLayout` |
-| Widgets | `QLabel` (text, alignment, pixmap), `QPushButton` / `QToolButton`, `QCheckBox`, `QRadioButton` + `QButtonGroup` (auto-exclusive), `QLineEdit` (`textChanged`, `returnPressed`, `editingFinished`), `QTextEdit` / `QPlainTextEdit`, `QSlider` / `QDial`, `QSpinBox` / `QDoubleSpinBox`, `QProgressBar` (format), `QComboBox` (items, data, `currentIndexChanged`) |
+| Layouts | `QVBoxLayout`, `QHBoxLayout` / `QBoxLayout` (directions, `insert*`, `takeAt`, `replaceWidget`, stretch factors, `QSpacerItem`), `QGridLayout` (spans, alignment, row and column stretch and minimum sizes, `itemAtPosition`), `QFormLayout` (`insertRow`, `removeRow`, `labelForField`, `setRowVisible`), `QStackedLayout` (stacking modes) |
+| Widgets | `QLabel` (text, alignment, pixmap, `setNum`), `QPushButton` (checkable, flat, default, a menu), `QToolButton` (a default action, auto-raise, arrows, popup modes), `QCheckBox`, `QRadioButton` + `QButtonGroup` (ids, exclusive), `QLineEdit` (validators, `maxLength`, modified state), `QTextEdit` / `QPlainTextEdit`, `QSlider` / `QDial` (tracking, page steps, slider actions), `QAbstractSpinBox`, `QSpinBox` / `QDoubleSpinBox` (prefix, suffix, wrapping, special value, `validate`), `QProgressBar` (format), `QComboBox` (items, data, icons, a model, `showPopup`) |
 | Views | `QListWidget` / `QListWidgetItem`, `QTreeWidget` / `QTreeWidgetItem` (columns, expand), `QTableWidget` / `QTableWidgetItem` |
-| Containers | `QTabWidget`, `QGroupBox` (a Blender panel), `QScrollArea`, `QStatusBar` |
-| Menus | `QMenuBar`, `QMenu` (`addAction(text, slot, shortcut)`, submenus, separators, `popup`), `QAction` (checkable, shortcuts) |
+| Containers | `QTabWidget`, `QGroupBox` (checkable: the contents follow the check), `QFrame` (a Blender box, or a separator line), `QScrollArea` (`ensureWidgetVisible`), `QStatusBar` (permanent widgets, `messageChanged`) |
+| Menus | `QMenuBar` (menus, plain actions, a corner widget), `QMenu` (`addAction(text, slot, shortcut)`, submenus, sections, separators, `popup`), `QAction` (checkable, shortcuts bound on its window, visible, data, status tip shown in the status bar), `QActionGroup` |
 | Painting | `QPainter` (`fillRect`, `drawRect`, `drawRoundedRect`, `drawEllipse`, `drawLine`, `drawPolyline`, `drawPolygon`, `drawArc`, `drawPie`, `drawText`, `drawPixmap`, `translate`, `save`, `restore`, `setOpacity`), `QPen`, `QBrush`, `QColor`, `QFont`, `QPixmap` / `QImage` |
-| Events | Override `mousePressEvent`, `mouseReleaseEvent`, `mouseMoveEvent`, `mouseDoubleClickEvent`, `keyPressEvent`, `wheelEvent`, `enterEvent`, `leaveEvent`, `closeEvent`, `paintEvent`. Event types: `QMouseEvent`, `QKeyEvent`, `QWheelEvent`, `QPaintEvent`, `QCloseEvent`. |
-| Values | `Qt` constants (alignment, keys, orientation, check states), `QPoint`, `QSize`, `QRect`, `QMargins`, `QSizePolicy`, `QIcon` |
-| Dialogs | `QMessageBox` (static calls return immediately; not drawn yet), `QFileDialog` (`getOpenFileName(s)`, `getSaveFileName`, `getExistingDirectory`: Blender's File Browser; `BUI_FILEDIALOG=native` for the OS dialogs) |
+| Events | Override `mousePressEvent`, `mouseReleaseEvent`, `mouseMoveEvent`, `mouseDoubleClickEvent`, `keyPressEvent`, `keyReleaseEvent`, `wheelEvent`, `enterEvent`, `leaveEvent`, `resizeEvent`, `contextMenuEvent`, `timerEvent`, `closeEvent`, `paintEvent`. Event types: `QMouseEvent`, `QKeyEvent`, `QWheelEvent`, `QResizeEvent`, `QContextMenuEvent`, `QTimerEvent`, `QPaintEvent`, `QCloseEvent`. |
+| Values | `Qt` constants (alignment, keys, orientation, check states, window states and flags), `QPoint`, `QSize`, `QRect`, `QMargins`, `QSizePolicy`, `QIcon`, `QFontMetrics`, `QPalette` (Blender's theme colors), `QCursor.pos`, `QScreen`, validators (`QIntValidator`, `QDoubleValidator`, `QRegularExpressionValidator`) |
+| Dates | `QDate`, `QTime`, `QDateTime` (Qt's format strings, `Qt.ISODate`), `QDateTimeEdit` / `QDateEdit` / `QTimeEdit` (a Blender number field per section of the display format, in an aligned row; named months and AM/PM are dropdowns), `QCalendarWidget` (a month of day buttons under a header row) |
+| Dialogs | `QDialogButtonBox` (standard buttons and roles), `QMessageBox`, `QInputDialog`, `QFileDialog` (`getOpenFileName(s)`, `getSaveFileName`, `getExistingDirectory`: Blender's File Browser; `BUI_FILEDIALOG=native` for the OS dialogs) |
 
 Member-by-member tables: [../SYNTAX_COVERAGE.md](../SYNTAX_COVERAGE.md#qt-syntax-buiqtsyntax).
 
@@ -122,24 +122,82 @@ class Gauge(QWidget):
         self.update()                  # repaints the display list
 ```
 
+## Containers, models and dialogs
+
+```python
+from bui.qtsyntax import (QMainWindow, QDockWidget, QSplitter, QToolBox, QTreeView,
+                          QStandardItemModel, QStandardItem, QMessageBox, QSettings, Qt)
+
+win = QMainWindow()
+bar = win.addToolBar("Main")
+bar.addAction("Save", save)                      # a row of tool buttons
+model = QStandardItemModel()
+model.setHorizontalHeaderLabels(["Name", "Type"])
+model.appendRow([QStandardItem("Cube"), QStandardItem("Mesh")])
+tree = QTreeView()
+tree.setModel(model)                             # redraws when the model changes
+dock = QDockWidget("Outliner")
+dock.setWidget(tree)
+win.addDockWidget(Qt.LeftDockWidgetArea, dock)   # a Blender panel left of the central widget
+split = QSplitter(Qt.Vertical)                   # Blender's region edges, dragged
+win.setCentralWidget(split)
+if QMessageBox.question(win, "Quit", "Save changes?") == QMessageBox.Yes:
+    QSettings("Studio", "App").setValue("geometry/width", win.width())
+```
+
+- **Containers:** `QStackedWidget`, `QToolBox` (Blender panels: the Qt API keeps one open,
+  while a click on a header opens or closes that panel on its own, as in Blender), `QSplitter`
+  (region edges you drag), `QToolBar`, `QDockWidget`, `QTabBar`, and `QMainWindow.addToolBar`,
+  `addDockWidget`, `setStatusBar`, `takeCentralWidget`.
+- **Model/view:** `QStandardItemModel`, `QStringListModel`, the abstract models to subclass
+  (`QAbstractItemModel`, `QAbstractListModel`, `QAbstractTableModel`), `QModelIndex`,
+  `QItemSelectionModel`, and `QListView`, `QTreeView`, `QTableView`, drawn in Blender's tree
+  list. One row is selected at a time; views don't edit cells.
+- **Dialogs:** `QDialogButtonBox` (standard buttons by role, `accepted` / `rejected` /
+  `helpRequested`), `QMessageBox` (built on it, with Blender's info, question, warning and cancel
+  icons; the static helpers return the button clicked) and `QInputDialog` (`getText`, `getInt`,
+  `getDouble`, `getItem`).
+- **Actions and menus:** a `QAction` is shared by menus, tool buttons and its shortcut (bound on
+  the window of a widget it is in, as Blender's keymap). Hidden actions leave menus; doubled
+  separators collapse; `triggered` goes up from a submenu to its menu bar. `QActionGroup` and
+  `QButtonGroup` keep one checked. A checked button is drawn pressed in (Blender's `UI_SELECT`).
+- **Windows:** `windowState` / `showMaximized` / `showMinimized`, `setWindowOpacity`,
+  `Qt.WindowStaysOnTopHint`, minimum and maximum sizes (the host's window manager), `raise_` /
+  `lower`, `setWindowModified` (the `[*]` in the title), `startTimer`, `setPalette`, and the
+  context-menu policies (a handler, the widget's actions, or `customContextMenuRequested`).
+- **Core:** `QSettings` (an INI file per application with Qt's groups and arrays; on Windows Qt's
+  native format is the registry, here it's `%APPDATA%\<org>\<app>.ini`), `QKeySequence`,
+  `QShortcut` (the kit's key bindings; buttons' `setShortcut` uses it), `QClipboard`.
+- **QObject / QWidget:** `blockSignals`, dynamic properties (`setProperty` / `property`),
+  `findChild` / `findChildren`, `mapTo` / `mapFrom` / `childAt` / `childrenRect`, `adjustSize`,
+  `hasFocus` / `clearFocus`, `showEvent` / `hideEvent`, widget actions, and the descriptive
+  properties (`statusTip`, `whatsThis`, accessible names, focus and context-menu policies).
+
 ## Coverage
 
-There is no Qt installed in the test environment, so coverage was counted
-from Qt's own widget headers (`reference/qtbase`): **about 220 of 920
-public method names** across 25 core widget classes (~24%).
+`py tools/qt_coverage.py` counts it from Qt's own headers in `reference/qtbase` (there's no Qt in
+the test environment): every exported class's public methods, slots, signals and overridable
+`*Event` handlers, and whether the `bui.qtsyntax` class of the same name has each one. It writes
+the per-class table to [qt-coverage.md](qt-coverage.md). Today: 885 of 1,555 public methods, signals, slots and event handlers on 36 core widget classes (57%), and 1,176 of 3,205 across all 142 exported widget and GUI classes (37%). (The earlier
+"220 of 920" figure came from a looser count over 25 classes.)
 
-**Missing:**
+Missing names raise `AttributeError`. A few setters are accepted and ignored (word wrap, echo mode,
+cursors and the like). The accepted-but-ignored setters today: `setWindowIcon`, `setAttribute`,
+`setContentsMargins`, `setCursor`, `setMouseTracking`, `setAutoFillBackground`,
+`installEventFilter` (QWidget); `setWordWrap`, `setTextFormat`, `setOpenExternalLinks` (QLabel);
+`setEchoMode`, `setAlignment`, `setClearButtonEnabled` (QLineEdit); `setEditable` (QComboBox);
+`setTickPosition`, `setTickInterval` (sliders); `setLineWrapMode`, `setWordWrapMode`,
+`setPlaceholderText` (QTextEdit, QPlainTextEdit); `setColumnCount` (QTreeWidget); `setStyle` and
+`setStyleSheet` (QApplication); `setRenderHint(s)` (QPainter); item colors, flags and data on
+`QListWidgetItem`, `QTreeWidgetItem` and `QTableWidgetItem`.
 
-- Model/view: `QAbstractItemModel`, `QListView`, `QTreeView`,
-  `QTableView`, delegates
-- `QSplitter`, `QDockWidget`, `QToolBar`, `QStackedWidget` (as a real
-  class), `QToolBox`, `QDateEdit` and friends, `QCalendarWidget`
-- Most of `QWidget`'s surface: focus policy details, `setWindowFlags`,
-  geometry helpers, `grab`
-- Stylesheets beyond `color`, `background` and `font-weight`; `QPalette`
-- `QSettings`, `QThread`, `QClipboard`, drag-and-drop, `QShortcut`
-- `QMessageBox` and `QInputDialog` as drawn dialogs (the tkinter layer
-  already has Blender-styled dialogs that can be reused)
+Some setters keep their value for the getter without changing the drawing, because Blender has no
+such look: a frame's shadow and line widths, a slider's orientation (Blender's sliders are
+horizontal), a scroll area's horizontal policy and `widgetResizable`, the status bar's size grip,
+a layout's per-side margins (the kit pads a frame evenly), and an action's priority, menu role and
+auto-repeat.
+
+**Missing:** `QThread`, drag and drop, delegates and editing inside views, multi-selection, floating docks, tristate check boxes, editable combo boxes, `QGraphicsScene`, OpenGL widgets, rich text and stylesheet selectors.
 
 **Plan.** Reach parity with the tkinter layer:
 

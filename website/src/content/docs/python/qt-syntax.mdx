@@ -6,13 +6,13 @@ order: 20
 status: preview
 languages: ["python"]
 badges: ["Partial"]
-sources: ["docs/qt.md", "SYNTAX_COVERAGE.md", "examples/qt_syntax_demo.py", "bindings/python/bui/qtsyntax.py", "bindings/python/bui/host.py", "docs/getting-started.md"]
+sources: ["docs/qt.md", "SYNTAX_COVERAGE.md", "examples/qt_syntax_demo.py", "bindings/python/bui/qtsyntax.py", "bindings/python/bui/qtcontainers.py", "bindings/python/bui/qtviews.py", "bindings/python/bui/qtdialogs.py", "bindings/python/bui/qtcore.py", "bindings/python/bui/qtactions.py", "bindings/python/bui/qtlayouts.py", "bindings/python/bui/qtgui.py", "bindings/python/bui/qtdates.py", "bindings/python/bui/_qtinputs.py", "bindings/python/bui/_qtwidget.py", "tools/qt_coverage.py", "bindings/python/bui/host.py", "docs/getting-started.md"]
 ---
 
 If your hands already know Qt, `blenderui.qtsyntax` lets them keep typing: `QApplication`, `QWidget`, `QVBoxLayout`, `clicked.connect(...)`. BUI runs that code on its own C runtime and draws it with Blender's widgets. **Neither Qt nor PySide is needed.**
 
 <Callout type="warning" title="Status: partial">
-The everyday subset on this page works and is tested. But counted against Qt's own widget headers, about **220 of 920** public method names on 25 core widget classes exist (roughly a quarter). Anything that isn't there raises `AttributeError`, so nothing fails silently. See [what's missing](#whats-missing).
+The everyday subset on this page works and is tested. Counted against Qt's own headers (by `tools/qt_coverage.py`), **57%** of the public methods, signals and slots on the 36 core widget classes exist, 37% across all of Qt's widget and GUI classes. Anything that isn't there raises `AttributeError`. A few setters are accepted and ignored: window icons, cursors, word wrap, echo mode and the like (`docs/qt.md` lists them). See [what's missing](#whats-missing).
 </Callout>
 
 <Figure
@@ -67,17 +67,18 @@ There's no Qt underneath. Each piece of Qt maps onto something in BUI:
 
 | Area | Classes |
 | --- | --- |
-| Application | `QApplication` (`exec`, `quit`, `processEvents`), `QTimer` (`singleShot`, `start`, `stop`, `timeout`), `QPropertyAnimation`, `QEasingCurve` |
+| Application | `QApplication` (`exec`, `quit`, `processEvents`, `topLevelWidgets`, `focusWidget`, `activeWindow`, `closeAllWindows`, the default font and palette), `QTimer` (`singleShot`, `start`, `stop`, `timeout`), `QPropertyAnimation`, `QEasingCurve` |
 | Windows | `QWidget`, `QMainWindow` (`setCentralWidget`, `menuBar`, `statusBar`), `QDialog` (`exec`, `accept`, `reject`), `QFrame` |
-| Layouts | `QVBoxLayout`, `QHBoxLayout` (`addWidget(stretch)`, `addLayout`, `addStretch`, `addSpacing`, `insertWidget`, `setSpacing`, `setContentsMargins`), `QGridLayout` (spans, alignment, stretch), `QFormLayout.addRow`, `QStackedLayout` |
-| Widgets | `QLabel` (text, alignment, pixmap), `QPushButton`, `QToolButton`, `QCheckBox`, `QRadioButton` with `QButtonGroup` (auto-exclusive), `QLineEdit` (`textChanged`, `returnPressed`, `editingFinished`), `QTextEdit`, `QPlainTextEdit`, `QSlider`, `QDial`, `QSpinBox`, `QDoubleSpinBox`, `QProgressBar` (format), `QComboBox` (items, data, `currentIndexChanged`) |
+| Layouts | `QVBoxLayout`, `QHBoxLayout` and `QBoxLayout` (directions, `insert*`, `takeAt`, `replaceWidget`, stretch factors, `QSpacerItem`), `QGridLayout` (spans, alignment, row and column stretch and minimum sizes, `itemAtPosition`), `QFormLayout` (`insertRow`, `removeRow`, `labelForField`, `setRowVisible`), `QStackedLayout` |
+| Widgets | `QLabel` (text, alignment, pixmap, `setNum`), `QPushButton` (checkable, flat, default, a menu), `QToolButton` (a default action, auto-raise, arrows), `QCheckBox`, `QRadioButton` with `QButtonGroup` (ids, exclusive), `QLineEdit` (validators, `maxLength`, `textChanged`, `returnPressed`, `editingFinished`), `QAbstractSpinBox`, `QTextEdit`, `QPlainTextEdit`, `QSlider`, `QDial`, `QSpinBox`, `QDoubleSpinBox`, `QProgressBar` (format), `QComboBox` (items, data, `currentIndexChanged`) |
 | Views | `QListWidget` and `QListWidgetItem`, `QTreeWidget` and `QTreeWidgetItem` (columns, expand), `QTableWidget` and `QTableWidgetItem` |
-| Containers | `QTabWidget`, `QGroupBox` (a Blender panel), `QScrollArea`, `QStatusBar` |
-| Menus | `QMenuBar`, `QMenu` (`addAction(text, slot, shortcut)`, submenus, separators, `popup`), `QAction` (checkable, shortcuts) |
+| Containers | `QTabWidget`, `QGroupBox` (checkable: the contents follow the check), `QFrame` (a Blender box, or a separator line), `QScrollArea`, `QStatusBar` (permanent widgets) |
+| Menus | `QMenuBar`, `QMenu` (`addAction(text, slot, shortcut)`, submenus, sections, separators, `popup`), `QAction` (checkable, visible, data, tips, shortcuts bound on its window), `QActionGroup` |
 | Painting | `QPainter`, `QPen`, `QBrush`, `QColor`, `QFont`, `QPixmap`, `QImage` |
-| Events | Override `mousePressEvent`, `mouseReleaseEvent`, `mouseMoveEvent`, `mouseDoubleClickEvent`, `keyPressEvent`, `wheelEvent`, `enterEvent`, `leaveEvent`, `closeEvent` and `paintEvent` |
-| Values | `Qt` constants (alignment, keys, orientation, check states), `QPoint`, `QSize`, `QRect`, `QMargins`, `QSizePolicy`, `QIcon` |
-| Dialogs | `QFileDialog` (`getOpenFileName`, `getOpenFileNames`, `getSaveFileName`, `getExistingDirectory`) shows Blender's File Browser; `BUI_FILEDIALOG=native` uses the operating system's dialogs. `QMessageBox` is a stub, see below |
+| Events | Override `mousePressEvent`, `mouseReleaseEvent`, `mouseMoveEvent`, `mouseDoubleClickEvent`, `keyPressEvent`, `keyReleaseEvent`, `wheelEvent`, `enterEvent`, `leaveEvent`, `resizeEvent`, `contextMenuEvent`, `timerEvent`, `closeEvent` and `paintEvent` |
+| Values | `Qt` constants (alignment, keys, orientation, check states, window states and flags), `QPoint`, `QSize`, `QRect`, `QMargins`, `QSizePolicy`, `QIcon`, `QFontMetrics`, `QPalette` (Blender's theme colors), `QCursor`, `QScreen`, validators |
+| Dates | `QDate`, `QTime`, `QDateTime`, `QDateTimeEdit`, `QDateEdit` and `QTimeEdit` (a Blender number field per section of the format, in an aligned row), `QCalendarWidget` |
+| Dialogs | `QDialogButtonBox`, `QMessageBox` and `QInputDialog`, below; `QFileDialog` (`getOpenFileName`, `getOpenFileNames`, `getSaveFileName`, `getExistingDirectory`) shows Blender's File Browser, and `BUI_FILEDIALOG=native` uses the operating system's dialogs |
 
 The member-by-member list is in [`SYNTAX_COVERAGE.md`](https://github.com/ppmpreetham/BUI/blob/main/SYNTAX_COVERAGE.md#qt-syntax-buiqtsyntax).
 
@@ -159,19 +160,49 @@ sys.exit(app.exec())
 
 `QPainter` supports `fillRect`, `drawRect`, `drawRoundedRect`, `drawEllipse`, `drawLine`, `drawPolyline`, `drawPolygon`, `drawPoint`, `drawArc`, `drawPie`, `drawText` and `drawPixmap`, plus `setPen`, `setBrush`, `setFont`, `setOpacity`, `translate`, `save` and `restore`.
 
+## Containers, models and dialogs
+
+Docks, toolbars, splitters and tool boxes are drawn the Blender way, models show in Blender's tree list, and message boxes are real windows:
+
+```python
+from bui.qtsyntax import (QMainWindow, QDockWidget, QTreeView, QStandardItemModel,
+                          QStandardItem, QMessageBox, Qt)
+
+win = QMainWindow()
+win.addToolBar("Main").addAction("Save", save)   # a row of tool buttons
+model = QStandardItemModel()
+model.setHorizontalHeaderLabels(["Name", "Type"])
+model.appendRow([QStandardItem("Cube"), QStandardItem("Mesh")])
+tree = QTreeView()
+tree.setModel(model)                             # redraws when the model changes
+dock = QDockWidget("Outliner")
+dock.setWidget(tree)
+win.addDockWidget(Qt.LeftDockWidgetArea, dock)   # a Blender panel left of the central widget
+if QMessageBox.question(win, "Quit", "Save changes?") == QMessageBox.Yes:
+    save()
+```
+
+- **Containers:** `QStackedWidget`, `QToolBox` (Blender panels: the Qt API keeps one open, and a click on a header opens or closes that panel on its own, as in Blender), `QSplitter` (region edges you drag), `QToolBar`, `QDockWidget`, `QTabBar`, and `QMainWindow`'s `addToolBar`, `addDockWidget` and `setStatusBar`.
+- **Model/view:** `QStandardItemModel`, `QStringListModel`, the abstract models to subclass, `QModelIndex`, `QItemSelectionModel`, and `QListView`, `QTreeView` and `QTableView`. One row is selected at a time, and views don't edit cells.
+- **Dialogs:** `QDialogButtonBox` (standard buttons by role), `QMessageBox` built on it with Blender's icons (the static helpers return the button clicked) and `QInputDialog` (`getText`, `getInt`, `getDouble`, `getItem`).
+- **Actions and menus:** one `QAction` serves a menu, a tool button and its shortcut, which is bound on the window it's in, as Blender's keymap is. Hidden actions leave their menus, and `QActionGroup` and `QButtonGroup` keep one checked. A checked button is drawn pressed in, as Blender draws a selected button.
+- **Windows:** maximized and minimized states, opacity, stay-on-top, minimum and maximum sizes, the `[*]` modified marker in the title, and the three context-menu policies.
+- **Core:** `QSettings` (an INI file per application, with Qt's groups and arrays), `QKeySequence`, `QShortcut` (the kit's key bindings) and `QClipboard`.
+
 ## Style sheets
 
-`setStyleSheet` understands three things: `color`, `background` (or `background-color`) on containers, and `font-weight: bold`. Everything else is Blender's theme. Qt style sheet selectors, pseudo-states and `QPalette` aren't supported.
+`setStyleSheet` understands three things: `color`, `background` (or `background-color`) on containers, and `font-weight: bold`. Everything else is Blender's theme. Qt style sheet selectors and pseudo-states aren't supported; `setPalette` sets a widget's background and text colors.
 
 ## What's missing
 
 Being upfront, so you don't find out the hard way:
 
-- **Model/view:** `QAbstractItemModel`, `QListView`, `QTreeView`, `QTableView` and delegates. Use the `*Widget` classes instead.
-- **Classes:** `QSplitter`, `QDockWidget`, `QToolBar`, `QStackedWidget` (as a real class), `QToolBox`, `QDateEdit` and friends, `QCalendarWidget`, `QGraphicsScene`, OpenGL widgets.
-- **Most of `QWidget`'s surface:** focus-policy details, `setWindowFlags`, geometry helpers, `grab`.
-- **Infrastructure:** `QSettings`, `QThread`, `QClipboard`, drag and drop, `QShortcut`, rich text.
-- **Drawn dialogs:** `QMessageBox` and `QInputDialog` aren't drawn yet. `QMessageBox.information`, `warning`, `critical` and `about` return `Ok` at once, and `question` returns `Yes` at once, without showing anything.
+- **Classes:** `QThread`, `QGraphicsScene`, OpenGL widgets.
+- **Widgets:** tristate check boxes and editable combo boxes.
+- **Model/view:** delegates, editing inside a view, and selecting more than one row.
+- **Docks:** they stay docked (no floating or tabbed docks).
+- **Infrastructure:** drag and drop, rich text and stylesheet selectors.
+- **Accepted and ignored:** window icons, cursors, word wrap, echo mode and item colors, among others. The [full list](https://github.com/ppmpreetham/BUI/blob/main/docs/qt.md#coverage) is in `docs/qt.md`, and `tools/qt_coverage.py` lists what's missing per class.
 
 <ComingSoon feature="Running PySide6 programs unchanged">
 The plan is to reach parity with the tkinter layer: measure against PySide6 itself, run the same programs on real Qt and on BUI to compare them, fill in the classes above, and then add an `install()` so `import PySide6` programs run unchanged, as tkinter programs already do.

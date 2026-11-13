@@ -12,6 +12,7 @@
 #
 # One-time setup (repository Settings > Secrets and variables > Actions):
 #   CARGO_REGISTRY_TOKEN   a crates.io API token (scopes: publish-new, publish-update)
+#   LUAROCKS_API_KEY       a luarocks.org API key (luarocks.org > Settings > API keys), for the `luarocks` job
 # npm and PyPI need no secret: both use trusted publishing (OIDC). On npmjs.com, each of
 # @blender-ui/native, its platform packages (@blender-ui/native-<tag>, bindings/node/platform.js)
 # and @blender-ui/react lists this repository and the workflow file release.yml as its trusted
@@ -215,9 +216,73 @@ jobs:
             (cd "$dir" && npm publish $flags)
           done
 
+  luarocks:
+    name: LuaRocks
+    needs: [versions, ci]
+    if: ${{ !cancelled() && needs.versions.result == 'success' && (needs.ci.result == 'success' || needs.ci.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      # lua.org and luarocks.org drop connections now and then (ECONNRESET), which failed a release once:
+      # each download is tried twice
+      - uses: leafo/gh-actions-lua@v10
+        id: lua
+        continue-on-error: true
+        with:
+          luaVersion: "5.4"
+      - uses: leafo/gh-actions-lua@v10
+        if: steps.lua.outcome == 'failure'
+        with:
+          luaVersion: "5.4"
+      - uses: leafo/gh-actions-luarocks@v4
+        id: luarocks
+        continue-on-error: true
+      - uses: leafo/gh-actions-luarocks@v4
+        if: steps.luarocks.outcome == 'failure'
+      - name: A JSON library for `luarocks upload` (the action's LuaRocks needs one and installs none)
+        run: luarocks install dkjson
+      - name: Upload the rockspec (the rock is built from the tag by whoever installs it)
+        env:
+          LUAROCKS_API_KEY: ${{ secrets.LUAROCKS_API_KEY }}
+        run: |
+          rockspec=$(ls bindings/lua/blenderui-*.rockspec)
+          luarocks lint "$rockspec"
+          if [ "$PUBLISH" != true ]; then
+            # a dry run checks what a real upload needs, short of uploading: the key and the account
+            if [ -z "$LUAROCKS_API_KEY" ]; then
+              echo "::error::LUAROCKS_API_KEY is not set (docs/publishing.md, 'LuaRocks')"
+              exit 1
+            fi
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://luarocks.org/api/1/$LUAROCKS_API_KEY/status")
+            [ "$code" = 200 ] || { echo "::error::luarocks.org does not accept LUAROCKS_API_KEY (HTTP $code)"; exit 1; }
+            owner="${GITHUB_REPOSITORY_OWNER,,}"
+            code=$(curl -s -o /dev/null -w '%{http_code}' "https://luarocks.org/modules/$owner")
+            [ "$code" = 200 ] || echo "::warning::luarocks.org has no account named $owner (HTTP $code): tools/release.py looks for the rock there"
+            # `luarocks upload --dry-run` validates and packs without publishing, in the LuaRocks versions that have it
+            if luarocks upload --help 2>&1 | grep -q -- '--dry-run'; then
+              luarocks upload "$rockspec" --api-key="$LUAROCKS_API_KEY" --dry-run
+            else
+              echo "::warning::this LuaRocks has no 'upload --dry-run'; only the rockspec and the key were checked"
+            fi
+            echo "::notice::dry run: $rockspec is valid and the API key is accepted; not uploaded"
+            exit 0
+          fi
+          if [ -z "$LUAROCKS_API_KEY" ]; then
+            echo "::error::LUAROCKS_API_KEY is not set (docs/publishing.md, 'LuaRocks')"
+            exit 1
+          fi
+          version=$(basename "$rockspec" .rockspec)
+          version=${version#blenderui-}
+          if luarocks search --porcelain blenderui "$version" 2>/dev/null | grep -q "^blenderui[[:space:]]$version"; then
+            echo "::notice::blenderui $version is already on LuaRocks; skipping"
+            exit 0
+          fi
+          luarocks upload "$rockspec" --api-key="$LUAROCKS_API_KEY" --skip-pack
+
   github-release:
     name: GitHub Release
-    needs: [crates, npm]
+    needs: [crates, npm, luarocks]
     if: github.event_name == 'push' || github.event.inputs.publish == 'true'
     runs-on: ubuntu-latest
     permissions:

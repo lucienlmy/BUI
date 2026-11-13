@@ -32,7 +32,7 @@ Each row has a status: **Works** when it works and is tested, **Partial** when c
 
 <StatusTable
   rows={[
-    ["Qt syntax", "partial", "About 25% of Qt's methods on the main widget classes. Missing: model/view classes, docks, toolbars, splitters, Qt stylesheets"],
+    ["Qt syntax", "partial", "57% of Qt's methods on the core widget classes, with docks, toolbars, splitters, actions, Qt's layouts, dates and a calendar, model/view and real dialogs. Missing: QThread, drag and drop, Qt stylesheets"],
     ["CSS (Rust, JavaScript)", "partial", "261 of 745 W3C properties render and 129 more parse. Missing: 3D transforms, OpenType font features, multi-column layout"],
     ["Text", "partial", "No text wrapping around floats; right-to-left text is reordered but not shaped; no per-glyph font fallback yet; IME on Windows only"],
     ["Rust components", "partial", "No async resources (<code>use_resource</code>) and no generic components yet"],
@@ -52,7 +52,8 @@ Each row has a status: **Works** when it works and is tested, **Partial** when c
     ["macOS GPU and JavaScript windows", "planned", "The GPU renderer on Metal (or the OpenGL backend), and Node windows on the main thread"],
     ["More GPU backends", "planned", "Vulkan and WebGPU, drawing the same instance stream as Direct3D 11 and OpenGL"],
     ["Accessibility", "planned", "Screen-reader support through UI Automation (Windows), AT-SPI (Linux) and NSAccessibility (macOS)"],
-    ["More JavaScript frameworks", "planned", "Vue and Angular, as thin adapters over <code>@blender-ui/native</code> (the layer React and Svelte share)"],
+    ["Vue", "done", "<code>@blender-ui/vue</code>: Vue 3 single-file components through Vue's own <code>createRenderer</code>, on <code>@blender-ui/native</code> (the layer React and Svelte share)"],
+    ["More JavaScript frameworks", "planned", "Angular, Solid and Lit, as thin adapters over <code>@blender-ui/native</code>"],
     ["More languages", "planned", "Lua (a community pull request is in review), Ruby, Go (through cgo), C#, Zig, Swift, Kotlin and MyGo over the same C header; Godot, Unity and Bevy; Flutter"],
   ]}
 />

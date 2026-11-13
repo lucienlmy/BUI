@@ -7,6 +7,29 @@ All notable changes to **blenderui** (BUI). The format follows
 ## [Unreleased]
 
 ### Added
+- **Controls inside node-editor nodes** (issue #38): a node can hold a push button, a checkbox and a dropdown in its body,
+  between the outputs and the inputs, as Blender's node buttons do (`node_update_basis_buttons`, `draw_buttons`). The kit's
+  node items take `"b|Label"`, `"c|Label|0 or 1"` and `"d|Label|index|Option;Option"`; a press or change is a node
+  `BK_EV_CHANGE` with `a = 5` and `b` the control's index. Python: `Node(..., controls=[("button", "Run"),
+  ("checkbox", "Wireframe", True), ("dropdown", "Mode", ["Fast", "Exact"], 0)])`, `node.control_value(i)` and
+  `on_change(node, "control", (i, value))`. A class can now take the item picked from a menu it opened (`popup_pick`).
+  Arbitrary child layouts in a node are not done yet.
+- **Python components:** `TextArea(value="", *, rows=None)` puts the kit's multi-line `textarea` in `bui.components`
+  (`value`, `set_value`, `on_change` on every edit; the node's `ta_*` methods edit by byte offset), and
+  `FileBrowser(directory, *, file, mode, multiple, filters, button, on_change, on_submit)` embeds Blender's File
+  Browser in any layout (`directory`, `file`, `hidden`, `state`, `result`, `execute()`, `cancel()`, `refresh()`);
+  `bui.filebrowser.ask` now builds its window from the same component. Every component can edit its children after
+  it is built: `insert(index, child)`, `remove(child)`, `replace(old, new)` and `clear()`, working where `add` does
+  (a `Panel` or `Popover` edits its body). This is what a renderer that keeps a live tree in sync with a changing
+  description (for example an A2UI surface) needs.
+- **Node editor height:** the `nodeeditor` node's natural height follows its `"height"` (units; 14 when unset)
+  instead of always 14 units, and `NodeEditor(height=...)` sets it.
+- **JavaScript: `@blender-ui/vue`**, Vue 3 in native windows. A custom renderer (Vue's `createRenderer`) over `@blender-ui/native`, so Vue's own runtime and compiler run unchanged: `.vue` single-file components (`<script setup>`, TypeScript, scoped `<style>`), refs, `v-model` (inputs, checkboxes, radios, selects and the Blender widgets), `v-if` / `v-for`, slots, `provide` / `inject`, plugins through `createApp(...).use()`, `Teleport`, and Blender's widgets as components. `node --import @blender-ui/vue/register`, Bun and `bui build` (a Bun plugin) compile `.vue` files, cached in `node_modules/.cache/@blender-ui/vue` (a cached start never loads Vue's compiler: Node.js reaches its first frame in 125 ms, not 209); `require()` and `import` both work. Benchmarks (`bench/cells.js --vue`, `bench/startup.js --vue`) and a Vue task-list screenshot are in the docs. `<Transition>`, `v-html` and DOM-based component libraries don't work; bindings/vue/README.md lists it.
+- **`@blender-ui/native`:** `el.style.display = 'none'` and the other CSS properties as camelCase properties of `el.style`, as in a browser (they were silently ignored); `host.styleRegistry()`, the registry of components' scoped `<style>` blocks that the Svelte and Vue bindings share.
+- **D bindings** (`bindings/d`): a DUB package with raw `extern(C)` declarations for the whole kit, GPU and stable C API, plus idiomatic wrappers for nodes, contexts, windows, menus, rasters, images, video, canvases, trees, text areas, custom nodes and themes. The kit is built through CMake from `preBuildCommands`, ownership follows the Python binding's reference-hook model, and `dub run --config=test` covers the wrappers, raw API, events, menus and host errors end to end. Examples: `hello.d` and `headless.d`.
+- **D HTML, CSS and RSX** (`bindings/d`): `bui.html` adds an `Element` tree and tag constructors, `bui.css` a selector cascade with a practical CSS subset, and `bui.rsx` a compile-time `rsx!` mixin that lowers markup and `{expression}` values to `Element` calls. `Document` realises the styled tree as kit nodes with flex, grid and table layout, widgets, dynamic `:hover`/`:active` states through `Element.setState` and `Document.restyle`, and in-place text updates through `Element.setText`. Tag constructors use `body_`, `template_`, `object_` and `select_` where D or the existing API already uses the name; markup keeps the HTML spelling. `dub run --config=rsx` opens the new example, and `--config=test` covers the cascade, realiser and RSX. The D wrappers also follow the kit's current header: focus callbacks, `Context.hitAt`, custom theme files, text shadows, font size and transparent rasters.
+- **Qt syntax:** containers drawn the Blender way (`QStackedWidget`, `QToolBox` as Blender panels, `QSplitter` with region edges to drag, `QToolBar`, `QDockWidget`, `QTabBar`, and `QMainWindow.addToolBar` / `addDockWidget` / `setStatusBar`); model/view (`QStandardItemModel`, `QStringListModel`, the abstract models, `QListView`, `QTreeView`, `QTableView` in Blender's tree list); real `QMessageBox` and `QInputDialog` dialogs; `QSettings` (an INI file with Qt's groups and arrays), `QKeySequence`, `QShortcut` and `QClipboard`; `blockSignals`, dynamic properties, `findChildren`, point mapping, `showEvent` / `hideEvent` and the descriptive properties on every widget. Actions shared by menus, tool buttons and shortcuts (`QAction` with visibility, data, tips and shortcuts bound on its window, `QActionGroup`, a real `QToolButton`, menu sections and corner widgets, `triggered` up to the menu bar), `QButtonGroup` ids, Qt's full layout API (`QBoxLayout` directions, `insert*`, `takeAt`, `replaceWidget`, `QSpacerItem`, grid cell queries and minimum sizes, `QFormLayout` rows), `QDialogButtonBox` (which `QMessageBox` and `QInputDialog` now use), `QAbstractSpinBox`, validators and `maxLength` on `QLineEdit`, spin box prefix / wrapping / special value text, slider tracking and page steps, combo box icons, models and popups, checkable `QGroupBox`, `QFrame` boxes and lines, a `QStatusBar` with permanent widgets, window states, opacity and size limits through the host, `startTimer`, `QFontMetrics`, `QPalette` from Blender's theme, `QCursor.pos`, `QScreen`, and the context-menu policies. Dates and times: `QDate`, `QTime`, `QDateTime` with Qt's format strings, `QDateTimeEdit` / `QDateEdit` / `QTimeEdit` as Blender's aligned number fields, and `QCalendarWidget`. Measured by the new `tools/qt_coverage.py` against Qt's headers: 57% of the core widget classes' methods (was 21% by the same count), 37% across all 142 classes.
+- **Kit:** a `select` node flag draws a button held in (Blender's `UI_SELECT`, for checked push buttons), and a separator with `vertical` draws its line across a row (`uiButSeparatorLine.is_vertical`).
 - **Sound in video.** A `<video>` plays its audio track on the default output (WASAPI on Windows, CoreAudio on
   macOS, PulseAudio / PipeWire on Linux, each loaded at run time), decoded by the same OS backend as its frames,
   and the frames follow the sound as Blender's AV-sync does. The sound plays on while the video is off screen and
@@ -19,6 +42,38 @@ All notable changes to **blenderui** (BUI). The format follows
   `muted=` and `volume=`) and Lua; the Blender-style controls get a mute button. Videos autoplay with sound now
   (they were silent): mute one with `muted`. Tested on Windows; the macOS and Linux outputs are written against
   their documented APIs and untried.
+
+### Changed
+- **Breaking default: videos play with sound.** A `<video>` / `BK_video` autoplays with its audio track now (it
+  was silent): set `muted` (HTML attribute, `BK_video_set_muted`, `Video(muted=True)`, `Video::set_muted`) for a
+  silent one. Closing a video no longer waits for its audio device (the stream is released on a thread of its
+  own); a video with no output at the time retries every 5 s; a Rust `<video>` element that leaves the tree stops its
+  sound; platforms without PulseAudio / GStreamer (not Linux or BSD) build with silent video. Only the first
+  audio track plays and each video with sound owns one stream and thread.
+
+### Fixed
+- **Python components:** `NodeEditor` follows `add`, `insert`, `remove`, `replace` and `clear` (its `nodes` and `links` went stale when
+  children were edited that way, and a link now keeps naming the same nodes when an earlier one is inserted or removed);
+  `replace(old, new)` puts an earlier sibling in `old`'s place, not the slot after it; `FileBrowser.directory = same_folder` no longer
+  navigates (and calls `on_change`) again; a `TextArea` written with the text it already holds keeps its selection and spans.
+- **Node editor height:** an infinite, huge or not-a-number `"height"` no longer overflows the float-to-int conversion (capped at 1000 units; unset or invalid is 14).
+- **D bindings**: `[attr*=x]` no longer crashes on a value shorter than `x`; `onKey` fires once per key press; `grid-template-columns: 1fr 1fr` counts two tracks; `Image.fromRgba` rejects negative strides; `TreeItem.add` rejects cycles and items that already have a parent; a `Window` stays rooted until freed and `Context.free()` throws while a window uses it; in `Document`, radios sharing a `name` are exclusive, number inputs are no longer clamped at 0, column flex containers no longer share a row between buttons, button labels use descendant text, hidden table rows are skipped and `rowspan` reserves its columns.
+- **Qt syntax:** `QStandardItemModel.setRowCount` with a negative count no longer hangs and `setColumnCount` drops the extra cells; closing a `QMessageBox` window now closes it; `QSettings.sync` writes atomically; `setRange` clamps the value (and emits `valueChanged`); `startTimer` ids are never reused; `QGridLayout.addWidget(w, r, c, alignment)` reads the fourth argument as the alignment; `QInputDialog.getText` honours `QLineEdit.Password` (`setEchoMode` works); `QShortcut.setKey` stops the old key firing; `QInputDialog.getItem` survives a bad `current`.
+- **Qt syntax:** `QMessageBox.information` / `question` / ... returned `Ok` or `Yes` without showing anything, and `QStackedWidget` was a plain `QWidget`; `QAbstractButton.setShortcut`, `QWidget.setFocusPolicy` and `QApplication.setApplicationName` did nothing. All work now, as do `setWindowFlags` (stay on top), `setMinimumSize` / `setMaximumSize`, `setFocus`, `setMaxLength`, `setValidator`, `setPageStep`, `setTracking`, `setDefault` / `setFlat`, `setFrameShape` and the scroll area's vertical bar policy, which were accepted and ignored.
+- **Qt syntax:** setting a value from code emitted nothing: `setValue` (sliders, spin boxes), `QComboBox.setCurrentIndex`, `QLineEdit.setText` and `setChecked` on check boxes and radio buttons now emit `valueChanged`, `currentIndexChanged`, `textChanged` and `toggled` / `stateChanged` when the value changes, as Qt does, and a radio button turned off by its sibling says so. A click on the checked button of an exclusive group no longer unchecks it; a button or action removed from a group or menu and added again no longer fires twice; `Ctrl++` showed as `Ctrl` in menus; an integer spin box accepted `3.5`.
+- **Qt syntax:** `QSpinBox` was a `QAbstractSlider`; it is a `QAbstractSpinBox` now. Spin box `suffix()`, `decimals()` and `placeholderText()` read back empty.
+- **tkinter:** a vertical `ttk.Separator` drew a horizontal line in a tall box.
+- **Video sound:** in a looping video whose sound was far ahead of the picture (a long pause, a slow decode), the picture froze until the sound came round; it now seeks to the sound. Two `<video>` elements of one file with different `loop`, `muted`, `poster` or `audioeffects` (Rust) no longer undo each other every render (each has its own player). Python's `Video.player` setters (`volume`, `rate`, `muted`, ...) no longer change the player when the value does not convert.
+
+## [0.5.1] - 2026-11-13
+
+### Added
+- **LuaRocks:** `luarocks install blenderui`, then `require("bui")`. The rockspec (`bindings/lua/blenderui-<version>-1.rockspec`)
+  builds the C kit and the `_bui` module with CMake against the Lua that runs the rock (Lua 5.4; it needs CMake and a C and C++20 compiler, and on Linux the X11 headers for native windows) and installs them with
+  the `bui.lua` wrapper; the new CMake option `BUI_LUA_ROCK` builds only the module (nothing is fetched, no `bui-lua`
+  executable). CI builds and loads the rock on Linux and macOS (`luarocks` job in `ci.yml`); `release.yml` uploads the
+  rockspec on a tag (secret `LUAROCKS_API_KEY`), and `tools/bump_version.py`, `check_versions.py` and `release.py` move,
+  check and verify it with the other registries.
 - **Custom themes.** A theme file (JSON, in gpui-kit's shape, with Blender's own names for the colors) adds your
   own themes to Dark and Light: `bui.load_theme(path_or_text)`, `blenderui::load_theme` / `load_theme_file`,
   `app.loadTheme`, `bui.load_theme` (Lua), `BK_theme_load_file` / `BK_theme_load_json` (C), then `set_theme(name)`.
@@ -77,12 +132,6 @@ All notable changes to **blenderui** (BUI). The format follows
   callback left early on an error, with Dear ImGui's error recovery.
 
 ### Changed
-- **Breaking default: videos play with sound.** A `<video>` / `BK_video` autoplays with its audio track now (it
-  was silent): set `muted` (HTML attribute, `BK_video_set_muted`, `Video(muted=True)`, `Video::set_muted`) for a
-  silent one. Closing a video no longer waits for its audio device (the stream is released on a thread of its
-  own); a video with no output at the time retries every 5 s; a Rust `<video>` element that leaves the tree stops its
-  sound; platforms without PulseAudio / GStreamer (not Linux or BSD) build with silent video. Only the first
-  audio track plays and each video with sound owns one stream and thread.
 - **Text fields:** in the HTML look (browser-style inputs and text areas) the caret blinks like a browser's (about every 530 ms, solid right after it
   moves or the text changes); Blender's own fields keep Blender's solid caret. The window wakes only for the next toggle, so an idle window still sleeps.
 - `BK_open_pie` takes the pie's center (`at_x`, `at_y`; `-100000` for the pointer, as in `BK_open_menu`).
@@ -149,7 +198,6 @@ All notable changes to **blenderui** (BUI). The format follows
 - **Windows:** a frame callback that closed its window crashed the host: the Win32 backend rendered the closed window (X11, Wayland and Cocoa already returned).
 - **Lua:** the loadable module (`_bui.dll`/`.so`) could not be loaded: it exported `luaopen_bui` but Lua looks for `luaopen__bui`; also fixed the MinGW file name, and Lua built from source (Linux, macOS) now has `package.loadlib`, so `require` can load C modules.
 - **CI:** the crates.io dry run always failed (`[ ... ] && sleep` under `bash -e`); the PyPI wheels workflow now checks the tag against the versions in the repo before building or publishing.
-- **Video sound:** in a looping video whose sound was far ahead of the picture (a long pause, a slow decode), the picture froze until the sound came round; it now seeks to the sound. Two `<video>` elements of one file with different `loop`, `muted`, `poster` or `audioeffects` (Rust) no longer undo each other every render (each has its own player). Python's `Video.player` setters (`volume`, `rate`, `muted`, ...) no longer change the player when the value does not convert.
 
 ## [0.5.0] - 2026-11-08
 

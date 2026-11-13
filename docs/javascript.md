@@ -1,4 +1,4 @@
-# JavaScript, React and Svelte
+# JavaScript, React, Svelte and Vue
 
 BUI runs from JavaScript through a native addon built with napi-rs, much as
 [GPUIX](https://www.npmjs.com/package/@gpuix/react) drives GPUI. You get native
@@ -13,6 +13,7 @@ engine ([Standalone apps](#standalone-apps)).
 | [`@blender-ui/native`](https://www.npmjs.com/package/@blender-ui/native) (`bindings/node`) | A DOM-like API (`createElement`, `setAttribute`, `appendChild`, `addEventListener`, `requestAnimationFrame`) and signals |
 | [`@blender-ui/react`](https://www.npmjs.com/package/@blender-ui/react) (`bindings/react`) | A React 19.3 renderer; React's hooks by React's names, backed by signals |
 | [`@blender-ui/svelte`](https://www.npmjs.com/package/@blender-ui/svelte) (`bindings/svelte`) | Svelte 5 components (runes, snippets, scoped styles) on the DOM-like API |
+| [`@blender-ui/vue`](https://www.npmjs.com/package/@blender-ui/vue) (`bindings/vue`) | Vue 3.5 single-file components, through Vue's own `createRenderer` |
 
 **Platforms:** prebuilt for Windows x64. On Linux, build the addon from
 source (see [Building](#building)); windows are native X11 windows, on the CPU or
@@ -165,20 +166,74 @@ is a Svelte store (`$count`). Svelte 5.57 or newer; Node.js 22.15 or newer.
 - **Not yet:** transitions run their start and end without animating in
   between; `{@html}` and size bindings (`bind:clientWidth`) aren't there.
 
+## Vue
+
+```vue
+<!-- Counter.vue -->
+<script setup>
+import { ref } from 'vue'
+import { Button } from '@blender-ui/vue'
+const count = ref(0)
+</script>
+
+<template>
+  <main class="p-6 flex flex-col gap-3">
+    <span>Clicks: {{ count }}</span>
+    <Button @click="count++">Add one</Button>
+  </main>
+</template>
+```
+
+```js
+// app.js: node --import @blender-ui/vue/register app.js
+//         (or bun --preload @blender-ui/vue/register app.js, or npx bui build app.js)
+import { render } from '@blender-ui/vue'
+import Counter from './Counter.vue'
+
+const { window } = render(Counter, { title: 'BUI + Vue', width: 420, height: 260, gpu: true })
+// the body is the page: `min-h-screen` makes its background fill the window, not only its content
+window.body.className = 'm-0 min-h-screen bg-[#2b2b2b] text-[#e6e6e6]'
+```
+
+`@blender-ui/vue` mirrors the other packages: `render(component | app, { props,
+...windowOptions })`, `createRoot(window)`, Blender's widgets as components (with
+`v-model`) and BUI's signals. It re-exports everything `vue` exports, and
+`createApp(App).use(plugin)` then `render(app, options)` installs plugins first.
+Vue 3.5 or newer; Node.js 22.15 or newer.
+
+- **How it renders.** It is a custom renderer: Vue's `createRenderer` with node
+  operations over the DOM-like tree (detached `document` nodes that join a
+  window when inserted), so only each tick's changes cross to the UI thread.
+  Props are the shared `applyProps` plus Vue's event names; `value` and
+  `checked` are set as properties.
+- **`register`** compiles `.vue` files on import with Vue's own compiler;
+  `bui build` finds the same plugin by itself. Templates use the core
+  `v-model` transform (`modelValue` / `onUpdate:modelValue` props, no DOM
+  directives) and no static hoisting into HTML strings.
+- **`v-model`** works on text, number, range, checkbox, radio, `<textarea>`,
+  `<select>` and the Blender widgets.
+- **Styles:** a component's `<style>` and `<style scoped>` (plain CSS) are added
+  to each window once.
+- **Not yet:** `<Transition>` and `<TransitionGroup>` (they need browser CSS
+  transitions), `v-html`, `.trim` / `.number` on a plain `<input v-model>` (they
+  work on the widgets), `<select multiple>`, `<style lang="scss">` (and
+  `v-bind()` in `<style>`, which are compile errors), TypeScript enums on Node.js
+  (it strips types only), and libraries built on the DOM (Vuetify, Element Plus).
+
 ## Bindings for other frameworks
 
-React and Svelte are thin adapters over one shared layer, and a new binding
-(Vue, Solid, Lit ...) plugs in the same way:
+React, Svelte and Vue are thin adapters over one shared layer, and a new binding
+(Solid, Lit, Angular ...) plugs in the same way:
 
 | Shared piece | What it gives a binding |
 |---|---|
 | `@blender-ui/native` (`dom.js`) | The tree: elements, text, comments, fragments, events, `document` |
-| `@blender-ui/native/host` | `open(options)`: the App and window behind `render(..., options)`; `blenderWidgets(wrap)`: Blender's widgets as the framework's components; `applyProps(el, prev, next)`: JSX-style props (`className`, `style` objects, `onClick`, signals) |
+| `@blender-ui/native/host` | `open(options)`: the App and window behind `render(..., options)`; `blenderWidgets(wrap)`: Blender's widgets as the framework's components; `styleRegistry()`: components' scoped `<style>` blocks, added to each window once; `applyProps(el, prev, next)`: JSX-style props (`className`, `style` objects, `onClick`, signals) |
 | `@blender-ui/native/globals` | `document`, `window`, the node classes and `requestAnimationFrame` as globals, for frameworks whose compiled code calls the DOM |
 | `bui build` | Bundles with the Bun plugin of every `@blender-ui/*` package whose `package.json` has `"bui": { "bunPlugin": "./plugin.js" }` |
 
 - **A prop-based renderer** (React's reconciler, Vue's `createRenderer`,
-  Solid's `universal` renderer) maps its node operations to
+  Solid's `universal` renderer; `@blender-ui/vue` is the smallest example) maps its node operations to
   `window.createElement` / `insertBefore` / `removeChild` and its props to
   `applyProps`.
 - **A DOM-based framework** (Svelte, Solid's DOM output, Lit) imports
@@ -535,6 +590,37 @@ the previous Svelte binding (`Svelte before`) in the same session.
   overran the warm-up, so only its per-update cost is valid from this session.
   Bun also sometimes crashes when a React app quits (after its first frame), a
   bug that predates this work.
+
+### Vue
+
+`bench/cells.js 3000 --gpu --vue [--isolate]` and `bench/startup.js --vue` (`bench/Grid.vue`,
+`Cell0.vue`, `FirstFrame.vue`), a second session on the same laptop (2026-11-11), React and Svelte
+run in it for comparison. Every variant ran at 49–56 FPS here, so compare rows within this section.
+Cells runs interleaved, medians of 3; startup medians of 8.
+
+| 3,000 cells (Node 26 / Bun 1.4)        | FPS         | RAM            | JavaScript per update |
+| -------------------------------------- | ----------: | -------------: | --------------------: |
+| React with state                       | 51.0 / 53.6 | 228 / 118 MB   | 3.1 / 3.9 ms          |
+| Svelte with runes                      | 54.9 / 53.4 | 115 / 98 MB    | 50 / 48 µs            |
+| Vue, state in the root component       | 54.7 / 53.4 | 260 / 142 MB   | 5.4 / 6.7 ms          |
+| Vue, cell 0 a component of its own     | 53.9 / 56.0 | 112 / 107 MB   | 25 / 27 µs            |
+
+| First frame                      | React | Vue    |
+| -------------------------------- | ----: | -----: |
+| QuickJS executable (`bui build`) | 43 ms | 66 ms  |
+| Bun executable (`--bun`)         | 46 ms | 77 ms  |
+| Bun (`--preload …/register`)     | 58 ms | 101 ms |
+| Node.js (`--import …/register`)  | 72 ms | 125 ms |
+
+- **State in the root re-renders everything**, as in React: Vue runs the component's render function
+  and compares the 3,000 cells. Put the changing part in a component of its own and only it re-renders
+  (25–27 µs, memory like Svelte's runes).
+- **Updates apply in a microtask,** so the per-update cost includes the `nextTick` hop. There is no
+  signals row: in a Vue template a BUI signal binds an attribute or a style, not text.
+- **CPU per frame** is left out: for Vue with state in the root on Bun it varied between runs (80%,
+  45%, 50% of a core, against a steady ~100% for the rest).
+- **Startup:** compiled components are cached in `node_modules/.cache/@blender-ui/vue`, and a cached
+  start never loads Vue's compiler: Node.js went from 209 to 125 ms, Bun from 189 to 101 ms.
 
 ## Building
 

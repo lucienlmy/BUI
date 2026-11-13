@@ -12,6 +12,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import host from '@blender-ui/native/host'
 
 const require = createRequire(import.meta.url)
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -70,20 +71,7 @@ function compileNow (source, filename, dev) {
     `__buiAddStyle(${JSON.stringify(key)}, ${JSON.stringify(r.css.code)})\n`
 }
 
-/** A 53-bit hash of `s` (cyrb53), in hex: cache file names, without loading
- *  node:crypto at startup. */
-export function hash (s) {
-  let h1 = 0xdeadbeef
-  let h2 = 0x41c6ce57
-  for (let i = 0; i < s.length; i++) {
-    const c = s.charCodeAt(i)
-    h1 = Math.imul(h1 ^ c, 2654435761)
-    h2 = Math.imul(h2 ^ c, 1597334677)
-  }
-  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909)
-  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909)
-  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(16)
-}
+export const { hash } = host
 
 /** Svelte's runtime as this package serves it to compiled code (internal.js). */
 function toBui (code) {

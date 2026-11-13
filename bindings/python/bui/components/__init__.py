@@ -34,11 +34,11 @@ from bui.components.editors import (ColorRamp, ColorStop, CurveMapping, Histogra
 from bui.components.nodes import Node, NodeEditor
 from bui.components.menus import Menu, MenuBar, MenuButton, MenuItem, PieMenu
 from bui.components.templates import IDSelector, PathField
-from bui.components.views import GridView, ListView, TreeItem, TreeView
+from bui.components.views import FileBrowser, GridView, ListView, TreeItem, TreeView
 from bui.components.widgets import (Button, Checkbox, ColorSwatch, Decorator, Dropdown,
                                     EnumRow, HotkeyField, IconButton, Image, Label, NumberField,
                                     NumberSlider, ProgressBar, SearchField, Separator, Spacer,
-                                    TextField, Toggle, Video, eval_number)
+                                    TextArea, TextField, Toggle, Video, eval_number)
 
 __all__ = [
     "App", "Component", "ValueComponent", "unit",
@@ -47,10 +47,10 @@ __all__ = [
     "VectorField",
     # widgets
     "Label", "Image", "Video", "Separator", "Spacer", "ProgressBar", "Button", "IconButton", "Toggle",
-    "Checkbox", "Decorator", "TextField", "SearchField", "HotkeyField", "NumberField",
+    "Checkbox", "Decorator", "TextField", "TextArea", "SearchField", "HotkeyField", "NumberField",
     "NumberSlider", "Dropdown", "EnumRow", "ColorSwatch", "eval_number",
     # views
-    "ListView", "TreeView", "TreeItem", "GridView",
+    "ListView", "TreeView", "TreeItem", "GridView", "FileBrowser",
     # menus & popups
     "Menu", "MenuItem", "MenuButton", "MenuBar", "PieMenu", "Popover",
     # editors & templates

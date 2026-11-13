@@ -72,6 +72,14 @@ if(BUI_BUILD_TESTS)
   )
   set_tests_properties(buipy_syntax PROPERTIES ENVIRONMENT "PYTHONPATH=${BUIPY_TEST_PYTHONPATH}")
 
+  # Qt syntax beyond the basic widgets: containers, model/view, dialogs, settings, shortcuts.
+  add_test(
+    NAME buipy_qt_widgets
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_qt_widgets.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  set_tests_properties(buipy_qt_widgets PROPERTIES ENVIRONMENT "PYTHONPATH=${BUIPY_TEST_PYTHONPATH}")
+
   # Advanced surface: Text/Treeview/Table/Notebook/Menu/PhotoImage/QPainter.
   add_test(
     NAME buipy_advanced

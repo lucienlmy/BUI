@@ -15,7 +15,7 @@ readme = "README.md"
 include = ["src/**", "tests/**", "examples/**", "README.md", "Cargo.toml", "LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [dependencies]
-blenderui-paint = { path = "../blenderui-paint", version = "0.5.0" }
+blenderui-paint = { path = "../blenderui-paint", version = "0.5.1" }
 
 [lints.clippy]
 all = { level = "warn", priority = -2 }

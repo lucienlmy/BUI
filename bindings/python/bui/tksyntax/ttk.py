@@ -412,10 +412,8 @@ class Separator(Widget):
 
     def _apply(self, key, value):
         if key == "orient":
-            vertical = str(value).startswith("v")
-            self._node.geom(int(self._node.geom_get("manager")),
-                            reqwidth=round(0.3 * buipy.kit_unit()) if vertical else 0,
-                            reqheight=0 if vertical else round(0.3 * buipy.kit_unit()))
+            # the kit's separator measures and draws across a row when vertical
+            self._node.set("vertical", str(value).startswith("v"))
         else:
             super()._apply(key, value)
 

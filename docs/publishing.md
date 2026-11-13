@@ -86,16 +86,16 @@ python tools/release.py minor              # or patch, major, X.Y.Z; add --npm p
 
 It checks you are on a clean, up-to-date `main`, bumps every version and pushes that commit, waits
 for the `ci` and `wheels` workflows to go green on it, tags and pushes the tag, waits for the
-publish, then checks crates.io, npm and PyPI for the new version. It never tags a red commit.
+publish, then checks crates.io, npm, LuaRocks and PyPI for the new version. It never tags a red commit.
 `--dry-run` shows the plan; if a publish step fails, fix it, use "Re-run failed jobs" on the run
 (no new tag needed) and run `python tools/release.py --resume`, which only waits and checks.
 GitHub's anonymous API allows 60 requests an hour (enough for one release); set `GITHUB_TOKEN`
 for more.
 
 The two steps it runs, if you want them by hand: `tools/bump_version.py` changes every version in one go
-(the Python package, the Rust workspace and the sibling dependency versions of every crate, the
-changelog, the lock files, and with `--npm` the npm packages) and runs
-`tools/check_versions.py` on the result:
+(the Python package, the Rust workspace and the sibling dependency versions of every crate, the LuaRocks rockspec
+(renamed to the new version), the DUB package and its `kit.d` version constants, the changelog, the lock files, and
+with `--npm` the npm packages) and runs `tools/check_versions.py` on the result:
 
 ```sh
 python tools/bump_version.py minor --commit --push   # 0.2.0 -> 0.3.0, commits only those files, pushes main
@@ -113,9 +113,10 @@ is the same thing: `git tag v0.3.0 && git push origin v0.3.0`.
 | `wheels.yml` | the Python wheels and sdist to PyPI (trusted publishing, no secret) |
 | `release.yml` | the Rust crates to crates.io, `@blender-ui/native` and `@blender-ui/react` to npm, and a GitHub Release |
 
-`release.yml` first checks that the tag matches the Python and Rust versions
+`release.yml` first checks that the tag matches the Python, Rust and D versions
 (`python tools/check_versions.py v0.2.0` runs the same check by hand; the C header's
-`BUI_KIT_VERSION_*` macros are part of it) and that `THIRD_PARTY_NOTICES.md` is up to date
+`BUI_KIT_VERSION_*` macros and the DUB package's copies are part of it) and that
+`THIRD_PARTY_NOTICES.md` is up to date
 (`python tools/gen_notices.py` regenerates it when a dependency changes), then runs the whole
 `ci.yml` suite on every platform, then publishes. A version that is already on a registry is
 skipped (crates.io, npm and PyPI alike: `wheels.yml` builds nothing when PyPI already has the
@@ -136,8 +137,12 @@ One-time setup:
   "could not be found or you do not have permission"). Publish it once by hand, after
   `@blender-ui/native` is out (it depends on it): `cd bindings/svelte && npm publish --access public`,
   logged in as a member of the `@blender-ui` organization. Then add the trusted publisher (the same
-  form as above). Until then `release.yml` skips it with a warning and `tools/release.py` shows it
+  form as above). The same goes for `@blender-ui/vue` (`cd bindings/vue && npm publish --access public`). Until then `release.yml` skips it with a warning and `tools/release.py` shows it
   as MANUAL, not as a failure.
+- **LuaRocks:** a repository secret `LUAROCKS_API_KEY`: on luarocks.org, log in with the account that
+  owns the package (the repository owner's name), Settings > API keys > create one. The `luarocks` job uploads
+  `bindings/lua/blenderui-<version>-1.rockspec`; the rock itself is built from the tag by whoever runs
+  `luarocks install blenderui` (it needs CMake and a C compiler). The first upload creates the package.
 - **PyPI:** no secret, see above.
 
 Try it without publishing: Actions > release > Run workflow, enter the tag and leave

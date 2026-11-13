@@ -155,6 +155,16 @@ test('document: detached nodes join a window when inserted; fragments, clones, c
   btn.style.setProperty('height', '10px')
   btn.style.removeProperty('width')
   assert.strictEqual(btn.style.cssText.trim(), 'height: 10px;')
+  // CSS properties as camelCase properties, as in a browser (Vue's v-show writes style.display)
+  btn.style.display = 'none'
+  btn.style.backgroundColor = 'red'
+  assert.strictEqual(btn.style.display, 'none')
+  assert.strictEqual(btn.style.getPropertyValue('background-color'), 'red')
+  assert.match(btn.style.cssText, /display: none/)
+  btn.style.display = ''
+  assert.doesNotMatch(btn.style.cssText, /display/, 'an empty value removes the declaration')
+  btn.style.removeProperty('background-color')
+  assert.strictEqual(btn.style.cssText.trim(), 'height: 10px;', "Style's own members still work")
   btn.classList.add('a', 'b')
   btn.classList.toggle('a')
   assert.strictEqual(btn.className, 'b')

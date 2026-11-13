@@ -98,10 +98,8 @@ class Panel(Component):
     def body(self) -> Component:
         return self.children[0]
 
-    def add(self, *components):
-        for c in components:
-            buipy.KitNode.add(self.body, c)
-        return components[0] if len(components) == 1 else self
+    def _content(self) -> Component:
+        return self.body
 
     @property
     def title(self) -> str:

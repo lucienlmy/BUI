@@ -1,6 +1,6 @@
 {
   "name": "@blender-ui/svelte",
-  "version": "0.2.0",
+  "version": "0.5.1",
   "description": "Svelte 5 for BUI: Blender's UI in native windows from Svelte components, runes and snippets. Node.js and Bun.",
   "type": "module",
   "main": "index.js",
@@ -44,7 +44,7 @@
     "node": ">=22.15"
   },
   "dependencies": {
-    "@blender-ui/native": "^0.4.0"
+    "@blender-ui/native": "^0.5.1"
   },
   "peerDependencies": {
     "svelte": "^5.57.0"

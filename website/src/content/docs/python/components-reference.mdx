@@ -23,7 +23,7 @@ Every component takes these, and has them as properties:
 | `weight` | `1.0` | Share of the width in a `Row`; `0` keeps the natural width |
 | `fill` | `False` | In a column, grow into the spare height (an editor filling its area) |
 
-Properties after layout: `x`, `y`, `w`, `h` and `rect` (`(x, y, w, h)`). Containers have `add(*children)`, `remove(child)` and `children`.
+Properties after layout: `x`, `y`, `w`, `h` and `rect` (`(x, y, w, h)`). Containers have `add(*children)`, `insert(index, child)`, `remove(child)`, `replace(old, new)`, `clear()` and `children`; a `Panel` or `Popover` edits its body. `insert` and `replace` return the new child, `remove` the removed one, `clear` the container. Adding a child that has a parent moves it.
 
 ### Value components
 
@@ -82,6 +82,7 @@ App("Layout", (420, 400), pages, Tabs([("List", long_list), ("Empty", Label(""))
 | `NumberField` | `NumberField(label="", value=0.0, *, min=None, max=None, step=None, precision=None, integer=None, suffix="")` | Drag to scrub, arrows to step, click to type math. `suffix` is shown after the number (`" m"`, `"°"`). Member: `editing`. |
 | `NumberSlider` | `NumberSlider(label="", value=0.0, *, min=0.0, max=1.0, **kw)` | A number field that fills with the value. Takes `NumberField`'s other keywords. |
 | `TextField` | `TextField(label="", value="", *, placeholder="", icon=None, live=False)` | Single-line text with Blender's editing. `live=True` reports every keystroke; otherwise `on_change` runs when you confirm. Member: `editing`. |
+| `TextArea` | `TextArea(value="", *, rows=None)` | Multi-line text with Blender's editing, wheel scrolling and undo. `rows` is the natural height in lines (8 by default); `on_change` runs on every edit. Edit by byte offset with `ta_insert`, `ta_delete`, `ta_caret`, `ta_selection`, `ta_see`. Note: no `label` argument. |
 | `SearchField` | `SearchField(value="", *, placeholder="Search")` | A search box with a magnifier icon. Note: no `label` argument. |
 | `HotkeyField` | `HotkeyField(label="", value="")` | Click, then press a key combination; <Kbd>Esc</Kbd> cancels. Member: `capturing`. |
 | `Checkbox` | `Checkbox(label="", value=False)` | Drag across several to set them all. Member: `toggle()`. |
@@ -142,6 +143,7 @@ App("Gallery", (360, 380), Panel("Values",
 | `TreeView` | `TreeView(roots=(), *, rows=8, columns=(), on_toggle=None, on_rename=None)` | The outliner. The value is the selected `TreeItem`. `columns=("hide", "render")` adds toggle columns; `on_toggle(item, column, on)`. `on_rename(item, name)`. Members: `roots`, `row_count`, `rows_info`. |
 | `TreeItem` | `TreeItem(label, *children, icon=None, expanded=True, data=None, toggles=None)` | One row of a `TreeView`. `toggles={"hide": False}` sets its columns; `data` is yours. Members: `add(*items)`, `expanded`. |
 | `GridView` | `GridView(items=(), value=0, *, tile=4.0, rows=2.0, on_activate=None)` | Preview tiles. Items are `(label, preview)`, where `preview` is an icon name or an RGBA color. Double-click or <Kbd>Enter</Kbd>: `on_activate(index)`. Members: `items`, `tile_rect(i)`. |
+| `FileBrowser` | `FileBrowser(directory="", *, file="", mode="open", multiple=False, filters=(), button="", on_change=None, on_submit=None)` | Blender's File Browser in a layout (it fills its rect): bookmarks, path bar, sortable file list, execute bar. `mode` is `"open"`, `"save"` or `"directory"`; `filters` are `"Label\tpattern ..."` entries. `on_change(directory)` after a folder change, `on_submit(paths)` when chosen (`[]` when cancelled). Members: `directory`, `file`, `hidden`, `state`, `result`, `execute()`, `cancel()`, `refresh()`. |
 
 In lists and trees, arrow keys navigate, <Kbd>Left</Kbd> and <Kbd>Right</Kbd> collapse and expand (<Kbd>Shift</Kbd>+click an arrow for all children), and you can drag down a toggle column to set it on several rows.
 
@@ -197,8 +199,8 @@ app.run()
 
 | Component | Signature | Notes |
 | --- | --- | --- |
-| `Node` | `Node(title="Node", *, inputs=(), outputs=(), location=(0.0, 0.0), width=140.0, kind="converter", color=None, collapsed=False, on_change=None)` | Inputs are `(name, type)` or `(name, type, value)`; a value draws a field while the input is unlinked. Outputs are `(name, type)`. `on_change(node, what, value)`. Members: `location`, `selected`, `collapsed`, `input_value(i)`. |
-| `NodeEditor` | `NodeEditor(nodes=(), *, links=(), on_links=None, on_delete=None)` | The node canvas. Links are `(from_node, output, to_node, input)`. `on_links(links)` runs after the user links, relinks or cuts; `on_delete(nodes)` on <Kbd>X</Kbd> / <Kbd>Delete</Kbd> (without it, the editor removes the selection itself). Members: `nodes`, `add_node()`, `remove_node()`, `links`, `selected`, `zoom`, `view_all()`. |
+| `Node` | `Node(title="Node", *, inputs=(), outputs=(), location=(0.0, 0.0), width=140.0, kind="converter", color=None, collapsed=False, controls=(), on_change=None)` | Inputs are `(name, type)` or `(name, type, value)`; a value draws a field while the input is unlinked. Outputs are `(name, type)`. `controls` are widgets in the node's body: `("button", label)`, `("checkbox", label, checked)` and `("dropdown", label, options, index)`. `on_change(node, what, value)` reports `location`, `select`, `value`, `collapsed` and `control` (`(index, value)`). Members: `location`, `selected`, `collapsed`, `input_value(i)`, `control_value(i)`. |
+| `NodeEditor` | `NodeEditor(nodes=(), *, links=(), height=None, on_links=None, on_delete=None)` | The node canvas; `height` is its natural height in units (14 by default). Links are `(from_node, output, to_node, input)`. `on_links(links)` runs after the user links, relinks or cuts; `on_delete(nodes)` on <Kbd>X</Kbd> / <Kbd>Delete</Kbd> (without it, the editor removes the selection itself). Members: `nodes`, `add_node()`, `remove_node()`, `links`, `selected`, `zoom`, `view_all()`. |
 | `Area` | `Area(editor, body, *, header=(), on_editor=None)` | A Blender area: a header with the editor-type menu (`editor` is its name), then `body` filling the rest. `on_editor(name)` when the user picks another editor type. |
 | `AreaHeader` | `AreaHeader(*children)` | An editor header row, 1.3 units tall. A `Spacer()` pushes later items to the right. |
 
@@ -224,6 +226,23 @@ App("Nodes", (480, 260), area, padding=0).run()
   alt="A node editor area with a red Value node linked to a blue Math node that has A and B inputs, B showing 0.500"
   caption="The node editor example, rendered by BUI."
   width={480}
+  height={260}
+/>
+
+A node can hold **controls**, widgets in its body between the outputs and the inputs, as Blender's node buttons do (`node_update_basis_buttons`): a push button, a checkbox and a dropdown. `on_change(node, "control", (index, value))` runs when one is pressed or changed (the value is `None` for a button, a `bool` for a checkbox and the chosen option's index for a dropdown), and `node.control_value(index)` reads it.
+
+```py
+blur = Node("Blur", inputs=[("Image", "color"), ("Radius", "float", 4.0)], outputs=[("Result", "color")],
+            controls=[("checkbox", "Preserve alpha", True), ("checkbox", "GPU"),
+                      ("dropdown", "Mode", ["Gaussian", "Box", "Fast"], 1)],
+            on_change=lambda node, what, v: print(what, v))
+```
+
+<Figure
+  src="images/node-controls.png"
+  alt="Two nodes: Image Input with a Source dropdown and an Open file button between its output and the link, and Blur with two checkboxes and a Mode dropdown above its Image and Radius inputs"
+  caption="Node controls: a dropdown, a button and checkboxes, laid out like Blender's node buttons."
+  width={560}
   height={260}
 />
 

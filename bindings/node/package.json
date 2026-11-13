@@ -1,6 +1,6 @@
 {
   "name": "@blender-ui/native",
-  "version": "0.4.0",
+  "version": "0.5.1",
   "description": "Blender's UI from JavaScript: native windows (CPU or Direct3D 11), HTML elements, CSS and Tailwind classes, signals. Node.js and Bun, through napi-rs.",
   "main": "index.js",
   "types": "index.d.ts",
@@ -82,6 +82,7 @@
     "signals",
     "bun",
     "react",
-    "svelte"
+    "svelte",
+    "vue"
   ]
 }
