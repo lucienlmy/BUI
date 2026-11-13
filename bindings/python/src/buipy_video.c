@@ -193,7 +193,7 @@ static PyObject *get_size(VideoObject *self, void *c)
 }
 
 /* write-only settings: the kit keeps them */
-#define SETTER(name, call) \
+#define SETTER(name, type, convert, call) \
   static int set_##name(VideoObject *self, PyObject *value, void *c) \
   { \
     (void)c; \
@@ -201,16 +201,20 @@ static PyObject *get_size(VideoObject *self, void *c)
       PyErr_SetString(PyExc_AttributeError, "can't delete or set on an uninitialized Video"); \
       return -1; \
     } \
+    const type v = convert; \
+    if (PyErr_Occurred()) { /* a failed conversion changes nothing */ \
+      return -1; \
+    } \
     call; \
-    return PyErr_Occurred() ? -1 : 0; \
+    return 0; \
   }
-SETTER(rate, BK_video_set_rate(self->v, PyFloat_AsDouble(value)))
-SETTER(loop, BK_video_set_loop(self->v, PyObject_IsTrue(value)))
-SETTER(controls, BK_video_set_controls(self->v, PyObject_IsTrue(value)))
-SETTER(poster, BK_video_set_poster(self->v, value == Py_None ? NULL : PyUnicode_AsUTF8(value)))
-SETTER(muted, BK_video_set_muted(self->v, PyObject_IsTrue(value)))
-SETTER(volume, BK_video_set_volume(self->v, PyFloat_AsDouble(value)))
-SETTER(audio_effects, BK_video_set_audio_effects(self->v, PyObject_IsTrue(value)))
+SETTER(rate, double, PyFloat_AsDouble(value), BK_video_set_rate(self->v, v))
+SETTER(loop, int, PyObject_IsTrue(value), BK_video_set_loop(self->v, v))
+SETTER(controls, int, PyObject_IsTrue(value), BK_video_set_controls(self->v, v))
+SETTER(poster, const char *, value == Py_None ? NULL : PyUnicode_AsUTF8(value), BK_video_set_poster(self->v, v))
+SETTER(muted, int, PyObject_IsTrue(value), BK_video_set_muted(self->v, v))
+SETTER(volume, double, PyFloat_AsDouble(value), BK_video_set_volume(self->v, v))
+SETTER(audio_effects, int, PyObject_IsTrue(value), BK_video_set_audio_effects(self->v, v))
 
 static PyObject *get_muted(VideoObject *self, void *c)
 {

@@ -95,6 +95,18 @@ def test_sound():
     assert v.player.audio_effects is True
     v.player.audio_effects = False
     assert Video(CLIP_SOUND, audio_effects=True).player.audio_effects is True
+    # a value that does not convert raises and changes nothing
+    class NoBool:
+        def __bool__(self):
+            raise ValueError("no")
+    for name, bad in (("volume", "loud"), ("rate", "fast"), ("muted", NoBool()), ("audio_effects", NoBool())):
+        before = getattr(v.player, name, None)
+        try:
+            setattr(v.player, name, bad)
+            raise AssertionError(name + " took a bad value")
+        except (TypeError, ValueError):
+            pass
+        assert getattr(v.player, name, None) == before, name
     loop = Loop(v)
     loop.run(5.0, lambda: v.player.state != bui.VIDEO_LOADING)
     loop.run(6.0, lambda: v.player.has_audio)  # an output can take seconds to wake
