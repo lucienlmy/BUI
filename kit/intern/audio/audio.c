@@ -10,12 +10,26 @@
  *
  * Threads: the device's thread runs fill(), the only user of the reader; the
  * UI thread changes the controls and reads the clock, under one lock that
- * fill() holds only to copy them and to add a segment.
+ * fill() holds only to copy them and to add a segment. Closing is not the UI
+ * thread's wait: bk_audio_free hands the player to a short-lived thread that
+ * stops the device (which may be opening, or inside a decoder read), closes
+ * the reader and frees everything; bk_audio_exit gives those threads a
+ * bounded time to finish at shutdown.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
 #include <math.h>
 #include <string.h>
+
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#  define sleep_ms(ms) Sleep(ms)
+#else
+#  include <pthread.h>
+#  include <unistd.h>
+#  define sleep_ms(ms) usleep((ms) * 1000)
+#endif
 
 #include "BLI_threads.h"
 #include "MEM_guardedalloc.h"
@@ -90,11 +104,17 @@ BKAudio *bk_audio_new(const BKImAnimCodec *codec, const char *path, int flags)
   return a;
 }
 
-void bk_audio_free(BKAudio *a)
+/* The players being closed on their own threads. */
+static struct {
+  ThreadMutex lock;
+  bool init;
+  int live;
+} Reap;
+
+/* On the closing thread: the device stops (this waits for its thread), then the reader and the
+ * player go. */
+static void reap(BKAudio *a)
 {
-  if (!a) {
-    return;
-  }
   if (a->dev) {
     bk_audio_device_close(a->dev); /* fill() has returned for good */
   }
@@ -104,6 +124,67 @@ void bk_audio_free(BKAudio *a)
   BLI_mutex_destroy(&a->lock);
   MEM_freeN(a->path);
   MEM_freeN(a);
+  BLI_mutex_lock(&Reap.lock);
+  Reap.live--;
+  BLI_mutex_unlock(&Reap.lock);
+}
+
+#ifdef _WIN32
+static DWORD WINAPI reap_main(LPVOID a)
+{
+  reap((BKAudio *)a);
+  return 0;
+}
+static bool reap_spawn(BKAudio *a)
+{
+  HANDLE h = CreateThread(NULL, 0, reap_main, a, 0, NULL);
+  return h && CloseHandle(h); /* detached */
+}
+#else
+static void *reap_main(void *a)
+{
+  reap((BKAudio *)a);
+  return NULL;
+}
+static bool reap_spawn(BKAudio *a)
+{
+  pthread_t t;
+  return pthread_create(&t, NULL, reap_main, a) == 0 && pthread_detach(t) == 0;
+}
+#endif
+
+void bk_audio_free(BKAudio *a)
+{
+  if (!a) {
+    return;
+  }
+  bk_audio_play(a, false); /* silent from now on, while the device winds down */
+  if (!Reap.init) { /* UI thread only: no race */
+    BLI_mutex_init(&Reap.lock);
+    Reap.init = true;
+  }
+  BLI_mutex_lock(&Reap.lock);
+  Reap.live++;
+  BLI_mutex_unlock(&Reap.lock);
+  if (!reap_spawn(a)) {
+    reap(a); /* no thread to be had: wait here, as the lesser harm */
+  }
+}
+
+void bk_audio_exit(double max_seconds)
+{
+  if (!Reap.init) {
+    return;
+  }
+  for (int waited = 0; waited < (int)(max_seconds * 1000.0); waited += 5) {
+    BLI_mutex_lock(&Reap.lock);
+    const int live = Reap.live;
+    BLI_mutex_unlock(&Reap.lock);
+    if (live == 0) {
+      break;
+    }
+    sleep_ms(5);
+  }
 }
 
 void bk_audio_play(BKAudio *a, bool playing)
@@ -136,11 +217,16 @@ void bk_audio_set_loop(BKAudio *a, bool loop)
   }
 }
 
+float bk_audio_clamp_gain(float gain)
+{
+  return !(gain > 0.0f) ? 0.0f : gain > 1.0f ? 1.0f : gain; /* NaN is silence */
+}
+
 void bk_audio_set_gain(BKAudio *a, float gain)
 {
   if (a) {
     BLI_mutex_lock(&a->lock);
-    a->gain = gain < 0.0f ? 0.0f : gain > 1.0f ? 1.0f : gain;
+    a->gain = bk_audio_clamp_gain(gain);
     BLI_mutex_unlock(&a->lock);
   }
 }
@@ -246,7 +332,7 @@ static bool next_frame(BKAudio *a, float *out, double *r_t, bool loop, bool *r_j
 
 /* One frame from `src` channels to `dst` (Blender's downmix weights for 5.1
  * to stereo; otherwise the first channels, mono to both sides). */
-static void map_channels(const float *in, int src, float *out, int dst)
+void bk_audio_map_channels(const float *in, int src, float *out, int dst)
 {
   if (src == dst) {
     memcpy(out, in, sizeof(float) * (size_t)dst);
@@ -272,6 +358,14 @@ static void map_channels(const float *in, int src, float *out, int dst)
       out[c] = in[c];
     }
   }
+}
+
+/* Source frames stepped per output frame (linear interpolation: below 1 it stretches, above 1 it
+ * skips, with no low-pass: the codec's reader converts to the device's rate where it can, so this
+ * is mostly 1). */
+double bk_audio_resample_step(int src_rate, int rate)
+{
+  return rate > 0 ? (double)src_rate / rate : 1.0;
 }
 
 /* The reader, opened at the device's format on first use. */
@@ -315,7 +409,7 @@ static void fill(void *data, float *out, int frames, int rate, int channels)
     a->seeks_done = seeks;
     a->primed = false;
   }
-  const double step = (double)a->src_rate / rate;
+  const double step = bk_audio_resample_step(a->src_rate, rate);
   int done = 0;
   while (playing && done < frames) {
     /* a run of frames that goes straight on (a loop starts the next one) */
@@ -365,7 +459,7 @@ static void fill(void *data, float *out, int frames, int rate, int channels)
         mixed[c] = a->prev[c] + (a->cur[c] - a->prev[c]) * f;
       }
       float *o = out + (size_t)done * channels;
-      map_channels(mixed, a->src_channels, o, channels);
+      bk_audio_map_channels(mixed, a->src_channels, o, channels);
       for (int c = 0; c < channels; c++) {
         o[c] *= gain;
       }
@@ -384,9 +478,29 @@ static void fill(void *data, float *out, int frames, int rate, int channels)
   a->written += (double)(frames - done) / rate; /* the silence */
   if (a->ended) {
     BLI_mutex_lock(&a->lock);
-    a->drained = true;
+    a->drained = seeks == a->seeks; /* a seek asked for meanwhile: what ended is from before */
     BLI_mutex_unlock(&a->lock);
   }
 }
 
 /** \} */
+
+#if !defined(BUI_AUDIO_WASAPI) && !defined(BUI_AUDIO_COREAUDIO) && !defined(BUI_AUDIO_PULSE)
+/* A platform without an audio backend: silent video, nothing else changes. */
+BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data, int flags)
+{
+  (void)fill;
+  (void)data;
+  (void)flags;
+  return NULL;
+}
+double bk_audio_device_played(BKAudioDevice *d)
+{
+  (void)d;
+  return 0.0;
+}
+void bk_audio_device_close(BKAudioDevice *d)
+{
+  (void)d;
+}
+#endif

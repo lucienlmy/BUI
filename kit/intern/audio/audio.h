@@ -42,7 +42,8 @@ BKAudioDevice *bk_audio_device_open(BKAudioFill fill, void *data, int flags);
 /* Seconds of the stream that have reached the speakers (0 before it plays):
  * the position of the samples `fill` wrote, less what the device buffers. */
 double bk_audio_device_played(BKAudioDevice *d);
-/* Stops the stream; `fill` is not called once this returns. */
+/* Stops the stream; `fill` is not called once this returns. It may wait for the device's thread
+ * (a stream opening, a decoder read): bk_audio_free runs it on its own thread, never the UI's. */
 void bk_audio_device_close(BKAudioDevice *d);
 
 /* -- the player (audio.c): one movie's sound ----------------------------------------- */
@@ -52,11 +53,20 @@ typedef struct BKAudio BKAudio;
  * video). Opens nothing yet: the device and the reader open on the device's
  * thread. NULL when the codec reads no audio or there is no device. */
 BKAudio *bk_audio_new(const BKImAnimCodec *codec, const char *path, int flags);
+/* Returns at once: the device, the reader and the player are released on a thread of their own. */
 void bk_audio_free(BKAudio *a);
+/* Shutdown: waits up to `max_seconds` for the players being freed (the process may exit then). */
+void bk_audio_exit(double max_seconds);
 void bk_audio_play(BKAudio *a, bool playing);
 void bk_audio_seek(BKAudio *a, double t);
 void bk_audio_set_loop(BKAudio *a, bool loop);
-void bk_audio_set_gain(BKAudio *a, float gain); /* 0 (muted) .. 1 */
+void bk_audio_set_gain(BKAudio *a, float gain); /* 0 (muted) .. 1; NaN is 0 */
+/* The pure parts of the conversion (tested without a device). */
+float bk_audio_clamp_gain(float gain);
+/* One frame from `src` channels to `dst`: Blender's 5.1 to stereo downmix, mono to both sides. */
+void bk_audio_map_channels(const float *in, int src, float *out, int dst);
+/* Source frames stepped per output frame. */
+double bk_audio_resample_step(int src_rate, int rate);
 /* The movie time being heard now (seconds), or < 0 when the sound isn't the
  * clock: not playing yet, paused, ended, no audio track. */
 double bk_audio_clock(BKAudio *a);
