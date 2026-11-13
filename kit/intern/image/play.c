@@ -175,16 +175,29 @@ static double heard(const BKImPlay *p)
   return p->clock ? p->clock(p->clock_data) : -1.0;
 }
 
-/* The sound's time held against a frame at `pts`: in a looping movie, the loop of the sound
- * nearest to the frame. Sound near the end that hasn't come round yet is from before the start, and
- * sound that came round before the last frames (the picture runs a little past the sound) is from
- * after the end. */
-static double heard_for(const BKImPlay *p, double c, double pts)
+/* The sound's time held against a frame at `pts`. Only within a window of the loop boundary does the
+ * sound count from the neighbouring loop (it just wrapped while the frame is at the end, or the
+ * frame just wrapped and it hasn't): a nearest-cycle remainder() read a sound far ahead as far behind,
+ * so the catch-up seek never ran; past the window it is ahead, and the seek goes where it is. */
+double imb_play_heard_for(int loops, double duration, double c, double pts)
 {
-  if (p->loops != 0 || p->duration <= 0.0) {
+  if (loops != 0 || duration <= 0.0) {
     return c;
   }
-  return pts + remainder(c - pts, p->duration);
+  const double window = BK_MIN(BK_PLAY_WRAP_WINDOW, duration * 0.5);
+  const double d = c - pts;
+  if (d > duration - window) {
+    return c - duration; /* the frame just came round, the sound hasn't */
+  }
+  if (d < window - duration) {
+    return c + duration; /* the sound just came round, the frame is at the end */
+  }
+  return c;
+}
+
+static double heard_for(const BKImPlay *p, double c, double pts)
+{
+  return imb_play_heard_for(p->loops, p->duration, c, pts);
 }
 
 /* With sound: when the shown frame is over (the sound reached the next one). */

@@ -133,6 +133,7 @@ if(BUI_BUILD_TESTS)
   # (exits 77, skipped, without a backend that decodes the H.264 clip)
   add_executable(bui_video_test tests/video_test.c)
   target_link_libraries(bui_video_test PRIVATE bui::kit)
+  target_include_directories(bui_video_test PRIVATE kit/intern/image)
   target_compile_definitions(bui_video_test PRIVATE
     BUI_TEST_VIDEOS="${CMAKE_CURRENT_SOURCE_DIR}/tests/videos"
     BUI_TEST_TMP="${CMAKE_CURRENT_BINARY_DIR}")

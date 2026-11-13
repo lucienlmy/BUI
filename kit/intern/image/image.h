@@ -343,6 +343,9 @@ BKImPlayState imb_play_state(const BKImPlay *p);
 double imb_play_time(const BKImPlay *p);     /* seconds, of the frame shown */
 double imb_play_duration(const BKImPlay *p); /* seconds, 0 when unknown */
 bool imb_play_size(const BKImPlay *p, int *r_w, int *r_h); /* intrinsic, once loaded */
+/* The sound time `c` held against a frame at `pts` of a looping movie (see play.c). */
+#define BK_PLAY_WRAP_WINDOW 1.0 /* seconds either side of the loop boundary */
+double imb_play_heard_for(int loops, double duration, double c, double pts);
 /* A movie with sound: frames follow `clock` (the movie time heard, < 0 when
  * there is none now: the frames' own time then); NULL: none. */
 void imb_play_set_clock(BKImPlay *p, double (*clock)(void *data), void *data);

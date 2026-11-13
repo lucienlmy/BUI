@@ -22,6 +22,7 @@
 
 #include "BUI_kit.h"
 #include "GPU_raster.h"
+#include "image.h" /* imb_play_heard_for (kit/intern/image) */
 #include "MEM_guardedalloc.h"
 
 static int g_fail = 0;
@@ -416,9 +417,22 @@ static void test_malformed(const char *clip)
   BUI_raster_free(r);
 }
 
+/* The sound held against a looping frame (duration 60): near the boundary the neighbouring loop,
+ * elsewhere the sound as it is (far ahead stays ahead: the picture seeks to it). */
+static void heard_for_test(void)
+{
+  const double D = 60.0;
+  CHECK(fabs(imb_play_heard_for(0, D, 40.0, 1.04) - 40.0) < 1e-9);   /* far ahead: not -20 */
+  CHECK(fabs(imb_play_heard_for(0, D, 10.0, 30.0) - 10.0) < 1e-9);   /* behind, mid-movie */
+  CHECK(fabs(imb_play_heard_for(0, D, 0.2, 59.9) - 60.2) < 1e-9);    /* sound wrapped: a small lag */
+  CHECK(fabs(imb_play_heard_for(0, D, 59.9, 0.1) - -0.1) < 1e-9);    /* frame wrapped first */
+  CHECK(imb_play_heard_for(1, D, 40.0, 1.04) == 40.0);               /* not looping: as is */
+}
+
 int main(void)
 {
   setvbuf(stdout, NULL, _IONBF, 0);
+  heard_for_test();
   if (!BK_video_backends()[0]) {
     printf("video_test: no video backend in this build, skipped\n");
     return 77;
