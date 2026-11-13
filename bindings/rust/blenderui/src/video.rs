@@ -276,10 +276,14 @@ fn apply(v: &Video, had: &VideoAttrs, now: &VideoAttrs) {
 mod tests {
     use super::*;
 
+    /// The kit's state is the UI thread's: tests that make videos take turns.
+    static KIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Two elements of one file with different attributes each keep their own player, and
     /// later renders hand back the same players with nothing re-applied.
     #[test]
     fn same_src_elements_do_not_share_a_player() {
+        let _kit = KIT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut cache = VideoCache::default();
         let plain = VideoAttrs { autoplay: true, ..VideoAttrs::default() };
         let fx = VideoAttrs { audio_effects: true, ..plain.clone() };
@@ -298,6 +302,7 @@ mod tests {
     /// stay.
     #[test]
     fn players_of_removed_elements_are_dropped() {
+        let _kit = KIT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut cache = VideoCache::default();
         let plain = VideoAttrs { autoplay: true, ..VideoAttrs::default() };
         cache.begin_pass();
@@ -320,6 +325,7 @@ mod tests {
     /// The attributes reach the player: muted and audioeffects.
     #[test]
     fn muted_and_audioeffects_apply() {
+        let _kit = KIT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut cache = VideoCache::default();
         let attrs = VideoAttrs { autoplay: true, muted: true, audio_effects: true, ..VideoAttrs::default() };
         cache.begin_pass();
