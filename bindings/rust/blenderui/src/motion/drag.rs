@@ -37,6 +37,25 @@ fn elastic(v: f32, lo: f32, hi: f32, e: f32) -> f32 {
     }
 }
 
+/// Samples older than this (seconds) before the release don't count: a pause
+/// before letting go stops the element.
+const IDLE: f64 = 0.1;
+/// The shortest span a velocity is measured over (seconds): two samples a
+/// hair apart would turn jitter into a throw.
+const MIN_DT: f64 = 0.008;
+
+/// The pointer's velocity at `now`, from the newest sample back to the oldest
+/// within [`IDLE`] of `now` (`n` samples were taken, the last 4 are kept).
+fn release_velocity(samples: &[(f64, f32, f32); 4], n: usize, now: f64) -> (f32, f32) {
+    let newest = samples[(n - 1) % 4];
+    if now - newest.0 > IDLE {
+        return (0.0, 0.0);
+    }
+    let oldest = (n.saturating_sub(4)..n).map(|k| samples[k % 4]).find(|s| now - s.0 <= IDLE).unwrap_or(newest);
+    let dt = (newest.0 - oldest.0).max(MIN_DT) as f32;
+    ((newest.1 - oldest.1) / dt, (newest.2 - oldest.2) / dt)
+}
+
 impl Elements {
     /// The pointer pressed on `path` (root to deepest): the deepest element
     /// that drags takes it. True when one did.
@@ -82,11 +101,7 @@ impl Elements {
     /// constraints or its origin. True when a drag ended.
     pub(crate) fn pointer_up(&mut self) -> bool {
         let Some(d) = self.drag.take() else { return false };
-        // velocity: from the oldest sample kept to the newest
-        let newest = d.samples[(d.n - 1) % 4];
-        let oldest = d.samples[d.n.saturating_sub(4) % 4];
-        let dt = (newest.0 - oldest.0) as f32;
-        let vel = if dt > 1e-4 { ((newest.1 - oldest.1) / dt, (newest.2 - oldest.2) / dt) } else { (0.0, 0.0) };
+        let vel = release_velocity(&d.samples, d.n, super::now());
         let c = d.spec.constraints;
         let slot: *mut Slot = self.els.at(d.slot);
         for (on, id, v, lo, hi) in [(d.spec.x, sys::BK_PROP_X, vel.0, c.map(|c| c[0]), c.map(|c| c[1])),

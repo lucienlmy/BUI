@@ -86,3 +86,32 @@ fn drag() {
         assert_eq!(x(cx, w, "off"), 100.0, "drag={{false}} stays");
     });
 }
+
+/// Letting go after a pause throws nothing: the samples are stale.
+#[test]
+fn release_after_a_pause_keeps_still() {
+    Application::headless().run(|cx| {
+        blenderui::motion::lag_smoothing(0.0, 0.0);
+        let opts = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(600.0), px(300.0)),
+            })),
+            ..Default::default()
+        };
+        let w = cx.open_window(opts, |_, cx| cx.new(|_| Page)).unwrap().id;
+        cx.draw(w);
+        cx.simulate_press(w, 25.0, 125.0);
+        for k in 1..=4 {
+            ms(cx, w, 16);
+            cx.simulate_mouse_move(w, 25.0 + 20.0 * k as f32, 125.0);
+        }
+        ms(cx, w, 300);
+        let at_release = x(cx, w, "b");
+        cx.simulate_release(w, 105.0, 125.0);
+        for _ in 0..30 {
+            ms(cx, w, 16);
+        }
+        assert!((x(cx, w, "b") - at_release).abs() < 0.6, "stays: {at_release} -> {}", x(cx, w, "b"));
+    });
+}
