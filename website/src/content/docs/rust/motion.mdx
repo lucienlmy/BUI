@@ -156,7 +156,7 @@ let opacity = use_transform(x, &[0.0, 200.0], &[1.0, 0.0]);
 // <motion.div style={{ x: smooth, opacity: opacity }} />
 ```
 
-`use_transform` and `use_velocity` read their source when the component renders, so a derived value follows the source on each render, not on each animation frame; to move something every frame, bind the source (or a `use_spring` of it) itself. (This is being changed to follow every frame; check `motion_value.rs`.)
+`use_transform`, `use_velocity` and `use_spring` of a value are derived: they follow their source whenever they are read (a frame, a render, an element's style), so nothing re-renders for them. The ranges of a `use_transform` are copied when they change, not on every render.
 
 `use_scroll` and `use_element_scroll` give the scroll position as motion values, to bind to a progress bar or a parallax layer. `use_velocity` follows how fast another value changes.
 
