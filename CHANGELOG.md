@@ -22,8 +22,9 @@ All notable changes to **blenderui** (BUI). The format follows
     `dragMomentum`) and `layout`; `presence` (AnimatePresence); motion values (`use_motion_value`, `use_spring`,
     `use_transform`, `use_velocity`, `use_scroll`); `gsap::to / from / from_to / set / timeline` and
     `motion::animate`. `{{ }}` (and `vars!{}` outside `rsx!`) is an object of values; one made of literals is a
-    `static` read once, and a frame allocates nothing. Frames of moving values redraw only the boxes that moved,
-    without rendering the view or running layout. `examples/site_motion.rs`.
+    `static` read once per call site. A frame that only animates skips the view render, the cascade and layout
+    and repaints only the elements that changed; it is not allocation-free yet (see "What a frame costs" in
+    `docs/animation-api.md`; the Rust side is being tightened). `examples/site_motion.rs`.
   - **JavaScript and React:** `@blender-ui/native/gsap` and `@blender-ui/native/motion` (`animate`, `motionValue`,
     `stagger`), Motion's props on every element (`el.setMotion`), `@blender-ui/react/motion` (`motion.div`,
     `useMotionValue`, `useSpring`, `useTransform`), and `el.animate()` (Web Animations) now runs for real.
@@ -32,7 +33,7 @@ All notable changes to **blenderui** (BUI). The format follows
     `QEasingCurve` of Qt syntax run on the engine too. Components take `initial`, `animate` and `transition`.
   - **Lua:** `bui.gsap` and `bui.motion`. **C:** `BK_tween`, `BK_timeline`, `BK_spring_*`, `BK_ease_*`, and
     `BK_anim_node` for kit widgets.
-  - Docs: the website's Motion and GSAP pages for Rust, JavaScript and Python, and the Lua overview; `docs/animation-api.md`.
+  - Docs: the website's Motion and GSAP pages for Rust, JavaScript, Python and Lua (with Svelte transitions in the JavaScript page); `docs/animation-api.md` (status of every entry point, the numbers contract, what a frame costs).
   - Examples: `examples/animation/` (a hero intro, a card grid, magnetic buttons, a marquee with drag and an equalizer).
 - **Custom themes.** A theme file (JSON, in gpui-kit's shape, with Blender's own names for the colors) adds your
   own themes to Dark and Light: `bui.load_theme(path_or_text)`, `blenderui::load_theme` / `load_theme_file`,

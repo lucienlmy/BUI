@@ -68,7 +68,9 @@ fn card(title: &str) -> impl IntoElement {
 
 ## What it costs
 
-An object made of literals is a `static`: its property ids and eases are looked up once per call site, and a frame allocates nothing. A window with moving values redraws only the boxes that moved, without rendering the view or running layout again, and a window with nothing moving costs no CPU.
+An object made of literals is a `static`: its property ids and eases are looked up once per call site. A frame that only animates skips rendering the view, the style cascade and layout, and repaints only the elements that changed; a window with nothing moving costs no CPU.
+
+A frame is not allocation-free yet. What still allocates: a call's values are built once when it starts (not per frame), a callback (`on_update`, `on_complete`) costs one boxed event each time it fires, and objects with computed values are built where they are written. The Rust side is being tightened; the full list is under [What a frame costs](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#what-a-frame-costs).
 
 ## Springs and eases
 

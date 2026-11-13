@@ -232,7 +232,7 @@ If you're starting fresh in Python, the Blender components are the friendliest.
 - **Both APIs, one engine.** `<motion.div initial animate exit whileHover whileTap whileInView drag layout>` in Rust's `rsx!`, `gsap.to / from / fromTo / timeline` and `motion.animate` in Rust, JavaScript, Python and Lua, and Motion's props in React. One C engine in the kit runs them all, so no language carries its own.
 - **Real springs.** Springs and inertia are solved in closed form (the damped spring equation, all three damping cases), so a frame reads the value at its time and the frame rate doesn't change the result. An interrupted motion hands its position and velocity to the next.
 - **Every ease by name**: GSAP's, Motion's, CSS's and Blender's, plus `cubic-bezier()`, `steps()`, `linear()` and SVG paths.
-- **Cheap**: an object of literals is a `static` in Rust (a frame allocates nothing), moving values redraw only the boxes that moved with no render or layout, and an idle window costs no CPU.
+- **Cheap**: a frame that only animates skips the view render, the style cascade and layout and repaints only the elements that changed, an object of literals is a `static` read once per call site in Rust, and an idle window costs no CPU. It is not allocation-free yet: calls build their values once, and a callback or `onUpdate` costs an event per call (the Rust side is being tightened). [What a frame costs](docs/animation-api.md#what-a-frame-costs).
 - A feature (`anim`, on by default). Docs: [Rust](https://bui.preetham.top/docs/rust/motion/), [JavaScript](https://bui.preetham.top/docs/javascript/animation/), [Python](https://bui.preetham.top/docs/python/animation/).
 
 ### Fast by design
