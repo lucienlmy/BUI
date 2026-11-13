@@ -8,7 +8,7 @@
 > Differences from the proposal:
 > - `variants` in `rsx!` take a list of `("name", vars! { ... })` pairs, not a nested object, and
 >   `staggerChildren` / `delayChildren` aren't there (give children a `delay`, or use `gsap::to` with `stagger`).
-> - JavaScript has no `layoutId` yet; its `exit` runs whenever an element is removed, so `AnimatePresence` only passes its children through. Rust has `presence` and `layout`.
+> - JavaScript has no `layoutId` yet; its `exit` runs when the DOM-style API removes an element (`removeChild`), so `AnimatePresence` only passes its children through; a React component that unmounts does not hold its element for the exit yet. Rust has `presence` and `layout`.
 > - Widgets (kit nodes) have no draw transform or opacity: `x`, `y`, `scale`, `rotate` and `opacity` apply to
 >   HTML elements, and a widget animates its own values.
 
@@ -96,7 +96,7 @@ The samples further down are the original proposal: where they use something mar
 | motion values (`motionValue`, `useMotionValue`, `useSpring`, `useTransform`) | built | built (React hooks too) | built | not built | `style={{ x: mv }}` |
 | `useVelocity`, `useScroll`, `useInView`, `useAnimate`, `useAnimationFrame`, `useReducedMotion`, `useDragControls` | `use_velocity`, `use_scroll` | not built | not built | not built | none |
 | `<motion.div>` and its props (`initial`, `animate`, `exit`, `while*`, `variants`, `transition`, `drag`, `layout`) | built | built (`el.setMotion`, React `motion.div`) | `initial`, `animate`, `transition` on components | not built | `<motion.div animate={{ opacity: 1 }} />` |
-| `AnimatePresence` | built (`presence`) | an exit runs on any removal; the component passes children through; no `mode` | not built | not built | `<AnimatePresence>{open && <motion.div exit={{ opacity: 0 }} />}</AnimatePresence>` |
+| `AnimatePresence` | built (`presence`) | an exit runs when the DOM API removes the element (not yet when React unmounts it); the component passes children through; no `mode` | not built | not built | `<AnimatePresence>{open && <motion.div exit={{ opacity: 0 }} />}</AnimatePresence>` |
 | `layoutId`, `LayoutGroup`, `MotionConfig` (React / JavaScript) | `layout` built; no `MotionConfig` | `layout` prop built; the rest not built | not built | not built | none |
 | `el.animate()` (Web Animations) | n/a | built; `cancel()` leaves the first keyframe applied until the engine can revert | n/a | n/a | `el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300 })` |
 | Svelte transitions (`transition:`, `in:`, `out:`) | n/a | built, through `el.animate()` | n/a | n/a | `{#if open}<div transition:fade />{/if}` |
@@ -114,7 +114,7 @@ before anything reaches the engine, so a mistake throws where it is made.
 | `duration`, `delay`, `repeatDelay`, `stagger` (seconds) | a finite number; **negative is 0**; NaN or infinite is an error (`RangeError` in JavaScript, an error naming the option in the other languages) and a non-number is a `TypeError` in JavaScript |
 | `repeat` | a whole number: `-1` (and `Infinity`) is forever; other negatives are 0; more than **1,000,000** is clamped to 1,000,000; NaN is an error |
 | `seek`, `progress`, `timeScale`, `currentTime` | finite numbers; NaN or infinite is an error, nothing changes |
-| position parameter | a finite number, or GSAP's grammar: `"+=n"`, `"-=n"`, `"<"`, `">"`, `"<n"`, `">n"` (also `"<+=n"`, `">-n"`), `"label"`, `"label+=n"`, `"label-=n"`, and the percent forms (`"50%"`, `"+=25%"`); anything else (`"<=1"`, `{}`, `"a b"`) is an error, not a label or a 0 offset |
+| position parameter | a finite number, or GSAP's grammar: `"+=n"`, `"-=n"`, `"<"`, `">"`, `"<n"`, `">n"` (also `"<+=n"`, `">-n"`), `"label"`, `"label+=n"`, `"label-=n"`, and the percent forms (`"50%"`, `"+=25%"`); a label that does not exist yet is made at the end of the timeline, as in GSAP (a label is a letter or `_`, then letters, digits, `_`, `.` or `-`); anything else (`"<=1"`, `{}`, `"a b"`) is an error, not a label or a 0 offset |
 
 Defaults (`defaults`, `transition`) are checked the same way as the call's own values.
 

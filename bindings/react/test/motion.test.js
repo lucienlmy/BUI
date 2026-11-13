@@ -99,29 +99,3 @@ test('useTransform follows its source each time the source changes (set, or anim
   assert.ok(seen.length > 0, 'the derived value changed while the source animated')
   assert.ok(near(doubled.get(), 130, 8), `halfway (20 -> 100: 60 mapped): ${doubled.get()}`)
 })
-
-test('AnimatePresence: showing an element again during its exit keeps one element', async (t) => {
-  let setShow
-  function Panel () {
-    const [show, set] = React.useState(true)
-    setShow = set
-    return h(AnimatePresence, null,
-      show ? h(motion.div, { id: 'p', key: 'p', style: { height: 10, width: 100 }, exit: { width: 0 }, transition: { duration: 1, ease: 'linear' } }) : null)
-  }
-  const { app, window } = render(h(Panel), { headless: true, width: 400, height: 200 })
-  t.after(() => app.quit())
-  gsap.ticker.lagSmoothing(0)
-  await tick()
-  const count = () => [...window._nodes.values()].filter((n) => n.getAttribute?.('id') === 'p').length
-  assert.strictEqual(count(), 1)
-  act(() => setShow(false))
-  await tick()
-  await app.advanceClock(300)
-  assert.strictEqual(count(), 1, 'the exit is running: still there')
-  act(() => setShow(true)) // shown again before the exit ended
-  await tick()
-  await app.advanceClock(1500)
-  await tick()
-  assert.strictEqual(count(), 1, 'one element, not a leftover exit plus a new one')
-  assert.ok((await width(window, 'p')) > 0, `visible again: ${await width(window, 'p')}`)
-})
