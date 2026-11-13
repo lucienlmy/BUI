@@ -9,7 +9,8 @@ use super::element::{Elements, Slot, start};
 use super::spec::Layout;
 use super::value::{Key, Value};
 use crate::geometry::{Bounds, Units};
-use crate::layout::{Frame, StyleStore};
+use crate::layout::{BoxNode, Frame, StyleStore};
+use taffy::style::Position;
 
 /// The offsets' properties (`PropState::layout` 1 .. 4).
 pub(super) static LAYOUT_X: Key = Key::new(c"__layoutX");
@@ -32,17 +33,11 @@ impl Elements {
             let s = self.els.at(i);
             let Some(mode) = s.gest.as_ref().and_then(|g| g.layout) else { continue };
             let Some(n) = frame.nodes.get(s.node).filter(|n| n.key == s.key) else { continue };
-            // its box as laid out: without what moves it (translate)
-            let st = &styles[n.style];
-            let u = Units { font_size: st.font_size, viewport };
-            let (w, h) = (n.bounds.size.width, n.bounds.size.height);
-            let t = (st.translate.0.resolve(&u, w), st.translate.1.resolve(&u, h));
-            let now = Bounds { origin: crate::geometry::point(n.bounds.origin.x - t.0, n.bounds.origin.y - t.1),
-                               size: n.bounds.size };
-            let g = s.gest.as_mut().expect("layout");
+            let now = laid_out(frame, n, styles, viewport);
+            let Some(g) = s.gest.as_mut() else { continue };
             let was = g.last_box.replace(now);
             let Some(was) = was.filter(|b| moved(b, &now)) else { continue };
-            let transition = g.layout_t.clone();
+            let transition = std::mem::take(&mut g.layout_t); // put back below: no clone
             let slot: *mut Slot = s;
             // where it's seen now: its offsets (and scales) so far, plus the change
             let scaled = mode != Layout::Position && now.size.width > 0.0 && now.size.height > 0.0;
@@ -69,10 +64,31 @@ impl Elements {
                 go(&LAYOUT_SX, was.size.width / now.size.width, 1.0);
                 go(&LAYOUT_SY, was.size.height / now.size.height, 1.0);
             }
+            // SAFETY: a live slot; the engine kept no borrow of it
+            if let Some(g) = unsafe { &mut *slot }.gest.as_mut() {
+                g.layout_t = transition;
+            }
             started = true;
         }
         started
     }
+}
+
+/// `n`'s box as its layout alone placed it: relative to its parent's box (what
+/// the ancestors' translates, a drag, and the parent's scroll move is the
+/// parent's own business), without its own translate. A `position: fixed` box
+/// has no parent to follow.
+fn laid_out(frame: &Frame, n: &BoxNode, styles: &StyleStore, viewport: (f32, f32)) -> Bounds<f32> {
+    let st = &styles[n.style];
+    let u = Units { font_size: st.font_size, viewport };
+    let (w, h) = (n.bounds.size.width, n.bounds.size.height);
+    let (mut x, mut y) = (n.bounds.origin.x - st.translate.0.resolve(&u, w), n.bounds.origin.y - st.translate.1.resolve(&u, h));
+    if let Some(p) = n.parent.filter(|_| st.layout.position != Position::Fixed).and_then(|p| frame.nodes.get(p)) {
+        // children sit at the parent's box, minus what it scrolled
+        x += p.scroll_pos.0 - p.bounds.origin.x;
+        y += p.scroll_pos.1 - p.bounds.origin.y;
+    }
+    Bounds { origin: crate::geometry::point(x, y), size: n.bounds.size }
 }
 
 fn center(b: &Bounds<f32>) -> (f32, f32) {
