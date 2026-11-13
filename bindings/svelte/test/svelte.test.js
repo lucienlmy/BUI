@@ -15,6 +15,7 @@ import Counter from './fixtures/Counter.svelte'
 import Panel from './fixtures/Panel.svelte'
 import Modes from './fixtures/Modes.svelte'
 import Show from './fixtures/Show.svelte'
+import Grow from './fixtures/Grow.svelte'
 import Form from './fixtures/Form.svelte'
 import Blocks from './fixtures/Blocks.svelte'
 import Bound from './fixtures/Bound.svelte'
@@ -153,6 +154,38 @@ test('Svelte: hidden keeps a subtree; transitions animate (el.animate on the eng
   }
   assert.strictEqual(find('kid').hasAttribute('hidden'), false)
   assert.strictEqual(find('vt').textContent, 'shown')
+})
+
+test('Svelte: a transition in and out runs on the engine, and toggling back mid-outro keeps one node', async (t) => {
+  let setShow
+  const { app, window } = render(Grow, { props: { expose: (s) => { setShow = s } }, headless: true, width: 300, height: 100 })
+  t.after(() => app.quit())
+  const find = finder(window)
+  const count = () => [...window._nodes.values()].filter((n) => n.getAttribute?.('id') === 'g').length
+  const wide = async () => (await find('g').getBoundingClientRect()).width
+  const step = async (ms) => { await app.advanceClock(ms); await tick() }
+  await tick()
+  assert.strictEqual(count(), 0)
+  setShow(true)
+  await tick()
+  await wide() // the next layout finds the element
+  await step(100)
+  await step(200)
+  const mid = await wide()
+  assert.ok(mid > 5 && mid < 95, `the intro is under way, its width moved by the engine: ${mid}`)
+  await step(600)
+  setShow(false)
+  await tick()
+  await step(100)
+  assert.strictEqual(count(), 1, 'the outro is running: the node is still there')
+  setShow(true) // back before the outro ended
+  await tick()
+  await step(600)
+  assert.strictEqual(count(), 1, 'one node, not a leftover outro plus a new one')
+  setShow(false)
+  await tick()
+  for (let ms = 0; ms < 2000 && count() > 0; ms += 100) await step(100)
+  assert.strictEqual(count(), 0, 'the outro finished and freed the node')
 })
 
 test('Svelte: bindings, Blender widgets, snippets, context and lifecycle', async (t) => {

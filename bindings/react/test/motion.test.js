@@ -5,7 +5,7 @@ const test = require('node:test')
 const assert = require('node:assert')
 const React = require('react')
 const { render, act } = require('..')
-const { motion, useMotionValue, useTransform } = require('../motion')
+const { motion, AnimatePresence, animate, useMotionValue, useTransform } = require('../motion')
 const { gsap } = require('@blender-ui/native/gsap')
 const h = React.createElement
 
@@ -70,4 +70,58 @@ test('motion values: useMotionValue in style, useTransform', async (t) => {
   assert.ok(near(await width(window, 'bar'), 60), 'the element follows it without re-rendering')
   assert.strictEqual(motion.Button, require('..').Button, 'motion.<Widget> is the Blender widget')
   assert.strictEqual(motion.span, 'span')
+})
+
+test('useTransform follows its source each time the source changes (set, or animated)', async (t) => {
+  let x, doubled, ranged
+  function Bar () {
+    x = useMotionValue(0)
+    doubled = useTransform(x, (v) => v * 2 + 10) // the function form
+    ranged = useTransform(x, [0, 100], [0, 1]) // the range form
+    return h(motion.div, { id: 'bar', style: { height: 10, width: doubled } })
+  }
+  const { app, window } = render(h(Bar), { headless: true, width: 400, height: 200 })
+  t.after(() => app.quit())
+  gsap.ticker.lagSmoothing(0)
+  await tick()
+  assert.ok(near(doubled.get(), 10))
+  x.set(20)
+  assert.ok(near(doubled.get(), 50), `after set: ${doubled.get()}`)
+  assert.ok(near(ranged.get(), 0.2, 1e-6))
+  assert.ok(near(await width(window, 'bar'), 50), 'and the element follows')
+  // animated: each frame JavaScript hears is mapped again
+  const seen = []
+  doubled.on('change', (v) => seen.push(v))
+  animate(x, 100, { duration: 1, ease: 'linear' })
+  await tick()
+  await app.advanceClock(500)
+  await tick()
+  assert.ok(seen.length > 0, 'the derived value changed while the source animated')
+  assert.ok(near(doubled.get(), 130, 8), `halfway (20 -> 100: 60 mapped): ${doubled.get()}`)
+})
+
+test('AnimatePresence: showing an element again during its exit keeps one element', async (t) => {
+  let setShow
+  function Panel () {
+    const [show, set] = React.useState(true)
+    setShow = set
+    return h(AnimatePresence, null,
+      show ? h(motion.div, { id: 'p', key: 'p', style: { height: 10, width: 100 }, exit: { width: 0 }, transition: { duration: 1, ease: 'linear' } }) : null)
+  }
+  const { app, window } = render(h(Panel), { headless: true, width: 400, height: 200 })
+  t.after(() => app.quit())
+  gsap.ticker.lagSmoothing(0)
+  await tick()
+  const count = () => [...window._nodes.values()].filter((n) => n.getAttribute?.('id') === 'p').length
+  assert.strictEqual(count(), 1)
+  act(() => setShow(false))
+  await tick()
+  await app.advanceClock(300)
+  assert.strictEqual(count(), 1, 'the exit is running: still there')
+  act(() => setShow(true)) // shown again before the exit ended
+  await tick()
+  await app.advanceClock(1500)
+  await tick()
+  assert.strictEqual(count(), 1, 'one element, not a leftover exit plus a new one')
+  assert.ok((await width(window, 'p')) > 0, `visible again: ${await width(window, 'p')}`)
 })
