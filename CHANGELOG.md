@@ -32,6 +32,15 @@ All notable changes to **blenderui** (BUI). The format follows
 - **Kit:** a `select` node flag draws a button held in (Blender's `UI_SELECT`, for checked push buttons), and a separator with `vertical` draws its line across a row (`uiButSeparatorLine.is_vertical`).
 
 ### Fixed
+- **Windows window exposure and resizing:** a window dragged back from outside the screen, restored from minimize or uncovered
+  could show black where nothing had been composed (a flip-model swap chain only updates the dirty rects of a present). A move,
+  a show, a restore, a `WM_PAINT` and a dropped (`DXGI_STATUS_OCCLUDED`) present now give the next present the whole frame, before
+  the next refresh; a minimized window is no longer laid out at 0x0. Resizing rendered about 2.5 frames per size (the stale tree at the
+  new size, the app's rebuild, then a `WM_PAINT` render): the size reaches the app first (`BK_configure`, new), `WM_PAINT` only
+  requests a present, and size changes render once per refresh. The GPU target and swap chain grow in 256 px steps (no
+  `ResizeBuffers` and texture re-creation per size) and the software frame buffers are reused. A 200-step drag on the
+  chat-list app went from 513 to 208 renders and 5.3 to 0.6 ms average per render (GPU), 603 to 206 renders (software).
+  `BUI_PROFILE=1` also prints a size/render summary at exit.
 - **Python components:** `NodeEditor` follows `add`, `insert`, `remove`, `replace` and `clear` (its `nodes` and `links` went stale when
   children were edited that way, and a link now keeps naming the same nodes when an earlier one is inserted or removed);
   `replace(old, new)` puts an earlier sibling in `old`'s place, not the slot after it; `FileBrowser.directory = same_folder` no longer

@@ -629,6 +629,10 @@ BKNode *BK_context_root(BKContext *ctx);
 /* Render into `r` (w x h). Redraws only damaged regions unless `full`.
  * Returns the number of redrawn regions (0 = nothing changed). */
 int BK_render(BKContext *ctx, BuiRaster *r, int w, int h, int full);
+/* The window is now w x h: lays out and reports the geometry (BK_EV_CONFIGURE) without drawing,
+ * so a host whose handlers rebuild the tree does that before the first draw at the new size.
+ * Returns 1 when the size changed. BK_render does the same, so calling this is optional. */
+int BK_configure(BKContext *ctx, int w, int h);
 int BK_needs_render(BKContext *ctx);
 
 /* Input; each returns non-zero when something changed. */

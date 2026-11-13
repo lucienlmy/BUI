@@ -162,8 +162,9 @@ struct BuiGpu {
 
   ID3D11Texture2D *target;
   ID3D11RenderTargetView *rtv;
-  int tw, th;
-  int w, h; /* frame size */
+  int tw, th; /* target texture size (>= the frame) */
+  int fw, fh; /* the frame size the target holds */
+  int w, h;   /* frame size */
 
   Atlas mask, rgba;
   BigTex big[BIG_MAX];
@@ -1383,16 +1384,43 @@ void bui_gpu_damage(BuiGpu *g, int x, int y, int w, int h)
 /** \name Drawing + present
  * \{ */
 
+/* Resizing steps: the target and the swap chain are made a multiple of GPU_SLACK px wide and
+ * high and kept while the frame stays within [cap - 2 * GPU_SLACK, cap], so a drag-resize
+ * reallocates every few dozen sizes, not at each one. A bitblt (alpha) swap chain stretches its
+ * buffer over the window, so it stays exact. */
+#  define GPU_SLACK 256
+
+static int slack_cap(const BuiGpu *g, int need)
+{
+  if (g->alpha) {
+    return need;
+  }
+  const int cap = (need + GPU_SLACK - 1) / GPU_SLACK * GPU_SLACK;
+  return cap < g->max_tex ? cap : need;
+}
+
+static int slack_fits(const BuiGpu *g, int cap, int need)
+{
+  return cap >= need && (g->alpha ? cap == need : cap - need < 2 * GPU_SLACK);
+}
+
 static int ensure_target(BuiGpu *g)
 {
-  if (g->target && g->tw == g->w && g->th == g->h) {
+  if (g->target && slack_fits(g, g->tw, g->w) && slack_fits(g, g->th, g->h)) {
+    if (g->fw != g->w || g->fh != g->h) { /* another size in the same texture: a redraw follows */
+      g->fw = g->w;
+      g->fh = g->h;
+      const float clear[4] = {0, 0, 0, g->alpha ? 0.0f : 1.0f};
+      ID3D11DeviceContext_ClearRenderTargetView(g->ctx, g->rtv, clear);
+      g->dmg_full = 1;
+    }
     return 1;
   }
   REL(g->rtv);
   REL(g->target);
   D3D11_TEXTURE2D_DESC td = {0};
-  td.Width = (UINT)g->w;
-  td.Height = (UINT)g->h;
+  td.Width = (UINT)slack_cap(g, g->w);
+  td.Height = (UINT)slack_cap(g, g->h);
   td.MipLevels = td.ArraySize = 1;
   td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
   td.SampleDesc.Count = 1;
@@ -1405,8 +1433,10 @@ static int ensure_target(BuiGpu *g)
     REL(g->target);
     return 0;
   }
-  g->tw = g->w;
-  g->th = g->h;
+  g->tw = (int)td.Width;
+  g->th = (int)td.Height;
+  g->fw = g->w;
+  g->fh = g->h;
   const float clear[4] = {0, 0, 0, g->alpha ? 0.0f : 1.0f};
   ID3D11DeviceContext_ClearRenderTargetView(g->ctx, g->rtv, clear);
   g->dmg_full = 1;
@@ -1561,21 +1591,22 @@ static void flush(BuiGpu *g)
 
 static int ensure_swap(BuiGpu *g)
 {
-  if (g->swap && g->sw == g->w && g->sh == g->h) {
+  if (g->swap && slack_fits(g, g->sw, g->w) && slack_fits(g, g->sh, g->h)) {
     return 1;
   }
+  const int cw = slack_cap(g, g->w), ch = slack_cap(g, g->h);
   if (g->swap) {
     ID3D11DeviceContext_OMSetRenderTargets(g->ctx, 0, NULL, NULL);
-    if (FAILED(IDXGISwapChain1_ResizeBuffers(g->swap, 0, (UINT)g->w, (UINT)g->h,
-                                             DXGI_FORMAT_UNKNOWN, 0)))
+    if (FAILED(IDXGISwapChain1_ResizeBuffers(g->swap, 0, (UINT)cw, (UINT)ch, DXGI_FORMAT_UNKNOWN,
+                                             0)))
     {
       return 0;
     }
   }
   else {
     DXGI_SWAP_CHAIN_DESC1 sd = {0};
-    sd.Width = (UINT)g->w;
-    sd.Height = (UINT)g->h;
+    sd.Width = (UINT)cw;
+    sd.Height = (UINT)ch;
     sd.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
     sd.SampleDesc.Count = 1;
     sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
@@ -1598,8 +1629,8 @@ static int ensure_swap(BuiGpu *g)
     }
     IDXGIFactory2_MakeWindowAssociation(g->factory, g->hwnd, DXGI_MWA_NO_ALT_ENTER);
   }
-  g->sw = g->w;
-  g->sh = g->h;
+  g->sw = cw;
+  g->sh = ch;
   g->swap_fresh = 1;
   return 1;
 }
@@ -1607,7 +1638,7 @@ static int ensure_swap(BuiGpu *g)
 void bui_gpu_clear(BuiGpu *g, int x, int y, int w, int h)
 {
   flush(g); /* what was recorded for earlier regions comes first */
-  if (!g->ctx1 || !g->target || g->tw != g->w || g->th != g->h) {
+  if (!g->ctx1 || !g->target || g->fw != g->w || g->fh != g->h) {
     return; /* a new target starts transparent */
   }
   const float clear[4] = {0, 0, 0, 0};
@@ -1627,7 +1658,9 @@ int bui_gpu_present(BuiGpu *g, int full)
     return 0;
   }
   /* a flip-model buffer is older than the last frame: copy the whole frame */
-  ID3D11DeviceContext_CopyResource(g->ctx, (ID3D11Resource *)back, (ID3D11Resource *)g->target);
+  const D3D11_BOX frame = {0, 0, 0, (UINT)g->w, (UINT)g->h, 1};
+  ID3D11DeviceContext_CopySubresourceRegion(g->ctx, (ID3D11Resource *)back, 0, 0, 0, 0,
+                                            (ID3D11Resource *)g->target, 0, &frame);
   REL(back);
   DXGI_PRESENT_PARAMETERS pp = {0};
   if (!(full || g->dmg_full || g->swap_fresh) && g->n_dmg > 0) {
@@ -1646,7 +1679,8 @@ int bui_gpu_present(BuiGpu *g, int full)
     pp.pDirtyRects = g->n_dmg ? g->dmg : NULL;
   }
   const HRESULT hr = IDXGISwapChain1_Present1(g->swap, 0, 0, &pp);
-  g->swap_fresh = 0;
+  /* occluded or minimized: DWM dropped the frame, so the next one must be whole */
+  g->swap_fresh = hr == DXGI_STATUS_OCCLUDED;
   g->n_dmg = g->dmg_full = 0;
   return !(hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET);
 }
@@ -1654,7 +1688,7 @@ int bui_gpu_present(BuiGpu *g, int full)
 int bui_gpu_read(BuiGpu *g, uint32_t *dst, int w, int h)
 {
   flush(g);
-  if (!g->target || g->tw != w || g->th != h) {
+  if (!g->target || g->fw != w || g->fh != h) {
     return 0;
   }
   D3D11_TEXTURE2D_DESC td = {0};
@@ -1669,7 +1703,9 @@ int bui_gpu_read(BuiGpu *g, uint32_t *dst, int w, int h)
   if (FAILED(ID3D11Device_CreateTexture2D(g->dev, &td, NULL, &st))) {
     return 0;
   }
-  ID3D11DeviceContext_CopyResource(g->ctx, (ID3D11Resource *)st, (ID3D11Resource *)g->target);
+  const D3D11_BOX frame = {0, 0, 0, (UINT)w, (UINT)h, 1};
+  ID3D11DeviceContext_CopySubresourceRegion(g->ctx, (ID3D11Resource *)st, 0, 0, 0, 0,
+                                            (ID3D11Resource *)g->target, 0, &frame);
   D3D11_MAPPED_SUBRESOURCE m;
   int ok = 0;
   if (SUCCEEDED(ID3D11DeviceContext_Map(g->ctx, (ID3D11Resource *)st, 0, D3D11_MAP_READ, 0, &m))) {
