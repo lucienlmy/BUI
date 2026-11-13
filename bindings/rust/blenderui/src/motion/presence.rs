@@ -64,9 +64,17 @@ pub fn presence_id() -> u64 {
 /// Run `build` as presence `id` taking its elements away: the ones it builds with an `exit` take it as their
 /// only target. Also whether any of them has an `exit` (if none, nothing animates out).
 pub fn exiting_scope<R>(id: u64, build: impl FnOnce() -> R) -> (R, bool) {
-    BUILDING.set((id, false));
+    /// Puts the enclosing scope back, even if `build` panics.
+    struct Restore((u64, bool));
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            BUILDING.set(self.0);
+        }
+    }
+    let outer = Restore(BUILDING.replace((id, false)));
     let r = build();
-    let (_, any_exit) = BUILDING.replace((0, false));
+    let (_, any_exit) = BUILDING.get();
+    drop(outer);
     (r, any_exit)
 }
 
@@ -113,4 +121,23 @@ pub fn presence<E: IntoElement>(show: bool, build: impl FnOnce() -> E) -> Option
         state.update_quiet(|s| s.1 = phase);
     }
     el
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_scope_restores_the_outer_one() {
+        let (_, outer_any) = exiting_scope(1, || {
+            assert_eq!(exiting(), Some(1)); // the outer one has an exit
+            let (_, inner_any) = exiting_scope(2, || {
+                assert_eq!(exiting(), Some(2));
+            });
+            assert!(inner_any);
+            assert_eq!(exiting(), Some(1), "the outer scope is back after the inner one");
+        });
+        assert!(outer_any);
+        assert_eq!(exiting(), None);
+    }
 }
