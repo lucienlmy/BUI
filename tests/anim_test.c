@@ -640,6 +640,7 @@ static void test_no_allocation_per_frame(void)
   CHECK(MEM_get_allocations_total() == allocs);
   CHECK(objs[63].x > 0.0f);
   for (int i = 0; i < 64; i++) {
+    BK_motion_kill(ms[i]); /* they run for 10 s and write to `objs`, which dies with this function */
     BK_motion_release(ms[i]);
   }
   printf("frames: 64 tweens for 120 frames, %zu allocations\n", MEM_get_allocations_total() - allocs);
