@@ -111,6 +111,21 @@ All notable changes to **blenderui** (BUI). The format follows
 
 ### Fixed
 - **Rust Motion: gap audit.** Letting go of a drag after a pause no longer throws the element (only the last 100 ms of pointer movement count, over at least 8 ms); a `layout` element under a parent that moves (a drag, an animated `x`) or scrolls no longer animates against it (its box is measured relative to the parent); `use_transform`, `use_velocity` and a `use_spring` of a motion value follow their source without a render (they are read through it, and springs retarget each frame); a selector with combinators or pseudo-classes (`"ul > li"`, `"a:hover"`) is an error from `Targets::selector` instead of silently matching wrongly, and one that matches nothing is counted by `motion::unmatched_selectors()` (and logged in debug builds); a NaN duration or delay is refused and a negative one is zero; made-up property and variant names are bounded (4096) instead of leaking for ever. A redraw of moving values walks only the animated elements and what is under them, not every box of the page.
+- **Animation engine: robustness** (PR #36 audit). A callback that kills a sibling or its own timeline (`onComplete`,
+  `onUpdate`) or starts a motion no longer leaves the render walking freed memory; a killed motion stays killed
+  (`play`, `resume`, `reverse`, `seek` and `add` do nothing to it, and `BK_anim_exit` can't hang on one). One contract
+  for numbers, in C, for every binding: a negative duration, delay or repeat delay is 0 (Python used to raise), NaN and
+  infinity are errors in the binding's idiom (`ValueError`, a Lua error), `repeat` of any size is at most
+  `BK_MOTION_MAX_REPEAT` (1,000,000; `-1` and `math.huge` are for ever; Python's `2**32` is no longer 0), totals don't
+  overflow, and a repeat for ever of a zero-length motion ends instead of keeping the host drawing. Timeline positions
+  are exactly GSAP's grammar (a number, `+=n`, `-=n`, `<`, `>`, `<n`, `>n`, labels with `+=n`, `n%`): anything else, or
+  a label that doesn't exist, is an error instead of a label made at the end. Ease tables are shared by content,
+  capped at 65,535 (a full pool refuses the ease instead of wrapping its id), checked after `BK_anim_exit`, and
+  `expoScale` from 0 or NaN/inf eases are safe. `BK_tween` refuses tracks without values or keys, and non-finite values.
+  Motion's default duration and ease live in one C function (`BK_motion_vars_motion_defaults`) that Rust, Python and
+  Lua call. A spring's settle time is a closed form instead of up to 2,400 `exp`/`sin`/`cos` steps per property (it is
+  the last time outside the rest thresholds: up to about 1.2x later than the old stepping's early stop for slowly
+  oscillating springs); killing a timeline measures it once.
 - **Animation: review fixes.** Adding a timeline to itself or to one of its own children is refused instead of recursing forever; a nested `exiting_scope` restores the outer scope; a canvas item's clip and a line's thickness count in `hititems` hit testing; the JS view frees removed nodes once nothing is leaving; a Motion prop nested too deeply is skipped in the QuickJS host without dropping its commit.
 - **Rust: form widgets and overlays** (issue #35). An element painted after a `<TextArea>`, `<Button>` or other form widget
   (a dialog with `z-index`, a later sibling) now draws over it and takes the pointer there: widgets sit on the canvas
