@@ -645,6 +645,498 @@ static void test_no_allocation_per_frame(void)
   printf("frames: 64 tweens for 120 frames, %zu allocations\n", MEM_get_allocations_total() - allocs);
 }
 
+/* -------------------------------------------------------------------- */
+/** \name Robustness: callbacks that change what is rendering, bad numbers, bad strings
+ * \{ */
+
+typedef struct Hook {
+  BKMotion *victim;   /* killed by the first event */
+  Obj *spawn_obj;     /* a tween of its x starts from the first event */
+  BKMotion *spawned;
+  int calls;
+} Hook;
+
+static void hook_fn(BKMotion *m, int ev, void *data)
+{
+  (void)m;
+  (void)ev;
+  Hook *h = (Hook *)data;
+  h->calls++;
+  if (h->victim) {
+    BKMotion *v = h->victim;
+    h->victim = NULL;
+    BK_motion_kill(v);
+  }
+  if (h->spawn_obj && !h->spawned) {
+    h->spawned = to(h->spawn_obj, BK_PROP_X, 50.0f, linear(1.0));
+  }
+}
+
+static BKMotionVars with_hook(double duration, int events, Hook *h)
+{
+  BKMotionVars v = linear(duration);
+  v.on = hook_fn;
+  v.events = events;
+  v.data = h;
+  return v;
+}
+
+static void test_callbacks_that_change_the_tree(void)
+{
+  BK_anim_set_clock(test_clock); /* a motion started by a callback must not tick the clock again */
+  /* a child's onComplete kills its timeline: the rest of the pass ends, nothing is touched */
+  Obj a = {0}, b = {0};
+  BKMotion *tl = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+  Hook h1 = {tl, NULL, NULL, 0};
+  BKMotion *ma = to(&a, BK_PROP_X, 100.0f, with_hook(0.5, BK_EV_MOTION_COMPLETE, &h1));
+  BKMotion *mb = to(&b, BK_PROP_X, 100.0f, linear(1.0));
+  BK_timeline_add(tl, ma, "0");
+  BK_timeline_add(tl, mb, "0");
+  step(0.25);
+  step(0.5); /* a completes, kills the timeline, b is not rendered after it */
+  CHECK(h1.calls == 1 && !BK_motion_is_active(mb));
+  const float bx = b.x;
+  step(1.0);
+  CHECK(b.x == bx);
+  BK_motion_release(ma);
+  BK_motion_release(mb);
+  BK_motion_release(tl);
+
+  /* a child's onUpdate kills a sibling not yet rendered, and the one after still renders */
+  Obj p = {0}, q = {0}, r = {0};
+  BKMotion *tl2 = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+  Hook h2 = {NULL, NULL, NULL, 0};
+  BKMotion *mp = to(&p, BK_PROP_X, 100.0f, with_hook(1.0, BK_EV_MOTION_UPDATE, &h2));
+  BKMotion *mq = to(&q, BK_PROP_X, 100.0f, linear(1.0));
+  BKMotion *mr = to(&r, BK_PROP_X, 100.0f, linear(1.0));
+  h2.victim = mq;
+  BK_timeline_add(tl2, mp, "0");
+  BK_timeline_add(tl2, mq, "0");
+  BK_timeline_add(tl2, mr, "0");
+  step(0.5);
+  CHECK(h2.calls >= 1 && q.x == 0.0f && p.x > 0.0f && r.x > 0.0f);
+  step(1.0);
+  CHECK(q.x == 0.0f && NEAR(r.x, 100.0, 1e-3));
+  BK_motion_release(mp);
+  BK_motion_release(mq);
+  BK_motion_release(mr);
+  BK_motion_release(tl2);
+
+  /* a global motion's onUpdate starts another, and its onComplete kills one */
+  Obj s = {0}, t = {0};
+  Hook h3 = {NULL, &t, NULL, 0};
+  BKMotion *ms = to(&s, BK_PROP_X, 100.0f, with_hook(1.0, BK_EV_MOTION_UPDATE, &h3));
+  step(0.25);
+  CHECK(h3.spawned != NULL);
+  step(0.5);
+  CHECK(t.x > 0.0f);
+  BKMotion *dead = to(&s, BK_PROP_Y, 100.0f, linear(2.0));
+  Hook h4 = {dead, NULL, NULL, 0};
+  BKMotion *killer = to(&s, BK_PROP_OPACITY, 1.0f, with_hook(0.25, BK_EV_MOTION_COMPLETE, &h4));
+  step(0.5);
+  CHECK(h4.calls == 1 && !BK_motion_is_active(dead));
+  BK_motion_release(ms);
+  BK_motion_release(h3.spawned);
+  BK_motion_release(dead);
+  BK_motion_release(killer);
+  step(5.0);
+  CHECK(!BK_anim_active());
+  BK_anim_set_clock(NULL);
+  printf("callbacks: kill a sibling or the timeline, start a motion, mid-render\n");
+}
+
+static void test_killed_stays_killed(void)
+{
+  Obj k = {0};
+  BKMotion *m = to(&k, BK_PROP_X, 100.0f, linear(1.0));
+  step(0.25);
+  BK_motion_kill(m);
+  const float x = k.x;
+  BK_motion_play(m);
+  BK_motion_resume(m);
+  BK_motion_reverse(m);
+  BK_motion_seek(m, 0.5);
+  BK_motion_set_progress(m, 0.9);
+  BK_motion_restart(m);
+  BK_motion_complete(m);
+  BKMotion *tl = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+  CHECK(BK_timeline_add(tl, m, "0") == 0.0); /* nor can a timeline take it back */
+  step(1.0);
+  CHECK(k.x == x && !BK_motion_is_active(m) && !BK_anim_active());
+  BK_motion_release(m);
+  BK_motion_release(tl);
+  printf("killed: play, resume, reverse, seek and add don't revive it\n");
+}
+
+static void test_numbers(void)
+{
+  /* the one clamp of a repeat */
+  CHECK(BK_motion_clamp_repeat(-1.0) == -1 && BK_motion_clamp_repeat(-7.0) == -1);
+  CHECK(BK_motion_clamp_repeat(INFINITY) == -1 && BK_motion_clamp_repeat(NAN) == 0);
+  CHECK(BK_motion_clamp_repeat(3.0) == 3 && BK_motion_clamp_repeat(4294967296.0) == BK_MOTION_MAX_REPEAT);
+  CHECK(BK_motion_clamp_repeat(1e30) == BK_MOTION_MAX_REPEAT);
+
+  /* huge repeats and durations: totals in doubles, nothing overflows */
+  Obj o = {0};
+  BKMotionVars hv = linear(0.5);
+  hv.repeat = 2147483647;
+  hv.repeat_delay = 1e300;
+  BKMotion *m = to(&o, BK_PROP_X, 100.0f, hv);
+  CHECK(isfinite(BK_motion_total_duration(m)) && BK_motion_total_duration(m) > 1e9);
+  step(1.0);
+  CHECK(isfinite(o.x));
+  BK_motion_kill(m); /* these run for ever: a handle let go of doesn't stop them */
+  BK_motion_release(m);
+  BKMotionVars big = linear(1e300);
+  big.repeat = -1;
+  m = to(&o, BK_PROP_Y, 100.0f, big);
+  CHECK(BK_motion_duration(m) <= BK_MOTION_MAX_TIME);
+  BKMotionVars tiny = linear(1e-300);
+  tiny.repeat = 1000000;
+  BKMotion *mt = to(&o, BK_PROP_OPACITY, 1.0f, tiny);
+  step(1.0);
+  CHECK(isfinite(o.y) && isfinite(o.opacity));
+  BK_motion_kill(m);
+  BK_motion_release(m);
+  BK_motion_kill(mt);
+  BK_motion_release(mt);
+
+  /* NaN and infinity in the options: refused by the check, and read as 0 by the engine */
+  BKMotionVars nv = linear(0.5);
+  nv.duration = NAN;
+  CHECK(!BK_motion_vars_check(&nv) && nv.duration == 0.0);
+  nv = linear(0.5);
+  nv.delay = INFINITY;
+  CHECK(!BK_motion_vars_check(&nv));
+  nv = linear(0.5);
+  nv.repeat_delay = NAN;
+  CHECK(!BK_motion_vars_check(&nv));
+  nv = linear(0.5);
+  nv.time_scale = NAN;
+  CHECK(!BK_motion_vars_check(&nv) && nv.time_scale == 1.0);
+  nv = linear(-3.0);
+  nv.delay = -2.0;
+  CHECK(BK_motion_vars_check(&nv) && nv.duration == 0.0 && nv.delay == -2.0); /* negative: clamped */
+  nv = linear(NAN);
+  nv.delay = NAN;
+  nv.repeat_delay = INFINITY;
+  Obj z = {0};
+  m = to(&z, BK_PROP_X, 100.0f, nv); /* straight to the engine */
+  step(0.5);
+  CHECK(isfinite(z.x) && isfinite(BK_motion_total_duration(m)));
+  CHECK(!BK_motion_seek(m, NAN) && !BK_motion_seek(m, INFINITY) && !BK_motion_seek(m, -INFINITY));
+  CHECK(!BK_motion_set_progress(m, NAN) && !BK_motion_set_total_progress(m, INFINITY));
+  CHECK(!BK_motion_set_time_scale(m, NAN) && BK_motion_time_scale(m) == 1.0);
+  CHECK(BK_motion_seek(m, -5.0) && BK_motion_time(m) == 0.0); /* negative: the start */
+  CHECK(BK_motion_set_time_scale(m, 0.0) && BK_motion_set_time_scale(m, -2.0) && BK_motion_time_scale(m) == 1.0);
+  BK_motion_reverse(m);
+  BK_motion_seek(m, 0.0);
+  step(0.25);
+  CHECK(isfinite(z.x));
+  BK_motion_release(m);
+
+  /* a repeat for ever of nothing: one evaluation, then it's done and the host stops drawing */
+  Obj f = {0};
+  BKMotionVars zero = linear(0.0);
+  zero.repeat = -1;
+  m = to(&f, BK_PROP_X, 7.0f, zero);
+  step(0.1);
+  CHECK(f.x == 7.0f && !BK_anim_active());
+  BK_motion_release(m);
+  BKMotion *empty = BK_timeline(&(BKMotionVars){.time_scale = 1.0, .repeat = -1});
+  step(0.1);
+  CHECK(!BK_anim_active());
+  BK_motion_release(empty);
+  printf("numbers: repeat clamp, huge totals, NaN and infinity, zero and negative, repeat -1 of nothing\n");
+}
+
+static void test_positions(void)
+{
+  Obj o = {0};
+  BKMotion *tl = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+  BKMotion *c = to(&o, BK_PROP_X, 100.0f, linear(2.0));
+  CHECK(BK_timeline_add(tl, c, "") == 0.0); /* the end of an empty one */
+  /* the last added runs 0 .. 2 in a timeline of 2 */
+  CHECK(NEAR(BK_timeline_label(tl, "a", "0.5"), 0.5, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b", "<"), 0.0, 1e-12) && NEAR(BK_timeline_label(tl, "b", ">"), 2.0, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b", "<0.5"), 0.5, 1e-12) && NEAR(BK_timeline_label(tl, "b", ">-0.5"), 1.5, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b", "+=1"), 3.0, 1e-12) && NEAR(BK_timeline_label(tl, "b", "-=1"), 1.0, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b", "50%"), 1.0, 1e-12) && NEAR(BK_timeline_label(tl, "b", "<25%"), 0.5, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b", "+=50%"), 3.0, 1e-12) && NEAR(BK_timeline_label(tl, "b", "1e0"), 1.0, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b", "a"), 0.5, 1e-12) && NEAR(BK_timeline_label(tl, "b", "a+=1"), 1.5, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b", "a-=1"), 0.0, 1e-12) && NEAR(BK_timeline_label(tl, "b", "-3"), 0.0, 1e-12));
+  /* everything else is refused, and nothing is placed or made */
+  static const char *const bad[] = {"nan", "inf", "-inf", "0x10", "1e999", "<=1", "abc", "+=", "-=x", "<+=", "<x",
+                                    "%", "<%", "a+=", "a+=x", "a++1", "1 2", "1x", "+", ".", "e5", "<<", ">>1",
+                                    "missing+=1", "+=nan", "<inf", "1e400%"};
+  for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
+    CHECK(BK_timeline_label(tl, "bad", bad[i]) == -1.0);
+    BKMotion *x = to(&o, BK_PROP_Y, 1.0f, linear(1.0));
+    CHECK(BK_timeline_add(tl, x, bad[i]) == -1.0);
+    BK_motion_kill(x);
+    BK_motion_release(x);
+  }
+  CHECK(BK_timeline_label_time(tl, "bad") < 0.0 && BK_timeline_label_time(tl, "abc") < 0.0);
+  CHECK(BK_timeline_call(tl, hook_fn, NULL, NULL, "<=1") == -1.0);
+  CHECK(BK_motion_total_duration(tl) == 2.0);
+  BK_motion_release(c);
+  BK_motion_release(tl);
+  printf("positions: GSAP's grammar and nothing else\n");
+}
+
+static void count_free(void *data)
+{
+  (*(int *)data)++;
+}
+
+static void test_tween_boundary(void)
+{
+  Obj o = {0};
+  const float value = 5.0f, nan = NAN;
+  int freed = 0;
+  BKMotionVars v = linear(1.0);
+  v.data = &freed;
+  v.free_data = count_free; /* a refused tween frees what it was given */
+  const BKTrack nokeys = {BK_PROP_X, 1, 0, &value, NULL, NULL, NULL, NULL, BK_UNIT_PX, 0};
+  const BKTrack novalues = {BK_PROP_X, 1, 1, NULL, NULL, NULL, NULL, NULL, BK_UNIT_PX, 0};
+  const BKTrack badn = {BK_PROP_X, 9, 1, &value, NULL, NULL, NULL, NULL, BK_UNIT_PX, 0};
+  const BKTrack nanv = {BK_PROP_X, 1, 1, &nan, NULL, NULL, NULL, NULL, BK_UNIT_PX, 0};
+  const BKTrack good = {BK_PROP_X, 1, 1, &value, NULL, NULL, NULL, NULL, BK_UNIT_PX, 0};
+  CHECK(BK_tween(&OBJ, &o, &nokeys, 1, &v) == NULL);
+  CHECK(BK_tween(&OBJ, &o, &novalues, 1, &v) == NULL);
+  CHECK(BK_tween(&OBJ, &o, &badn, 1, &v) == NULL);
+  CHECK(BK_tween(&OBJ, &o, &nanv, 1, &v) == NULL);
+  CHECK(BK_tween(&OBJ, &o, NULL, 1, &v) == NULL);
+  const BKTrack mixed[2] = {good, nokeys};
+  CHECK(BK_tween(&OBJ, &o, mixed, 2, &v) == NULL);
+  CHECK(freed == 6);
+  BKMotionVars plain = linear(1.0);
+  BKMotion *none = BK_tween(&OBJ, &o, NULL, 0, &plain); /* no tracks: a motion that does nothing */
+  CHECK(none != NULL);
+  BK_motion_release(none);
+  step(2.0);
+  CHECK(o.x == 0.0f && o.writes == 0 && !BK_anim_active());
+  printf("tween: tracks without keys, values or a list are refused\n");
+}
+
+static void test_degenerate_springs(void)
+{
+  const BKSpring def = BK_spring_default();
+  BKSpring zero_mass = def, zero_k = def, zero_c = def, zeros = {0, 0, 0, 0, 0, 0}, nan_s = def;
+  zero_mass.mass = 0.0f;
+  zero_k.stiffness = 0.0f;
+  zero_c.damping = 0.0f;
+  nan_s.stiffness = NAN;
+  const BKSpring all[] = {zero_mass, zero_k, zero_c, zeros, nan_s};
+  for (size_t i = 0; i < sizeof(all) / sizeof(all[0]); i++) {
+    const double settle = BK_spring_settle(&all[i], 0.0f, 100.0f);
+    float p, v;
+    BK_spring_eval(&all[i], 0.0f, 100.0f, 0.5, &p, &v);
+    CHECK(isfinite(settle) && settle >= 0.0 && settle <= 20.0 + 1e-9);
+    if (all[i].stiffness == all[i].stiffness) {
+      CHECK(isfinite(p) && isfinite(v));
+    }
+    Obj o = {0};
+    BKMotionVars sv = BK_motion_vars_default();
+    sv.kind = BK_MOTION_SPRING_KIND;
+    sv.spring = all[i];
+    BKMotion *m = to(&o, BK_PROP_X, 100.0f, sv);
+    step(0.5);
+    CHECK(isfinite(o.x) && isfinite(BK_motion_duration(m)));
+    BK_motion_kill(m);
+    BK_motion_release(m);
+  }
+  printf("springs: zero mass, stiffness, damping and NaN stay finite\n");
+}
+
+/* Motion's stepping, as the engine did it before the closed form (120 Hz, up to 20 s). With
+ * `hold` it gave up at the first 0.1 s spent within the thresholds; without, it finds the last
+ * step outside them (what "it stays" means, and what the closed form computes). */
+static double settle_stepped(const BKSpring *s, float from, float to, int hold)
+{
+  const int granular = fabsf(to - from) < 5.0f;
+  const double rd = s->rest_delta > 0.0f ? s->rest_delta : (granular ? 0.005 : 0.5);
+  const double rs = s->rest_speed > 0.0f ? s->rest_speed : (granular ? 0.01 : 2.0);
+  double last_out = 0.0;
+  for (double t = 0.0; t <= 20.0; t += 1.0 / 120.0) {
+    float p, v;
+    BK_spring_eval(s, from, to, t, &p, &v);
+    if (fabsf(p - to) > rd || fabsf(v) > rs) {
+      last_out = t + 1.0 / 120.0;
+    }
+    else if (hold && t - last_out > 0.1) {
+      break;
+    }
+  }
+  return last_out;
+}
+
+static void test_settle_closed_form(void)
+{
+  /* the closed-form settle time against the stepping over a grid (under, critical and over
+   * damped): within 2 % and the stepping's own 1/120 s resolution (twice) */
+  static const float stiffness[] = {20.0f, 100.0f, 400.0f, 1000.0f};
+  static const float ratio[] = {0.05f, 0.2f, 0.5f, 0.9f, 1.0f, 1.3f, 3.0f, 10.0f};
+  static const float mass[] = {0.5f, 1.0f, 3.0f};
+  static const float velocity[] = {0.0f, 800.0f, -300.0f};
+  static const float to[] = {100.0f, 1.0f, -40.0f};
+  int cases = 0;
+  double worst = 1.0;
+  for (size_t a = 0; a < 4; a++) {
+    for (size_t b = 0; b < 8; b++) {
+      for (size_t c = 0; c < 3; c++) {
+        for (size_t d = 0; d < 3; d++) {
+          for (size_t e = 0; e < 3; e++) {
+            BKSpring s = BK_spring_default();
+            s.stiffness = stiffness[a];
+            s.mass = mass[c];
+            s.damping = ratio[b] * 2.0f * sqrtf(stiffness[a] * mass[c]);
+            s.velocity = velocity[d];
+            const double fast = BK_spring_settle(&s, 0.0f, to[e]);
+            const double slow = settle_stepped(&s, 0.0f, to[e], 0), held = settle_stepped(&s, 0.0f, to[e], 1);
+            const double err = fabs(fast - slow) - (0.02 * slow + 2.0 / 120.0);
+            cases++;
+            if (err > 0.0 || fast < held - 2.0 / 120.0) { /* and never earlier than the old early stop */
+              printf("settle mismatch k=%g r=%g m=%g v=%g to=%g: closed %.4f stepped %.4f (held %.4f)\n",
+                     s.stiffness, ratio[b], s.mass, s.velocity, to[e], fast, slow, held);
+              g_fail = 1;
+            }
+            if (held > 0.0 && fast / held > worst) {
+              worst = fast / held;
+            }
+          }
+        }
+      }
+    }
+  }
+  printf("settle: closed form = stepping over %d springs (within 2%% and 2/120 s); %.2fx the old early stop at most\n",
+         cases, worst);
+}
+
+static void test_ease_strings(void)
+{
+  /* strings made to break a parser: every one is parsed to something safe, or refused */
+  char *longs = (char *)MEM_mallocN(20001, "long ease");
+  memset(longs, 'a', 20000);
+  longs[20000] = '\0';
+  char *deep = (char *)MEM_mallocN(8000, "deep ease");
+  deep[0] = '\0';
+  for (int i = 0; i < 300; i++) {
+    strcat(deep, "exposcale(1,2,");
+  }
+  static const char *const fuzz[] = {
+      "", " ", "(", ")", "linear(", "linear((((", "linear(,,,,)", "linear(nan, inf)", "linear(0 50%, 1 20%, 0 10%)",
+      "linear(0, 1 200%)", "steps(", "steps(nan)", "steps(1e30, jump-both)", "steps(-5, nope)", "rough(nan, 1e30)",
+      "rough({strength: 1e30, points: -9, taper: x, clamp: true})", "cubic-bezier(nan, 1, 2, inf)",
+      "cubic-bezier(1,2,3)", "back.out(nan)", "elastic.out(0, 0)", "elastic.out(1e30, -1e30)", "power9999", "power2.in.out",
+      "expo.", ".out", "slow(nan, nan, nan)", "wiggle(nan)", "wiggle(1e30)", "customBounce(1e30)", "exposcale(0, 5)",
+      "exposcale(-1, 5)", "exposcale(nan, nan)", "exposcale(1, 2, nope)", "\xff\xfe", "power2.out(((((",
+  };
+  const float ts[] = {-1.0f, 0.0f, 0.3f, 0.999f, 1.0f, 2.0f, NAN, INFINITY};
+  for (size_t i = 0; i < sizeof(fuzz) / sizeof(fuzz[0]) + 2; i++) {
+    const char *s = i < sizeof(fuzz) / sizeof(fuzz[0]) ? fuzz[i] : i == sizeof(fuzz) / sizeof(fuzz[0]) ? longs : deep;
+    BKEase e;
+    const int ok = BK_ease_parse(s, &e);
+    for (size_t k = 0; k < sizeof(ts) / sizeof(ts[0]); k++) {
+      const float v = BK_ease_eval(&e, ts[k]); /* no crash; finite in 0 .. 1 when it parsed */
+      if (ok && ts[k] >= 0.0f && ts[k] <= 1.0f && !isfinite(v)) {
+        printf("FAIL: ease '%.40s' at %g is %g\n", s, ts[k], v);
+        g_fail = 1;
+      }
+    }
+  }
+  CHECK(!BK_ease_parse(longs, &(BKEase){0}));
+  MEM_freeN(longs);
+  MEM_freeN(deep);
+
+  /* a curve parsed again is the same table */
+  BKEase first, again;
+  CHECK(BK_ease_parse("linear(0, 0.123, 1)", &first) && BK_ease_parse("linear(0, 0.123, 1)", &again));
+  CHECK(first.table == again.table && first.table != 0);
+  CHECK(!BK_ease_points(NULL, 5, &again) && !BK_ease_points((const float(*)[2])&first, 1, &again));
+  const float bad[2][2] = {{0.0f, NAN}, {1.0f, 1.0f}};
+  CHECK(!BK_ease_points(bad, 2, &again) && again.kind == BK_EASE_LINEAR);
+  printf("ease strings: junk, very long, deeply nested, NaN: parsed safe or refused; one table per curve\n");
+}
+
+/* BK_anim_exit with live motions (a killed one played again too) ends, and starts afresh */
+static void test_exit_with_live_motions(void)
+{
+  Obj o[4] = {{0}};
+  BKMotion *m[4];
+  for (int i = 0; i < 4; i++) {
+    m[i] = to(&o[i], BK_PROP_X, 100.0f, linear(1.0 + i));
+  }
+  BKMotion *tl = BK_timeline(&(BKMotionVars){.time_scale = 1.0});
+  BK_timeline_add(tl, m[3], "0");
+  BK_motion_kill(m[0]);
+  BK_motion_play(m[0]);
+  BK_motion_seek(m[0], 0.5);
+  step(0.25);
+  BK_anim_exit(); /* must return, with every motion out of the global timeline */
+  CHECK(!BK_anim_active());
+  for (int i = 0; i < 4; i++) {
+    BK_motion_release(m[i]);
+  }
+  BK_motion_release(tl);
+  BK_anim_tick(g_now); /* afresh: the clock starts again */
+  Obj again = {0};
+  BKMotion *n = to(&again, BK_PROP_X, 10.0f, linear(1.0));
+  step(0.5);
+  CHECK(NEAR(again.x, 5.0, 1e-3));
+  BK_motion_release(n);
+  step(1.0);
+  printf("exit: live and killed motions leave, the engine starts again\n");
+}
+
+static void test_ease_pool(void)
+{
+  /* an ease from before BK_anim_exit is no curve now, not the one that took its table id */
+  BKEase old, fresh;
+  CHECK(BK_ease_parse("linear(0, 0.1, 1)", &old));
+  CHECK(NEAR(BK_ease_eval(&old, 0.5f), 0.1, 1e-6));
+  BKEase old_scale;
+  CHECK(BK_ease_parse("exposcale(1, 2, power2.in)", &old_scale));
+  BK_anim_exit();
+  CHECK(NEAR(BK_ease_eval(&old, 0.5f), 0.5, 1e-6)); /* none: as it is */
+  CHECK(isfinite(BK_ease_eval(&old_scale, 0.5f)));
+  CHECK(BK_ease_parse("linear(0, 0.9, 1)", &fresh));
+  CHECK(NEAR(BK_ease_eval(&fresh, 0.5f), 0.9, 1e-6) && NEAR(BK_ease_eval(&old, 0.5f), 0.5, 1e-6));
+  /* a bezier too: its table is checked against the curve */
+  BKEase bez = BK_ease_bezier(0.1f, 0.9f, 0.2f, 1.0f);
+  const float before = BK_ease_eval(&bez, 0.5f);
+  BK_anim_exit();
+  BKEase other = BK_ease_bezier(0.9f, 0.0f, 0.9f, 0.0f);
+  (void)other;
+  CHECK(NEAR(BK_ease_eval(&bez, 0.5f), before, 1e-3));
+
+  /* the same string again makes no table; distinct ones stop at the pool's size, and parse as an error */
+  char name[64];
+  int made = 0, refused = 0;
+  for (int i = 0; i < 70000; i++) {
+    CHECK(BK_ease_parse("linear(0, 2.5, 1)", &fresh));
+  }
+  for (int i = 0; i < 70000; i++) {
+    snprintf(name, sizeof(name), "linear(0, %.9g, 1)", (double)i / 70000.0);
+    BKEase e;
+    if (BK_ease_parse(name, &e)) {
+      made++;
+      CHECK(e.table != 0 && isfinite(BK_ease_eval(&e, 0.5f)));
+    }
+    else {
+      refused++;
+      CHECK(e.kind == BK_EASE_LINEAR);
+    }
+  }
+  CHECK(made + 1 == BK_EASE_POOL_MAX && refused == 70000 - made); /* the 2.5 curve is one of them */
+  BKEase last;
+  CHECK(!BK_ease_parse("exposcale(1, 2, none)", &last)); /* full: a refusal, not a wrapped id */
+  CHECK(BK_ease_parse("linear(0, 2.5, 1)", &fresh) && fresh.table != 0); /* still found: no new table */
+  printf("ease pool: stale ids, one table per curve, %d made, %d refused\n", made, refused);
+}
+
+/** \} */
+
 int main(void)
 {
   setvbuf(stdout, NULL, _IONBF, 0);
@@ -664,6 +1156,16 @@ int main(void)
   test_kill();
   test_kit_nodes();
   test_no_allocation_per_frame();
+  test_callbacks_that_change_the_tree();
+  test_killed_stays_killed();
+  test_numbers();
+  test_positions();
+  test_tween_boundary();
+  test_degenerate_springs();
+  test_settle_closed_form();
+  test_ease_strings();
+  test_exit_with_live_motions();
+  test_ease_pool();
   BK_anim_exit();
   printf("memory: %u blocks before, %u after\n", blocks0, MEM_get_memory_blocks_in_use());
   CHECK(MEM_get_memory_blocks_in_use() == blocks0);

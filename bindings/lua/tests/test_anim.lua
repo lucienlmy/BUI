@@ -242,5 +242,51 @@ gone:free()
 check(not gt:isActive(), "freeing the node stops its tween")
 step(1)
 
+-- numbers and positions are validated once, by the engine: NaN and infinity are errors, a
+-- negative duration is 0, a repeat of any size is the engine's clamp, a killed motion stays killed
+local nan, inf = 0 / 0, math.huge
+local n1 = slider(0)
+fails(function() gsap.to(n1, {value = 1, duration = nan}) end, "finite")
+fails(function() gsap.to(n1, {value = 1, delay = nan}) end, "finite")
+fails(function() gsap.to(n1, {value = 1, repeatDelay = nan}) end, "finite")
+fails(function() gsap.to(n1, {value = 1, duration = inf}) end, "finite")
+local neg = gsap.to(n1, {value = 50, duration = -1, ease = "none"})
+step(0.1)
+check(near(n1:get("value"), 50) and neg:duration() == 0, "a negative duration is 0")
+for _, r in ipairs({2 ^ 31, 2 ^ 32, 2 ^ 70, 1e30}) do
+  local rt = gsap.to(slider(0), {value = 1, duration = 1, ease = "none", repeat_ = r})
+  check(rt:totalDuration() == 1000001, "repeat " .. r .. " is the engine's clamp: " .. rt:totalDuration())
+  rt:kill()
+end
+local forever = gsap.to(slider(0), {value = 1, duration = 1, ease = "none", repeat_ = -1})
+check(forever:totalDuration() > 1e100, "repeat -1 is for ever")
+forever:kill()
+local nothing = gsap.to(slider(0), {value = 1, duration = 0, repeat_ = -1})
+step(0.1)
+check(not nothing:isActive(), "a repeat for ever of nothing ends")
+local cm = gsap.to(slider(0), {value = 1, duration = 1, ease = "none"})
+fails(function() cm:seek(nan) end, "finite")
+fails(function() cm:seek(inf) end, "finite")
+fails(function() cm:progress(nan) end, "finite")
+fails(function() cm:timeScale(nan) end, "finite")
+fails(function() cm:totalProgress(inf) end, "finite")
+cm:kill()
+cm:play():resume():seek(0.5)
+step(1)
+check(not cm:isActive(), "a killed motion stays killed")
+local ptl = gsap.timeline()
+ptl:to(slider(0), {value = 1, duration = 2, ease = "none"})
+for _, bad in ipairs({"<=1", "abc", "nan", "inf", "0x10", "+=", "1e999", "<x", "missing+=1", "1 2"}) do
+  fails(function() ptl:addLabel("l", bad) end, "bad position")
+  fails(function() ptl:to(slider(0), {value = 1}, bad) end, "bad position")
+  fails(function() ptl:call(function() end, bad) end, "bad position")
+end
+check(ptl:labelTime("l") == nil and near(ptl:duration(), 2), "a refused position changes nothing")
+for _, c in ipairs({{"<", 0}, {">", 2}, {"<0.5", 0.5}, {">-0.5", 1.5}, {"+=1", 3}, {"-=1", 1}, {"50%", 1}, {0.25, 0.25}}) do
+  ptl:addLabel("g", c[1])
+  check(near(ptl:labelTime("g"), c[2]), "position " .. tostring(c[1]) .. " is " .. tostring(ptl:labelTime("g")))
+end
+ptl:kill()
+
 io.write("OK: test_anim.lua\n")
 os.exit(0)

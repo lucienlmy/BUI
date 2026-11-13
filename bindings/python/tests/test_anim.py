@@ -325,7 +325,7 @@ def test_one_property_one_spelling_while_it_runs():
         assert "same property" in str(e), e
     # a call that is rejected for another reason changes nothing either
     try:
-        gsap.to(a, scale_x=9, duration=-1)
+        gsap.to(a, scale_x=9, duration=float("nan"))
     except ValueError:
         pass
     step(0.5)
@@ -338,6 +338,57 @@ def test_one_property_one_spelling_while_it_runs():
     step(0.5)
     assert near(a.scaleX, 5.0), a.__dict__
     t.kill()
+
+
+def _refused(exc, fn, *args, **kw):
+    try:
+        fn(*args, **kw)
+    except exc:
+        return True
+    return False
+
+
+def test_numbers_and_positions_are_validated_once_by_the_engine():
+    nan, inf = float("nan"), float("inf")
+    a = Obj(x=0.0)
+    # NaN and infinity are errors; a negative duration or delay is clamped (the engine's contract)
+    for kw in ({"duration": nan}, {"delay": nan}, {"repeat_delay": nan}, {"duration": inf}, {"delay": -inf}):
+        assert _refused(ValueError, gsap.to, a, x=1, **kw), kw
+    t = gsap.to(a, x=10, duration=-1, ease="none")
+    step(0.1)
+    assert near(a.x, 10) and t.duration() == 0.0
+    # a repeat of any size is the engine's clamp, not a cast of ours (2**32 is not 0)
+    for rep in (2**31, 2**32, 2**70, 10**30):
+        r = gsap.to(Obj(x=0.0), x=1, duration=1, repeat=rep, ease="none")
+        assert r.total_duration() == 1000001.0, (rep, r.total_duration())
+        r.kill()
+    f = gsap.to(Obj(x=0.0), x=1, duration=1, repeat=-1, ease="none")
+    assert f.total_duration() > 1e100
+    f.kill()
+    z = gsap.to(Obj(x=0.0), x=1, duration=0, repeat=-1)  # a repeat for ever of nothing ends
+    step(0.1)
+    assert not z.is_active() and z.progress() == 1.0
+    # controls take finite numbers only
+    m = gsap.to(Obj(x=0.0), x=1, duration=1, ease="none")
+    for call in (m.seek, m.progress, m.total_progress, m.time_scale, m.time, m.total_time):
+        assert _refused(ValueError, call, nan), call
+    assert _refused(ValueError, m.seek, inf)
+    m.kill()
+    m.play().resume().seek(0.5)  # killed stays killed: nothing revives it
+    step(1.0)
+    assert not m.is_active() and _refused(ValueError, m.seek, float("nan"))
+    # positions: GSAP's grammar and nothing else
+    tl = gsap.timeline()
+    tl.to(Obj(x=0.0), x=1, duration=2, ease="none")
+    for bad in ("<=1", "abc", "nan", "inf", "0x10", "+=", "1e999", "<x", "missing+=1", "1 2"):
+        assert _refused(ValueError, tl.add_label, "l", bad), bad
+        assert _refused(ValueError, tl.to, Obj(x=0.0), x=1, position=bad), bad
+        assert _refused(ValueError, tl.call, print, position=bad), bad
+    assert tl.label_time("l") is None and near(tl.duration(), 2.0)
+    for good, at in (("<", 0.0), (">", 2.0), ("<0.5", 0.5), (">-0.5", 1.5), ("+=1", 3.0), ("-=1", 1.0), ("50%", 1.0), (0.25, 0.25)):
+        tl.add_label("g", good)
+        assert near(tl.label_time("g"), at), (good, tl.label_time("g"))
+    tl.kill()
 
 
 def main() -> int:
