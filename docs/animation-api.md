@@ -3,7 +3,7 @@
 > **Status: built.** This page was the proposal; the API below is what shipped, with the
 > differences listed here. The guides are on the website: [Rust](https://bui.preetham.top/docs/rust/motion/),
 > [JavaScript](https://bui.preetham.top/docs/javascript/animation/), [Python](https://bui.preetham.top/docs/python/animation/)
-> and the Lua overview.
+> and [Lua](https://bui.preetham.top/docs/lua/animation/). Svelte transitions are in the JavaScript guide.
 >
 > Differences from the proposal:
 > - `variants` in `rsx!` take a list of `("name", vars! { ... })` pairs, not a nested object, and
@@ -73,6 +73,61 @@ GSAP's and Motion's names both work everywhere:
 - CSS: `ease`, `ease-in`, ..., `cubic-bezier()`, `steps()`, `linear()`.
 - Blender: every F-Curve interpolation by name (`"bezier"`, `"constant"`, `"bounce"`,
   `"elastic"`, ...), and a curve drawn with Blender's curve widget as a custom ease.
+
+---
+
+## Status of each entry point
+
+**Built** means it runs on the engine and has a test; **not built** means the call is absent or throws an error naming it.
+The samples further down are the original proposal: where they use something marked here as not built, this table is right.
+
+| Entry point | Rust | JavaScript | Python | Lua | Example |
+|---|---|---|---|---|---|
+| `gsap.to / from / fromTo / set` | built | built | built | built | `gsap.to('#box', { x: 200, duration: 1 })` |
+| `gsap.timeline` (positions, labels, `call`, `defaults`) | built | built | built | built | `tl.to('#a', { x: 100 }).to('#b', { x: 100 }, '<')` |
+| `gsap.delayedCall` | not built (`timeline(..).call(f, "+=1")`) | built | built | built | `gsap.delayedCall(1, fn)` |
+| `registerEase` / `CustomEase` | built (`Ease::register`) | built (`CustomEase.create`) | built | built | `gsap.registerEase("wobble", {0.2, 0.8, 0.4, 1})` |
+| `gsap.quickTo`, `killTweensOf` | not built | not built | built | `killTweensOf` only | `quick_to("#cursor", "x")` |
+| `gsap.context`, `matchMedia`, `utils`, `ScrollTrigger`, `Flip`, `Draggable`, `Observer` | not built | not built | not built | not built | none |
+| `motion.animate` (elements, values, objects, numbers) | built | built | built | built | `animate('#box', { x: 100 }, { duration: 0.8 })` |
+| `animate` sequences | not built | not built | built | not built | `motion.animate([(a, {...}), (b, {...})])` |
+| `stagger`, springs, inertia, keyframes, `times` | built | built | built | built | `animate(items, {...}, { delay: stagger(0.05) })` |
+| `spring`, `scroll`, `inView`, `hover`, `press`, `transform`, `mix`, `frame` (Motion's functions) | `use_scroll` only | not built | not built | not built | none |
+| motion values (`motionValue`, `useMotionValue`, `useSpring`, `useTransform`) | built | built (React hooks too) | built | not built | `style={{ x: mv }}` |
+| `useVelocity`, `useScroll`, `useInView`, `useAnimate`, `useAnimationFrame`, `useReducedMotion`, `useDragControls` | `use_velocity`, `use_scroll` | not built | not built | not built | none |
+| `<motion.div>` and its props (`initial`, `animate`, `exit`, `while*`, `variants`, `transition`, `drag`, `layout`) | built | built (`el.setMotion`, React `motion.div`) | `initial`, `animate`, `transition` on components | not built | `<motion.div animate={{ opacity: 1 }} />` |
+| `AnimatePresence` | built (`presence`) | an exit runs on any removal; the component passes children through; no `mode` | not built | not built | `<AnimatePresence>{open && <motion.div exit={{ opacity: 0 }} />}</AnimatePresence>` |
+| `layoutId`, `LayoutGroup`, `MotionConfig` (React / JavaScript) | `layout` built; no `MotionConfig` | `layout` prop built; the rest not built | not built | not built | none |
+| `el.animate()` (Web Animations) | n/a | built; `cancel()` leaves the first keyframe applied until the engine can revert | n/a | n/a | `el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300 })` |
+| Svelte transitions (`transition:`, `in:`, `out:`) | n/a | built, through `el.animate()` | n/a | n/a | `{#if open}<div transition:fade />{/if}` |
+| Svelte `use:motion`, `tweened`, `spring` stores; Vue `<Motion>` | n/a | not built | n/a | n/a | none |
+| C: `BK_tween_*`, `BK_timeline_*`, `BK_motion_value_*`, `BK_ease_*` | n/a | n/a | n/a | n/a | `BK_tween_to(target, "x", 200.0, &vars)` |
+
+## Numbers and positions
+
+One contract, checked at the call in every language (the per-language pages link here instead
+of repeating it). The C engine defines it; JavaScript checks it in `bindings/node/validate.js`
+before anything reaches the engine, so a mistake throws where it is made.
+
+| Input | Rule |
+|---|---|
+| `duration`, `delay`, `repeatDelay`, `stagger` (seconds) | a finite number; **negative is 0**; NaN or infinite is an error (`RangeError` in JavaScript, an error naming the option in the other languages) and a non-number is a `TypeError` in JavaScript |
+| `repeat` | a whole number: `-1` (and `Infinity`) is forever; other negatives are 0; more than **1,000,000** is clamped to 1,000,000; NaN is an error |
+| `seek`, `progress`, `timeScale`, `currentTime` | finite numbers; NaN or infinite is an error, nothing changes |
+| position parameter | a finite number, or GSAP's grammar: `"+=n"`, `"-=n"`, `"<"`, `">"`, `"<n"`, `">n"` (also `"<+=n"`, `">-n"`), `"label"`, `"label+=n"`, `"label-=n"`, and the percent forms (`"50%"`, `"+=25%"`); anything else (`"<=1"`, `{}`, `"a b"`) is an error, not a label or a 0 offset |
+
+Defaults (`defaults`, `transition`) are checked the same way as the call's own values.
+
+## What a frame costs
+
+- **An animation-only frame skips the view render, the style cascade and layout**, and repaints only the
+  elements that changed. A window with nothing moving costs no CPU.
+- **Where the engine runs**: the C engine reads each value at its time (springs in closed form), so a frame does not
+  depend on the frame rate. A call's values are read **once**, when it starts: an object of literals is a `static` in Rust
+  (looked up once per call site); JavaScript, Python and Lua hand their tables to the engine once.
+- **It is not allocation-free yet.** Still allocating: building a call's values when it starts, an event
+  (and the callback's arguments) each time a callback such as `onUpdate` fires, JavaScript's handles, and Rust objects
+  with computed values. The Rust side is being tightened; this list shrinks as it does.
 
 ---
 
@@ -330,9 +385,26 @@ import { motion, AnimatePresence, LayoutGroup, MotionConfig, useAnimate, useMoti
 <motion.NumberSlider animate={{ value: 0.8 }} />   {/* Blender widgets animate too */}
 ```
 
-Vue: `<Motion :initial :animate :exit :while-hover ...>` and `<AnimatePresence>` from
-`@blender-ui/vue/motion` (Motion for Vue's API). Svelte: `use:motion={{ animate, transition }}`
-and the stores `motionValue`, `spring`, `tweened` from `@blender-ui/svelte/motion`.
+Vue (`<Motion>`, `@blender-ui/vue/motion`) and Svelte's `use:motion` and stores (`spring`, `tweened`) are
+**not built**; see the status table.
+
+#### Svelte: transitions on the engine
+
+Svelte's own `transition:`, `in:` and `out:` work, and they run on this engine: Svelte calls `el.animate(keyframes, options)`
+for a transition's `css`, which becomes one engine tween (a `tick`-only transition runs in Svelte's own loop). No import is needed.
+
+```svelte
+<script>
+  import { fly } from 'svelte/transition'
+  let open = $state(false)
+</script>
+{#if open}<div transition:fly={{ y: 20, duration: 300 }}>hello</div>{/if}
+```
+
+- An outro keeps the element until it ends; showing it again during the outro keeps one element.
+- Svelte cancels a finished animation, so until `el.animate().cancel()` restores the underlying style (the engine has
+  no revert yet), an element whose transition ends can keep its first keyframe's values: give it explicit styles.
+- Test with `app.advanceClock(ms)` on a headless window (`bindings/svelte/test/svelte.test.js`).
 
 ---
 
