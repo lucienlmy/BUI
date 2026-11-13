@@ -5,7 +5,7 @@ description: gsap and motion on BUI's engine, motion props on every element and 
 section: JavaScript & React
 order: 35
 languages: ["javascript"]
-sources: ["examples/animation/README.md", "examples/animation/hero.js", "docs/animation-api.md", "bindings/node/README.md", "bindings/node/gsap.d.ts", "bindings/node/motion.d.ts", "bindings/node/anim.js", "bindings/node/dom.js", "bindings/node/test/anim.test.js", "bindings/react/README.md", "bindings/react/motion.js", "bindings/react/motion.d.ts", "kit/include/BUI_anim.h"]
+sources: ["examples/animation/README.md", "examples/animation/hero.js", "docs/animation-api.md", "bindings/node/README.md", "bindings/node/gsap.d.ts", "bindings/node/motion.d.ts", "bindings/node/anim.js", "bindings/node/validate.js", "bindings/node/waapi.js", "bindings/svelte/test/svelte.test.js", "bindings/node/dom.js", "bindings/node/test/anim.test.js", "bindings/react/README.md", "bindings/react/motion.js", "bindings/react/motion.d.ts", "kit/include/BUI_anim.h"]
 ---
 
 A box that slides in with an elastic ease, a timeline of three steps, a card that springs when you hover it: **GSAP's and Motion's APIs, run by BUI.** You import `gsap` or `motion`, call them as you would anywhere, and the animation runs in BUI's engine. JavaScript hands over each call's values once, and hears from the engine only for the callbacks you ask for.
@@ -84,7 +84,32 @@ Every ease of GSAP, Motion, CSS and Blender works by name: `'none'`, `'power2.ou
 
 ## Web Animations
 
-`el.animate(keyframes, options)` runs for real, on the same engine.
+`el.animate(keyframes, options)` runs for real, on the same engine. **Status: built**, with `play`, `pause`, `reverse`, `finish`, `cancel`, `playbackRate`, `currentTime`, `onfinish` and `finished`.
+
+```js
+const a = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: 'ease-out', fill: 'forwards' })
+await a.finished
+```
+
+`endDelay` and a `composite` other than `'replace'` throw. `cancel()` stops it and rejects `finished` with an `AbortError`, but the engine cannot yet revert an animated style, so the first keyframe's values stay until you set the style yourself.
+
+## Svelte transitions
+
+**Status: built.** Svelte's `transition:`, `in:` and `out:` run on this engine with no import: Svelte calls `el.animate()` with the transition's `css`, and the engine runs it. A transition that only has `tick` runs in Svelte's own loop.
+
+```svelte
+<script>
+  import { fly } from 'svelte/transition'
+  let open = $state(false)
+</script>
+{#if open}<div transition:fly={{ y: 20, duration: 300 }}>hello</div>{/if}
+```
+
+An outro keeps the element until it ends, and showing it again during the outro keeps one element. Svelte cancels a finished animation, so give an element that transitions explicit styles (see the `cancel()` note above). `app.advanceClock(ms)` steps a transition in tests (`bindings/svelte/test/svelte.test.js`). `use:motion` and the `spring` and `tweened` stores are not built.
+
+## Numbers and positions
+
+Every call checks its numbers where you make it: a NaN or infinite `duration`, `delay`, `repeatDelay`, `seek` or `timeScale` throws a `RangeError`, a negative duration or delay is 0, `repeat: -1` (or `Infinity`) is forever and a repeat above 1,000,000 is clamped, and a position that is not GSAP's grammar (`'<=1'`, `{}`) throws instead of being taken as a label. The whole contract is under [Numbers and positions](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#numbers-and-positions).
 
 ## Testing animations
 
@@ -98,12 +123,21 @@ await app.advanceClock(500)   // half a second later, every window has rendered 
 
 ## Examples
 
-`examples/animation/` has four small windows: a hero intro, a card grid with springs, magnetic buttons, and a marquee with a draggable puck and an equalizer. Run any of them with `node examples/animation/hero.js`, or save frames with `BUI_SHOT=out.png BUI_SHOT_MS=100,500,3000`.
+`examples/animation/` has four small windows, each run with `node examples/animation/<name>.js`, or saved as frames with `BUI_SHOT=out.png BUI_SHOT_MS=100,500,3000`:
+
+- `hero.js`: a headline whose letters rise one by one, one GSAP timeline with position strings.
+- `cards.js`: a card grid with staggered entrance, spring tilt on hover and counting numbers.
+- `magnetic.js`: buttons that lean toward the pointer and snap back with a spring.
+- `playground.js`: a marquee, a draggable puck and an equalizer.
+
+React and Svelte: `bindings/react/test/motion.test.js` and `bindings/svelte/test/svelte.test.js` are small runnable examples of `motion.div`, `useTransform`, `AnimatePresence` and Svelte transitions.
 
 ## Limits
 
 - **Widgets:** a Blender widget has no draw transform or opacity; `x`, `y`, `scale`, `rotate` and `opacity` apply to HTML elements. A widget animates its own values.
-- **QuickJS:** `bui build` without `--bun` runs on QuickJS, where the animation API is unit-tested but has had less use than on Node and Bun.
+- **QuickJS:** `bui build` without `--bun` runs on QuickJS, which has no animation commands yet: `gsap`, `animate` and `el.animate` throw an error that says so. Node and Bun have them.
+- **Not built:** `gsap.quickTo`, `context`, `matchMedia`, `utils`, `ScrollTrigger`, `Flip`, `Draggable`, `Observer`, Motion's `spring`, `scroll`, `inView`, `hover`, `press`, animation sequences, and in React `useVelocity`, `useScroll`, `useInView`, `useAnimate`, `LayoutGroup`, `MotionConfig` and `layoutId`. [The full table](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#status-of-each-entry-point).
+- **Cost:** a frame that only animates skips rendering, the cascade and layout and repaints only what changed. It is not allocation-free: each call hands its values over once, and a callback such as `onUpdate` costs an event per frame it runs.
 
 ## Next steps
 

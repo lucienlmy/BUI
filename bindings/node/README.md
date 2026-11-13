@@ -86,7 +86,8 @@ win.body.appendChild(button)
   - Every element takes Motion's props: `el.setMotion('animate', { x: 100 })`
     (`initial`, `animate`, `exit`, `whileHover`, `whileTap`, `whileFocus`,
     `transition`, `variants`), and `style = { x: motionValue }`.
-  - `el.animate(keyframes, options)` (Web Animations) runs for real.
+  - `el.animate(keyframes, options)` (Web Animations) runs for real (`cancel()` leaves the first keyframe applied until the engine can revert a style).
+  - Numbers are checked at the call: NaN or infinite times throw a `RangeError`, a negative duration is 0, `repeat: -1` is forever, a position outside GSAP's grammar throws (`docs/animation-api.md`, "Numbers and positions"). Svelte's transitions run on the engine through `el.animate()`.
 - **Tests:** `new App({ headless: true })` renders off-screen, and
   `win.click(x, y)` simulates input. Its clock stands still:
   `await app.advanceClock(ms)` steps animations frame-exactly.

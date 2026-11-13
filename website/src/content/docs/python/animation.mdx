@@ -109,9 +109,15 @@ step(0.5)
 assert abs(volume.value - 50) < 1e-3
 ```
 
+## Examples
+
+`examples/animation_demo.py` animates widgets with `gsap` and `motion`: `python examples/animation_demo.py`.
+
 ## Limits
 
 - **Widgets** have no draw transform or opacity (see above).
+- **Numbers:** a NaN or infinite time raises, a negative duration or delay is 0, and `repeat=-1` is forever (more than 1,000,000 is clamped); see [Numbers and positions](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#numbers-and-positions).
+- **Cost:** a frame that only animates skips rendering, the cascade and layout and repaints only what changed, and runs no Python unless you gave a callback. It is not allocation-free: a callback costs an event per call.
 - **Callbacks** are held for exactly as long as their motion and released when it ends. A tween whose handle you drop still plays to the end.
 
 ## Next steps

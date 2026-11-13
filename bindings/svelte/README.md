@@ -81,7 +81,7 @@ used only while Svelte's has the shape it was written for (a test compares
 them), otherwise Svelte's own runs.
 
 Transitions (`transition:fade` ...) run on BUI's animation engine through
-`el.animate()`. Not there yet: `{@html}` (no HTML parser); `bind:clientWidth`
+`el.animate()` (an outro keeps its element until it ends; see the animation guide). Not there yet: `use:motion` and the motion stores; `{@html}` (no HTML parser); `bind:clientWidth`
 and other size bindings (no `ResizeObserver`); transitions that read
 `getComputedStyle` (fade's opacity) start from the value the element has.
 

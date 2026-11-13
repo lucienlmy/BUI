@@ -18,7 +18,7 @@ node examples/animation/playground.js  # an endless marquee, a puck to drag and 
 | `magnetic.js` | Motion `animate` with `type: 'spring'`, interrupted on every pointer move (position and velocity carry over), low damping for the overshoot |
 | `playground.js` | a seamless marquee (`ease: 'none'`, `repeat: -1`), `drag` with `dragConstraints`, `dragElastic` and inertia, per-element delays for a ripple |
 
-None of them runs JavaScript per frame: each call hands its values to the engine once, and the engine
+None of them runs JavaScript per frame unless it gives an `onUpdate`: each call hands its values to the engine once, and the engine
 moves the elements. `x`, `y`, `scale`, `rotate` and `opacity` are draw-time transforms, so nothing is laid
 out again while they move.
 
