@@ -223,8 +223,12 @@ pub(crate) struct VideoAttrs {
 }
 
 impl VideoCache {
-    /// A render starts: the elements are counted again from the first.
+    /// A render starts: the players of elements the last render didn't ask for are dropped (an
+    /// element gone from the tree must not play on, holding an audio device and its thread), and
+    /// the elements are counted again from the first.
     pub(crate) fn begin_pass(&mut self) {
+        let seen = &self.seen;
+        self.players.retain(|(src, nth), _| seen.get(src).is_some_and(|n| nth < n));
         self.seen.clear();
     }
 
@@ -288,5 +292,43 @@ mod tests {
             assert!(!a.audio_effects() && b.audio_effects());
         }
         assert_eq!(cache.players.len(), 2);
+    }
+
+    /// A player whose element left the tree is dropped by the next render; the ones still there
+    /// stay.
+    #[test]
+    fn players_of_removed_elements_are_dropped() {
+        let mut cache = VideoCache::default();
+        let plain = VideoAttrs { autoplay: true, ..VideoAttrs::default() };
+        cache.begin_pass();
+        let (Some(a), Some(_b), Some(_c)) = (
+            cache.get("x.mp4", plain.clone()),
+            cache.get("x.mp4", plain.clone()),
+            cache.get("y.mp4", plain.clone()),
+        ) else {
+            return; // no kit video here
+        };
+        assert_eq!(cache.players.len(), 3);
+        cache.begin_pass(); // the render that follows asks for one x.mp4 only
+        assert_eq!(cache.players.len(), 3, "what a render asked for stays until the next starts");
+        let kept = cache.get("x.mp4", plain).expect("still there");
+        assert!(Rc::ptr_eq(&a, &kept));
+        cache.begin_pass();
+        assert_eq!(cache.players.len(), 1, "the second x.mp4 and y.mp4 are gone");
+    }
+
+    /// The attributes reach the player: muted and audioeffects.
+    #[test]
+    fn muted_and_audioeffects_apply() {
+        let mut cache = VideoCache::default();
+        let attrs = VideoAttrs { autoplay: true, muted: true, audio_effects: true, ..VideoAttrs::default() };
+        cache.begin_pass();
+        let Some(v) = cache.get("x.mp4", attrs.clone()) else {
+            return; // no kit video here
+        };
+        assert!(v.muted() && v.audio_effects());
+        cache.begin_pass();
+        let v = cache.get("x.mp4", VideoAttrs { muted: false, ..attrs }).expect("same player");
+        assert!(!v.muted() && v.audio_effects());
     }
 }

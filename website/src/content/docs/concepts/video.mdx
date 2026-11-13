@@ -112,7 +112,7 @@ C: `BK_video_texture(v, tex, max_w, max_h)`; Rust: `Video::texture`. Calling it 
 </Tab>
 </LangTabs>
 
-**Defaults.** A video autoplays muted (what browsers allow without a click), plays once (`loop` to repeat), and fits its box like `object-fit: contain`. Its size is 300 x 150 (HTML's) until the first frame tells the real one. `poster` shows an image until then.
+**Defaults.** A video autoplays with sound (`muted` for a silent one), plays once (`loop` to repeat), and fits its box like `object-fit: contain`. Its size is 300 x 150 (HTML's) until the first frame tells the real one. `poster` shows an image until then.
 
 **Controls.** `controls` on a `"video"` node (C, Python's `Video(controls=True)`) draws Blender's widgets over the bottom of the video: a play/pause button and a number-slider scrubber showing `0:12 / 1:30`, like the Timeline's playback controls and frame slider. Click to play or pause, drag the scrubber to seek (the video holds while you drag), Space toggles. Rust and JavaScript elements don't draw controls yet: build them from the player's methods.
 
@@ -127,7 +127,7 @@ C: `BK_video_texture(v, tex, max_w, max_h)`; Rust: `Video::texture`. Calling it 
 | AVFoundation | macOS | on (`video`) | `AVAssetReader` with VideoToolbox scaling, weak-linked frameworks. **Untested**: written against the documented API without a Mac; it compiles only on Apple platforms, so it can't affect others. |
 | dav1d, FFmpeg | any | not written | Planned as optional features (off by default): dav1d (BSD-2) for AV1 where the OS lacks it, with a small MP4/WebM demuxer; FFmpeg for everything (LGPL or GPL by its build, patent-encumbered codecs: opt-in only). They are not in the feature table until they exist. |
 
-Formats are the OS's: what Windows' Movies & TV, GStreamer's `gst-play-1.0` or QuickTime Player plays, BUI plays. `BK_video_backends()` / `bui.video_backends` / `Video::backends()` name the ones a build has. Audio isn't played yet (every video is muted); see Limits.
+Formats are the OS's: what Windows' Movies & TV, GStreamer's `gst-play-1.0` or QuickTime Player plays, BUI plays. `BK_video_backends()` / `bui.video_backends` / `Video::backends()` name the ones a build has. The sound plays on the default output; see Limits.
 
 ## How it works
 
@@ -146,6 +146,8 @@ Formats are the OS's: what Windows' Movies & TV, GStreamer's `gst-play-1.0` or Q
 ## Limits
 
 - **Sound at other rates:** at a playback rate other than 1 the sound pauses (no pitch-kept time stretching); it picks up again at rate 1.
+- **First audio track only.** A file with several audio tracks plays the first.
+- **One stream per video.** Each video with sound owns an output stream and a thread: many videos are many streams. The stream opens on that thread (up to about 2 s on some drivers; GStreamer's sound waits at most 3 s to preroll and 2 s per block), never on the UI thread, and freeing a video returns at once (the stream is released on a thread of its own; shutdown waits up to 2 s for them). With no output device a video plays silent and tries again every 5 s. A video element that leaves a Rust document stops its sound at the next render.
 - **Sound is tested on Windows.** The macOS (CoreAudio) and Linux (PulseAudio) outputs are written against their documented APIs and haven't been run yet.
 - An off-screen video with sound reports `ended` when it shows again, not when its sound ends.
 - **Not zero-copy** on Windows: frames are decoded and scaled on the GPU, then copied back (at the drawn size) and uploaded to the renderer's own device. Sharing the decoder's textures with the renderer's device is the next step.

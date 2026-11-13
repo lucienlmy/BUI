@@ -364,8 +364,9 @@ bundle (`<video>`, media file names). A hello-world app is 6.3 MB, one with
 images or video 6.9 MB (Windows x64). See
 [Binary size](https://bui.preetham.top/docs/reference/binary-size/).
 
-`<video src="intro.mp4" loop />` plays video in React and the DOM API (muted
-autoplay, `autoPlay={false}` holds the first frame); no media events yet.
+`<video src="intro.mp4" loop />` plays video in React and the DOM API
+(autoplay with sound; add `muted` for a silent one, `autoPlay={false}` holds the
+first frame); no media events yet.
 
 ## How it works
 

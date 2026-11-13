@@ -77,6 +77,12 @@ All notable changes to **blenderui** (BUI). The format follows
   callback left early on an error, with Dear ImGui's error recovery.
 
 ### Changed
+- **Breaking default: videos play with sound.** A `<video>` / `BK_video` autoplays with its audio track now (it
+  was silent): set `muted` (HTML attribute, `BK_video_set_muted`, `Video(muted=True)`, `Video::set_muted`) for a
+  silent one. Closing a video no longer waits for its audio device (the stream is released on a thread of its
+  own); a video with no output at the time retries every 5 s; a Rust `<video>` element that leaves the tree stops its
+  sound; platforms without PulseAudio / GStreamer (not Linux or BSD) build with silent video. Only the first
+  audio track plays and each video with sound owns one stream and thread.
 - **Text fields:** in the HTML look (browser-style inputs and text areas) the caret blinks like a browser's (about every 530 ms, solid right after it
   moves or the text changes); Blender's own fields keep Blender's solid caret. The window wakes only for the next toggle, so an idle window still sleeps.
 - `BK_open_pie` takes the pie's center (`at_x`, `at_y`; `-100000` for the pointer, as in `BK_open_menu`).

@@ -138,6 +138,13 @@ decoded at the size drawn, in one GPU texture per player, and only while it
 shows. It autoplays with its sound, played on the default output (WASAPI,
 CoreAudio, PulseAudio / PipeWire); the frames follow the sound, which plays on
 while the video is off screen (the picture catches up when it shows again).
+Only the file's first audio track plays, and each video with sound owns one
+output stream and thread, so many videos are many streams. The output opens on
+that thread (up to about 2 s on some drivers; the readers wait at most 3 s to
+preroll and 2 s per block), never on the UI thread: `BK_video_free` returns at
+once and the stream is released on a thread of its own (`BK_image_exit` waits
+up to 2 s for those at shutdown). With no output device a video plays silent
+and tries again every 5 s.
 
 ```c
 BKVideo *v = BK_video_new("intro.mp4");     /* loads when first drawn */

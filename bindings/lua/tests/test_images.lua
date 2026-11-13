@@ -142,6 +142,27 @@ if #vb > 0 then
   check(vb:match("%w+"), "video_backends format: " .. vb)
 end
 
+-- ── Video: the sound controls (no decoding, no audio device needed) ──
+
+if #vb > 0 and type(bui.Video) == "function" then
+  local v = bui.Video("/nonexistent/clip.mp4")
+  check(v ~= nil, "Video of a path returns a video")
+  check(v:muted() == false and v:volume() == 1.0, "sound by default")
+  v:set_volume(0.25)
+  v:set_volume(0 / 0) -- NaN: ignored
+  v:set_volume(math.huge) -- infinite: ignored
+  check(math.abs(v:volume() - 0.25) < 1e-6, "NaN/inf volume rejected, got " .. v:volume())
+  v:set_volume(2.0)
+  check(v:volume() == 1.0, "volume clamped to 1")
+  v:set_muted(true)
+  check(v:muted() == true, "muted")
+  check(v:audio_effects() == false, "effects off by default")
+  v:set_audio_effects(true)
+  check(v:audio_effects() == true, "effects on")
+  check(v:has_audio() == false, "no audio before the file loaded")
+  v:free()
+end
+
 -- ── Version constants ────────────────────────────────────────────────
 
 check(bui._VERSION ~= nil, "bui._VERSION nil")
