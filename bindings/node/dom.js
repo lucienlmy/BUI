@@ -596,7 +596,17 @@ class Element extends Node {
       return this.setAttribute('style', v)
     }
     // an object: plain values, or some signals (`{ color: colorSignal }`), then bound
-    for (const k in v) if (isSignal(v[k])) return this.setAttribute('style', memo(() => styleText(this._splitMotion(v))))
+    // (the bound value stays an object, so that a motion value among the signals' values is split off
+    // and a later string is the only thing that lets go of it)
+    for (const k in v) {
+      if (isSignal(v[k])) {
+        return this.setAttribute('style', memo(() => {
+          const now = {}
+          for (const key in v) now[key] = isSignal(v[key]) ? v[key].value : v[key]
+          return now
+        }))
+      }
+    }
     this.setAttribute('style', styleText(this._splitMotion(v)))
   }
 
