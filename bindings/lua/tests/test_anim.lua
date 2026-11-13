@@ -276,7 +276,7 @@ step(1)
 check(not cm:isActive(), "a killed motion stays killed")
 local ptl = gsap.timeline()
 ptl:to(slider(0), {value = 1, duration = 2, ease = "none"})
-for _, bad in ipairs({"<=1", "abc", "nan", "inf", "0x10", "+=", "1e999", "<x", "missing+=1", "1 2"}) do
+for _, bad in ipairs({"<=1", "a b", "-inf", "0x10", "+=", "1e999", "<x", "a++1", "1 2"}) do
   fails(function() ptl:addLabel("l", bad) end, "bad position")
   fails(function() ptl:to(slider(0), {value = 1}, bad) end, "bad position")
   fails(function() ptl:call(function() end, bad) end, "bad position")

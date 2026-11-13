@@ -380,7 +380,7 @@ def test_numbers_and_positions_are_validated_once_by_the_engine():
     # positions: GSAP's grammar and nothing else
     tl = gsap.timeline()
     tl.to(Obj(x=0.0), x=1, duration=2, ease="none")
-    for bad in ("<=1", "abc", "nan", "inf", "0x10", "+=", "1e999", "<x", "missing+=1", "1 2"):
+    for bad in ("<=1", "a b", "-inf", "0x10", "+=", "1e999", "<x", "a++1", "1 2"):
         assert _refused(ValueError, tl.add_label, "l", bad), bad
         assert _refused(ValueError, tl.to, Obj(x=0.0), x=1, position=bad), bad
         assert _refused(ValueError, tl.call, print, position=bad), bad

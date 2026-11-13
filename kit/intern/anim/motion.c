@@ -1070,6 +1070,22 @@ static bool read_offset(const char *s, bool bare, double *r_amount, bool *r_perc
  * a "%" after any n (of the last added). "" is the end. -1 when it isn't one of them. As in GSAP,
  * a label that doesn't exist yet is made at the end of the timeline, but only when the whole
  * position is valid: a refused position makes nothing. */
+static bool label_name_ok(const char *s)
+{
+  /* the grammar of a new label: bindings/node/validate.js has the same one */
+  if (!((*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') || *s == '_')) {
+    return false;
+  }
+  for (; *s; s++) {
+    const bool word = (*s >= 'A' && *s <= 'Z') || (*s >= 'a' && *s <= 'z') || (*s >= '0' && *s <= '9') ||
+                      *s == '_' || *s == '.' || *s == '-';
+    if (!word) {
+      return false;
+    }
+  }
+  return true;
+}
+
 static double position(BKMotion *tl, const char *pos)
 {
   const double end = tl->dur;
@@ -1109,6 +1125,9 @@ static double position(BKMotion *tl, const char *pos)
     name[len] = '\0';
     base = BK_timeline_label_time(tl, name);
     if (base < 0.0) {
+      if (!label_name_ok(name)) {
+        return -1.0;
+      }
       base = end; /* GSAP makes it at the end */
       fresh = true;
     }

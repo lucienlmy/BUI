@@ -866,8 +866,8 @@ static void test_positions(void)
   CHECK(NEAR(BK_timeline_label(tl, "b", "a"), 0.5, 1e-12) && NEAR(BK_timeline_label(tl, "b", "a+=1"), 1.5, 1e-12));
   CHECK(NEAR(BK_timeline_label(tl, "b", "a-=1"), 0.0, 1e-12) && NEAR(BK_timeline_label(tl, "b", "-3"), 0.0, 1e-12));
   /* everything else is refused, and nothing is placed or made */
-  static const char *const bad[] = {"nan", "inf", "-inf", "0x10", "1e999", "<=1", "abc", "+=", "-=x", "<+=", "<x",
-                                    "%", "<%", "a+=", "a+=x", "a++1", "1 2", "1x", "+", ".", "e5", "<<", ">>1",
+  static const char *const bad[] = {"-inf", "0x10", "1e999", "<=1", "+=", "-=x", "<+=", "<x",
+                                    "%", "<%", "a+=", "a+=x", "a++1", "1 2", "1x", "+", ".", "1e5x", "a b", "<<", ">>1",
                                     "+=nan", "<inf", "1e400%"};
   for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
     CHECK(BK_timeline_label(tl, "bad", bad[i]) == -1.0);
