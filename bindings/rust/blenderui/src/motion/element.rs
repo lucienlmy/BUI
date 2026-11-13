@@ -116,6 +116,7 @@ unsafe extern "C" fn slot_get(obj: *mut c_void, prop: i32, r_value: *mut f32, r_
     let slot = unsafe { &mut *obj.cast::<Slot>() };
     let Some(p) = slot.find(prop) else { return 0 };
     let r = p.cur.unwrap_or(p.base);
+    // SAFETY: the engine passes room for 4 floats and an int.
     unsafe {
         std::ptr::copy_nonoverlapping(r.v.as_ptr(), r_value, 4);
         *r_unit = r.unit;
@@ -128,6 +129,7 @@ unsafe extern "C" fn slot_set(obj: *mut c_void, prop: i32, value: *const f32, n:
     let slot = unsafe { &mut *obj.cast::<Slot>() };
     let Some(p) = slot.find(prop) else { return };
     let mut r = Read { n: n.clamp(1, 4) as u8, unit, ..Read::default() };
+    // SAFETY: `value` holds `n` (clamped to 4) floats, `r.v` has room for 4.
     unsafe { std::ptr::copy_nonoverlapping(value, r.v.as_mut_ptr(), r.n as usize) };
     p.cur = Some(r);
 }
@@ -203,6 +205,9 @@ pub(crate) struct Elements {
     dirty: Vec<bool>,
     /// a slot may be exiting (frames look for exits that ended)
     exits: bool,
+    /// the boxes a redraw walks (see `build_region`), and scratch for building them
+    region: Vec<u32>,
+    mark: Vec<bool>,
 }
 
 impl Drop for Elements {
@@ -294,6 +299,7 @@ impl Elements {
             }
         }
         self.check_exits();
+        self.build_region(&frame.nodes);
         (changed, flipped)
     }
 
@@ -340,6 +346,7 @@ impl Elements {
         };
         let i = found.unwrap_or_else(|| self.els.alloc(key));
         let slot: *mut Slot = self.els.at(i);
+        let none = Transition::default();
         // SAFETY (this and the short borrows below): no engine call runs while they live.
         let (in_view, exiting) = {
             let s = unsafe { &mut *slot };
@@ -366,7 +373,11 @@ impl Elements {
                 g.drag = drag;
                 g.layout = flip;
                 if flip.is_some() {
-                    g.layout_t = spec.transition().map_or_else(Transition::default, |v| v.transition.clone());
+                    // copied only when it changed: a frame reads it, never clones it
+                    let wanted = spec.transition().map_or(&none, |v| &v.transition);
+                    if g.layout_t != *wanted {
+                        g.layout_t.clone_from(wanted);
+                    }
                 }
                 if g.exiting != exiting {
                     g.end_exit(); // a new exit, or none: shown again midway
@@ -397,7 +408,6 @@ impl Elements {
                 }
             }
         }
-        let none = Transition::default();
         // the element's transition for a property (its own, else the element's)
         let element_t = |id: i32| spec.transition().map_or_else(Transition::default, |v| v.transition_for(id, &none));
         {
@@ -453,7 +463,7 @@ impl Elements {
                 }
             }
         }
-        // start a motion for each target that changed
+        // start a motion for each target that changed (the short `unsafe` borrows of the slot below: no engine call runs while one lives, and the engine has dropped none of its own)
         for (k, v, vars) in &targets {
             // SAFETY: as above, for this check only.
             let changed = unsafe { &mut *slot }.find(k.id()).is_some_and(|p| !p.last.as_ref().is_some_and(|l| l.same(v)));
@@ -546,11 +556,52 @@ impl Elements {
         }
     }
 
+    /// After a full frame: the boxes a redraw can change, in order (parents
+    /// first): the animated elements' boxes and everything under them. A
+    /// redraw walks these alone, not every box of the frame.
+    fn build_region(&mut self, nodes: &[crate::layout::BoxNode]) {
+        self.region.clear();
+        self.dirty.clear(); // the old marks aren't the new region's
+        if self.els.live.is_empty() {
+            return;
+        }
+        let mark = &mut self.mark;
+        mark.clear();
+        mark.resize(nodes.len(), false);
+        let mut any = false;
+        for &i in &self.els.live {
+            let s = &self.els.chunks[i as usize / CHUNK][i as usize % CHUNK];
+            if s.base.is_some() && nodes.get(s.node).is_some_and(|n| n.key == s.key) {
+                mark[s.node] = true;
+                any = true;
+            }
+        }
+        if !any {
+            return;
+        }
+        for (j, n) in nodes.iter().enumerate() {
+            mark[j] |= n.parent.is_some_and(|p| mark[p]);
+            if mark[j] {
+                self.region.push(j as u32);
+            }
+        }
+    }
+
+    /// Zero the moves a redraw left (what the next one starts from).
+    fn clear_shift(&mut self) {
+        for &j in &self.region {
+            if let Some(s) = self.shift.get_mut(j as usize) {
+                *s = (0.0, 0.0);
+            }
+        }
+    }
+
     /// A frame where only moving values changed (no render, cascade or
     /// layout): each element's values go over its style again, and boxes
     /// moved by `x` / `y` move with their contents. False when that can't do
     /// (a moving value changes layout, or the frame isn't the one the slots
-    /// know): the window then renders as usual.
+    /// know): the window then renders as usual. It touches the animated
+    /// elements and what is under them, not the rest of the frame.
     pub(crate) fn redraw(&mut self, frame: &mut crate::layout::Frame, styles: &mut crate::layout::StyleStore,
                          viewport: (f32, f32)) -> bool {
         let Arena { chunks, live, .. } = &mut self.els;
@@ -566,13 +617,23 @@ impl Elements {
         let nodes = &mut frame.nodes;
         let mut moved = false;
         let mut faded = false;
-        self.dirty.clear();
-        self.dirty.resize(nodes.len(), false);
+        if self.dirty.len() == nodes.len() {
+            for &j in &self.region {
+                self.dirty[j as usize] = false;
+            }
+        } else {
+            self.dirty.clear();
+            self.dirty.resize(nodes.len(), false);
+        }
+        work(live.len() + self.region.len());
         for &i in live.iter() {
             let (c, o) = at(i);
             let s = &mut chunks[c][o];
             let Some(base) = &s.base else { continue };
-            let Some(n) = nodes.get(s.node).filter(|n| n.key == s.key) else { return false };
+            let Some(n) = nodes.get(s.node).filter(|n| n.key == s.key) else {
+                self.clear_shift();
+                return false;
+            };
             for &(id, mv) in &s.bound {
                 if let Some(p) = s.props.iter_mut().find(|p| p.id == id) {
                     p.cur = Some(mv.read());
@@ -600,24 +661,29 @@ impl Elements {
             faded |= s.fades;
             let after = if s.moves { at(st) } else { (0.0, 0.0) };
             if before != after {
-                self.shift.resize(nodes.len(), (0.0, 0.0));
+                if self.shift.len() < nodes.len() {
+                    self.shift.resize(nodes.len(), (0.0, 0.0));
+                }
                 self.shift[s.node] = (after.0 - before.0, after.1 - before.1);
                 moved = true;
             }
         }
         if faded {
-            crate::layout::inherit(nodes, styles); // boxes keep their opacity times their parents'
+            // boxes keep their opacity times their parents'
+            crate::layout::inherit_at(nodes, styles, self.region.iter().map(|&j| j as usize));
         }
         self.check_exits();
         // what's under a changed box changes with it (opacity, position)
-        for j in 0..nodes.len() {
+        for &j in &self.region {
+            let j = j as usize;
             if let Some(p) = nodes[j].parent {
                 self.dirty[j] |= self.dirty[p];
             }
         }
         if moved {
             // a box moves with every box under it (parents come before children)
-            for j in 0..nodes.len() {
+            for &j in &self.region {
+                let j = j as usize;
                 let own = self.shift[j];
                 let up = nodes[j].parent.map_or((0.0, 0.0), |p| self.shift[p]);
                 let d = (own.0 + up.0, own.1 + up.1);
@@ -636,17 +702,32 @@ impl Elements {
                         }
                 }
             }
-            self.shift.clear();
+            self.clear_shift();
         }
         true
     }
 }
 
-/// A motion of property `id` of the slot to `keys` with transition `t`.
+
 /// A motion of property `id` of the slot to `keys` with transition `t`: the
 /// handle is the caller's.
 pub(super) fn start(slot: *mut Slot, id: i32, keys: &[Value], t: &Transition) -> *mut sys::BKMotion {
     tween(&SLOT_CLASS, slot.cast(), &[(id, keys)], t, Flavor::Motion, false, None)
+}
+
+thread_local! {
+    /// Slots and boxes the redraws on this thread visited (see [`redraw_work`](super::redraw_work)).
+    static WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// A redraw visits `n` slots and boxes.
+fn work(n: usize) {
+    WORK.set(WORK.get() + n as u64);
+}
+
+/// What the redraws visited so far on this thread.
+pub(super) fn redraw_work() -> u64 {
+    WORK.get()
 }
 
 fn ensure(s: &mut Slot, id: i32, base: &Computed, u: &Units) {

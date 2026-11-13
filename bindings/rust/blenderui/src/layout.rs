@@ -2506,7 +2506,12 @@ fn place_folded_text(nodes: &mut [BoxNode], i: usize, k: usize, b: Bounds<f32>, 
 /// Opacity and visibility as boxes inherit them (parents precede children in
 /// the arena): after layout, and on redraws that change them.
 pub(crate) fn inherit(nodes: &mut [BoxNode], styles: &StyleStore) {
-    for i in 0..nodes.len() {
+    inherit_at(nodes, styles, 0..nodes.len());
+}
+
+/// [`inherit`] for the boxes `at` (ascending: parents first).
+pub(crate) fn inherit_at(nodes: &mut [BoxNode], styles: &StyleStore, at: impl Iterator<Item = usize>) {
+    for i in at {
         let (po, pv) = nodes[i].parent.map_or((1.0, true), |p| (nodes[p].opacity, nodes[p].visible));
         let st = &styles[nodes[i].style];
         let own = matches!(nodes[i].content, Content::Element | Content::Widget(_) | Content::Replaced(_));
