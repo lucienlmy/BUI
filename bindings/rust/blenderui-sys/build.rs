@@ -109,7 +109,8 @@ fn main() {
             // `rustc-link-arg`: only a link-lib reaches the crates that depend on this one (a
             // link-arg stays with this package's own targets, and `blenderui`'s test binaries
             // then fail to link). All four frameworks ship with every macOS the kit supports
-            // (11 and newer).
+            // (11 and newer): so these link strongly here, where the C build (kit/CMakeLists.txt)
+            // links them weakly (cargo has no stable weak-framework link-lib).
             if std::env::var_os("CARGO_FEATURE_VIDEO").is_some() {
                 for fw in ["AVFoundation", "CoreMedia", "CoreVideo", "AudioToolbox"] {
                     println!("cargo:rustc-link-lib=framework={fw}");

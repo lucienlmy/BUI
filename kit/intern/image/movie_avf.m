@@ -315,28 +315,32 @@ static int avf_audio_read(void *state, const float **r_data, double *r_pts)
     if (!s->reader && !sound_start(s)) {
       return -1;
     }
-    CMSampleBufferRef sb = [s->out copyNextSampleBuffer];
-    if (!sb) {
-      return s->reader.status == AVAssetReaderStatusCompleted ? 0 : -1;
-    }
-    CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sb);
-    const size_t len = block ? CMBlockBufferGetDataLength(block) : 0;
-    const size_t n = len / sizeof(float);
-    if (n > s->cap) {
-      if (s->buf) {
-        MEM_freeN(s->buf);
+    for (int empty = 0; empty < 64 && frames <= 0; empty++) {
+      CMSampleBufferRef sb = [s->out copyNextSampleBuffer];
+      if (!sb) {
+        return s->reader.status == AVAssetReaderStatusCompleted ? 0 : -1;
       }
-      s->buf = (float *)MEM_mallocN(sizeof(float) * n, "AvfSound block");
-      s->cap = n;
+      CMBlockBufferRef block = CMSampleBufferGetDataBuffer(sb);
+      const size_t len = block ? CMBlockBufferGetDataLength(block) : 0;
+      const size_t n = len / sizeof(float);
+      frames = -1;
+      if (block && CMBlockBufferCopyDataBytes(block, 0, n * sizeof(float),
+                                              imb_audio_block_reserve(&s->buf, &s->cap, n)) ==
+                       kCMBlockBufferNoErr)
+      {
+        const CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
+        *r_pts = CMTIME_IS_NUMERIC(pts) ? CMTimeGetSeconds(pts) : -1.0;
+        *r_data = s->buf;
+        frames = (int)(n / (size_t)s->channels);
+      }
+      CFRelease(sb);
+      if (frames < 0) {
+        break; /* a block that can't be copied: an error */
+      }
     }
-    if (block && CMBlockBufferCopyDataBytes(block, 0, n * sizeof(float), s->buf) == kCMBlockBufferNoErr)
-    {
-      const CMTime pts = CMSampleBufferGetPresentationTimeStamp(sb);
-      *r_pts = CMTIME_IS_NUMERIC(pts) ? CMTimeGetSeconds(pts) : -1.0;
-      *r_data = s->buf;
-      frames = (int)(n / (size_t)s->channels);
+    if (frames == 0) {
+      frames = -1; /* only empty blocks for a long while: an error */
     }
-    CFRelease(sb);
   }
   return frames;
 }

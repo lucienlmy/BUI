@@ -445,7 +445,7 @@ static size_t mf_bytes(const void *state)
 
 typedef struct MFSound {
   IMFSourceReader *reader;
-  int channels;
+  int rate, channels; /* the output format asked for and got */
   float *buf; /* the last block (frames x channels) */
   size_t cap; /* floats */
 } MFSound;
@@ -484,6 +484,20 @@ static bool set_audio_output(IMFSourceReader *reader, int rate, int channels)
   return SUCCEEDED(hr);
 }
 
+/* The format the audio output has now. */
+static bool audio_format(IMFSourceReader *reader, UINT32 *r_rate, UINT32 *r_channels)
+{
+  IMFMediaType *t = NULL;
+  if (FAILED(IMFSourceReader_GetCurrentMediaType(reader, AUDIO, &t))) {
+    return false;
+  }
+  *r_rate = *r_channels = 0;
+  IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_SAMPLES_PER_SECOND, r_rate);
+  IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, r_channels);
+  IMFMediaType_Release(t);
+  return *r_rate > 0 && *r_channels > 0;
+}
+
 static void *mf_audio_open(const char *path, int rate, int channels, int *r_rate, int *r_channels)
 {
   if (!path || !mf_ready()) {
@@ -491,21 +505,18 @@ static void *mf_audio_open(const char *path, int rate, int channels, int *r_rate
   }
   MFSound *s = (MFSound *)MEM_callocN(sizeof(MFSound), "MFSound");
   s->reader = open_reader(path, false);
-  IMFMediaType *t = NULL;
   UINT32 r = 0, c = 0;
   if (!s->reader ||
       FAILED(IMFSourceReader_SetStreamSelection(s->reader, (DWORD)MF_SOURCE_READER_ALL_STREAMS,
                                                 FALSE)) ||
       FAILED(IMFSourceReader_SetStreamSelection(s->reader, AUDIO, TRUE)) || /* no audio track */
       !(set_audio_output(s->reader, rate, channels) || set_audio_output(s->reader, 0, 0)) ||
-      FAILED(IMFSourceReader_GetCurrentMediaType(s->reader, AUDIO, &t)))
+      !audio_format(s->reader, &r, &c))
   {
     mf_audio_close(s);
     return NULL;
   }
-  IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_SAMPLES_PER_SECOND, &r);
-  IMFMediaType_GetUINT32(t, &MF_MT_AUDIO_NUM_CHANNELS, &c);
-  IMFMediaType_Release(t);
+  s->rate = (int)r;
   s->channels = (int)c;
   *r_rate = (int)r;
   *r_channels = (int)c;
@@ -528,6 +539,16 @@ static int mf_audio_read(void *state, const float **r_data, double *r_pts)
       }
       return (flags & MF_SOURCE_READERF_ERROR) ? -1 : 0;
     }
+    if (flags & MF_SOURCE_READERF_CURRENTMEDIATYPECHANGED) {
+      /* the output format moved under us (audio.c reads a fixed one): the sound ends here */
+      UINT32 r = 0, c = 0;
+      if (!audio_format(s->reader, &r, &c) || (int)r != s->rate || (int)c != s->channels) {
+        if (sample) {
+          IMFSample_Release(sample);
+        }
+        return 0;
+      }
+    }
     if (!sample) {
       continue; /* a stream tick */
     }
@@ -539,14 +560,7 @@ static int mf_audio_read(void *state, const float **r_data, double *r_pts)
         SUCCEEDED(IMFMediaBuffer_Lock(buf, &p, NULL, &len)))
     {
       const size_t n = len / sizeof(float);
-      if (n > s->cap) {
-        if (s->buf) {
-          MEM_freeN(s->buf);
-        }
-        s->buf = (float *)MEM_mallocN(sizeof(float) * n, "MFSound block");
-        s->cap = n;
-      }
-      memcpy(s->buf, p, n * sizeof(float));
+      memcpy(imb_audio_block_reserve(&s->buf, &s->cap, n), p, n * sizeof(float));
       frames = (int)(n / (size_t)s->channels);
       IMFMediaBuffer_Unlock(buf);
     }

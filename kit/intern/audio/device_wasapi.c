@@ -128,6 +128,24 @@ static void stream_close(BKAudioDevice *d, Stream *s)
   memset(s, 0, sizeof(*s));
 }
 
+/* A mask with as many speakers as `channels` (the mixer may have more than the 8 taken: the
+ * highest speakers go), or 0 (unspecified) when `mask` names fewer. */
+static DWORD channel_mask(DWORD mask, int channels)
+{
+  int bits = 0;
+  for (DWORD m = mask; m; m &= m - 1) {
+    bits++;
+  }
+  for (; bits > channels; bits--) {
+    DWORD top = 0x80000000u;
+    while (!(mask & top)) {
+      top >>= 1;
+    }
+    mask &= ~top;
+  }
+  return bits == channels ? mask : 0;
+}
+
 /* The default output, float at its mixer's rate and channels. */
 static bool stream_open(BKAudioDevice *d, Stream *s)
 {
@@ -153,10 +171,11 @@ static bool stream_open(BKAudioDevice *d, Stream *s)
     fmt.Format.nAvgBytesPerSec = fmt.Format.nSamplesPerSec * fmt.Format.nBlockAlign;
     fmt.Format.cbSize = sizeof(fmt) - sizeof(WAVEFORMATEX);
     fmt.Samples.wValidBitsPerSample = 32;
-    fmt.dwChannelMask = mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE ?
-                            ((WAVEFORMATEXTENSIBLE *)mix)->dwChannelMask :
-                        channels == 2 ? (SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT) :
-                                        SPEAKER_FRONT_CENTER;
+    fmt.dwChannelMask = channel_mask(mix->wFormatTag == WAVE_FORMAT_EXTENSIBLE ?
+                                         ((WAVEFORMATEXTENSIBLE *)mix)->dwChannelMask :
+                                     channels == 2 ? (SPEAKER_FRONT_LEFT | SPEAKER_FRONT_RIGHT) :
+                                                     SPEAKER_FRONT_CENTER,
+                                     channels);
     fmt.SubFormat = k_SUBTYPE_IEEE_FLOAT;
     const REFERENCE_TIME buffer = 500000; /* 50 ms: room, not what is queued (feed) */
     if (!d->effects) {

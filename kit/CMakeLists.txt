@@ -96,7 +96,9 @@ if(BUI_VIDEO)
                                          "-Wl,-weak_framework,CoreMedia"
                                          "-Wl,-weak_framework,CoreVideo"
                                          "-Wl,-weak_framework,AudioToolbox")
-  else()
+  elseif(CMAKE_SYSTEM_NAME MATCHES "Linux|FreeBSD|NetBSD|OpenBSD|DragonFly")
+    # GStreamer and PulseAudio exist here; any other system (Android, Emscripten, ...) builds
+    # with no video backend and no audio device: silent, nothing else changes
     target_sources(bui_kit PRIVATE intern/image/movie_gst.c intern/audio/device_pulse.c)
     target_compile_definitions(bui_kit PRIVATE BUI_VIDEO_GST BUI_AUDIO_PULSE)
     find_package(Threads REQUIRED)

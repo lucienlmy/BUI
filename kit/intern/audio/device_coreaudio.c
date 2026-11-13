@@ -6,6 +6,10 @@
  * The position heard is the queue's sample time, less the silence the
  * buffers were primed with (fill() didn't write that).
  *
+ * Known limit: the output device's own latency (a few ms to tens of ms; Bluetooth more) isn't
+ * added to the position, so the picture can lead the sound by about that much; the sync
+ * tolerance (video.c) is far larger.
+ *
  * UNTESTED here: written against the documented API without a Mac to run it
  * on; AudioToolbox is weak-linked, so a system without it has silent video
  * and nothing else changes.

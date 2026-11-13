@@ -440,30 +440,29 @@ static int gst_audio_read(void *state, const float **r_data, double *r_pts)
   if (!s->playing) {
     s->playing = G.set_state(s->pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE;
   }
-  GstSample *sample = G.pull_sample(s->sink, 2 * GST_SECOND);
-  if (!sample) {
-    return G.is_eos(s->sink) ? 0 : -1;
-  }
-  GstBufferX *buf = G.sample_get_buffer(sample);
-  GstMapInfoX map;
-  int frames = -1;
-  if (buf && G.buffer_map(buf, &map, GST_MAP_READ)) {
-    const size_t n = map.size / sizeof(float);
-    if (n > s->cap) {
-      if (s->buf) {
-        MEM_freeN(s->buf);
-      }
-      s->buf = (float *)MEM_mallocN(sizeof(float) * n, "GstSound block");
-      s->cap = n;
+  for (int empty = 0; empty < 64; empty++) {
+    GstSample *sample = G.pull_sample(s->sink, 2 * GST_SECOND);
+    if (!sample) {
+      return G.is_eos(s->sink) ? 0 : -1;
     }
-    memcpy(s->buf, map.data, n * sizeof(float));
-    frames = (int)(n / (size_t)s->channels);
-    *r_pts = buf->pts != GST_NONE ? (double)buf->pts / GST_SECOND : -1.0;
-    G.buffer_unmap(buf, &map);
+    GstBufferX *buf = G.sample_get_buffer(sample);
+    GstMapInfoX map;
+    int frames = -1;
+    if (buf && G.buffer_map(buf, &map, GST_MAP_READ)) {
+      const size_t n = map.size / sizeof(float);
+      memcpy(imb_audio_block_reserve(&s->buf, &s->cap, n), map.data, n * sizeof(float));
+      frames = (int)(n / (size_t)s->channels);
+      *r_pts = buf->pts != GST_NONE ? (double)buf->pts / GST_SECOND : -1.0;
+      G.buffer_unmap(buf, &map);
+    }
+    G.mini_object_unref(sample);
+    if (frames == 0) {
+      continue; /* an empty block is not the end */
+    }
+    *r_data = s->buf;
+    return frames;
   }
-  G.mini_object_unref(sample);
-  *r_data = s->buf;
-  return frames;
+  return -1;
 }
 
 static bool gst_audio_seek(void *state, double t)
