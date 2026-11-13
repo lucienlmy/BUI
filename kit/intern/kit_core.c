@@ -810,6 +810,7 @@ static const struct {
     {"html", NF_HTML, true}, /* Chrome's form-control look (kit_widgets.c) */
     {"bare", NF_BARE, false},
     {"active_default", NF_ACTIVE_DEFAULT, false},
+    {"select", NF_SELECT, false},
 };
 
 static int g_view_watchers; /* > 0 once any node asked for view events */

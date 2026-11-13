@@ -239,3 +239,6 @@ class Popover(Component):
     @property
     def body(self) -> Component:
         return self.children[0]
+
+    def _content(self) -> Component:
+        return self.body

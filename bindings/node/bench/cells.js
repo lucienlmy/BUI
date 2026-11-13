@@ -1,9 +1,13 @@
 // The Rust benchmark's "one" mode from JavaScript: a 1000x800 window with a
 // grid of N cells; every frame (16 ms) cell 0 changes colour and label.
-//   node bench/cells.js [cells=3000] [--react | --svelte] [--signals] [--gpu] [--seconds=5]
+//   node bench/cells.js [cells=3000] [--react | --svelte | --vue [--isolate]] [--signals] [--gpu] [--seconds=5]
 // --signals: cell 0's style and label are BUI signals; the grid renders once.
 // --svelte: bench/Grid.svelte (run with `node --import @blender-ui/svelte/register`,
 // `bun --preload @blender-ui/svelte/register`, or `bui run`); cell 0 follows a rune.
+// --vue: bench/Grid.vue (run with `node --import @blender-ui/vue/register`,
+// `bun --preload @blender-ui/vue/register`, or `bui run`); cell 0 follows a ref. Vue applies its
+// updates in a microtask, so its JavaScript cost per update includes the hop (no --signals).
+// --isolate: cell 0 is a component of its own, so only it re-renders (not the whole grid).
 // --dev: React's development build. Runs on Node, Bun (`bun bench/cells.js`) or
 // the QuickJS runtime (`node cli.js run bench/cells.js -- 3000 --gpu`).
 // Prints frames per second, CPU per frame (the whole process: JavaScript,
@@ -20,6 +24,8 @@ if (!args.includes('--dev')) env.NODE_ENV = 'production'
 const cells = Number(args.find(a => /^\d+$/.test(a)) ?? 3000)
 const useReact = args.includes('--react')
 const useSvelte = args.includes('--svelte')
+const useVue = args.includes('--vue')
+const isolate = args.includes('--isolate')
 const useSignals = args.includes('--signals')
 const gpu = args.includes('--gpu')
 const seconds = Number((args.find(a => a.startsWith('--seconds=')) ?? '--seconds=5').split('=')[1])
@@ -92,6 +98,19 @@ if (useReact) {
   tick = useSignals
     ? (t) => batch(() => { style0.value = cellStyle(0, t); label0.value = label(0, t) })
     : (t) => setT(t)
+} else if (useVue) {
+  const { render, nextTick } = require('../../vue')
+  settle = nextTick // asynchronous: the update loop below awaits it
+  const Grid = require('./Grid.vue').default
+  let setT
+  const r = render(Grid, {
+    props: { cells, cellStyle, label, gridStyle, isolate, expose: (set) => { setT = set } },
+    title: 'BUI bench (Vue)', width: W, height: H, gpu,
+  })
+  app = r.app
+  win = r.window
+  r.window.body.style = 'margin: 0'
+  tick = (t) => setT(t)
 } else {
   const { App } = require('..')
   app = new App({ gpu })
@@ -122,33 +141,14 @@ const cycles = () => native.processCpuCycles()
 const tsc = () => native.timestampCounter()
 const exact = cycles() != null && tsc() != null
 
-// the JavaScript cost of an update, alone
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 let t = 0
 let jsUs = null
-setTimeout(() => {
-  const n = 500
-  const t0 = performance.now()
-  for (let i = 0; i < n; i++) {
-    settle(() => tick(++t))
-    win.flush()
-  }
-  jsUs = (performance.now() - t0) / n * 1000
-}, 100)
-
-let updates = 0, running = true
+let updates = 0, running = false
 let wall0, cpu0, tsc0, cal0
 let rss = 0, peakRss = 0, samples = 0
 // one update per displayed frame (vsync), like the Rust benchmark
 const frame = () => { if (!running) return; tick(++t); updates++; win.requestAnimationFrame(frame) }
-setTimeout(() => win.requestAnimationFrame(frame), 200)
-setTimeout(() => { cal0 = [performance.now(), exact ? tsc() : 0] }, 200)
-setTimeout(() => {
-  wall0 = performance.now()
-  cpu0 = exact ? cycles() : process.cpuUsage()
-  tsc0 = exact ? tsc() : 0
-  updates = 0
-  rss = peakRss = samples = 0
-}, warmup * 1000)
 const sampler = setInterval(() => {
   if (wall0 === undefined) return
   const r = process.memoryUsage.rss()
@@ -156,7 +156,35 @@ const sampler = setInterval(() => {
   peakRss = Math.max(peakRss, r)
   samples++
 }, 100)
-setTimeout(() => {
+
+// One phase after another, so a slow phase can't eat into the next one: the JavaScript cost of an
+// update alone, then the animation with its full warm-up, then the measured seconds.
+;(async () => {
+  await sleep(100)
+  const n = 500
+  const t0 = performance.now()
+  for (let i = 0; i < n; i++) {
+    if (useVue) {
+      tick(++t)
+      await settle()
+    } else {
+      settle(() => tick(++t))
+    }
+    win.flush()
+  }
+  jsUs = (performance.now() - t0) / n * 1000
+
+  running = true
+  win.requestAnimationFrame(frame)
+  cal0 = [performance.now(), exact ? tsc() : 0]
+  await sleep(warmup * 1000)
+  wall0 = performance.now()
+  cpu0 = exact ? cycles() : process.cpuUsage()
+  tsc0 = exact ? tsc() : 0
+  updates = 0
+  rss = peakRss = samples = 0
+  await sleep(seconds * 1000)
+
   const wall = performance.now() - wall0
   let ms
   if (exact) {
@@ -169,7 +197,7 @@ setTimeout(() => {
   running = false
   clearInterval(sampler)
   console.log(JSON.stringify({
-    app: useReact || useSvelte ? `blenderui-${useReact ? 'react' : 'svelte'}${useSignals ? '-signals' : ''}` : 'blenderui-js',
+    app: useReact || useSvelte || useVue ? `blenderui-${useReact ? 'react' : useSvelte ? 'svelte' : 'vue'}${useSignals ? '-signals' : ''}${useVue && isolate ? '-isolated' : ''}` : 'blenderui-js',
     runtime: globalThis.__BUI_NATIVE__ ? 'quickjs (bui-runtime)' : typeof Bun !== 'undefined' ? `bun ${Bun.version}` : `node ${process.versions.node}`,
     gpu,
     cells,
@@ -183,4 +211,4 @@ setTimeout(() => {
     js_us_per_update: +jsUs.toFixed(1),
   }))
   app.quit()
-}, (warmup + seconds) * 1000)
+})()

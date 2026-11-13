@@ -1,0 +1,79 @@
+{
+    "name": "bui",
+    "version": "0.5.1",
+    "description": "Blender's interface as a retained-mode D UI toolkit: a C kit with idiomatic D wrappers",
+    "homepage": "https://bui.preetham.top",
+    "repository": "https://github.com/ppmpreetham/BUI",
+    "license": "GPL-3.0-or-later",
+    "authors": ["BUI contributors"],
+    "copyright": "BUI contributors",
+    "targetType": "library",
+    "sourcePaths": ["source"],
+    "preBuildCommands-windows": [
+        "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"$PACKAGE_DIR/scripts/build_bui.ps1\""
+    ],
+    "preBuildCommands-posix": [
+        "bash \"$PACKAGE_DIR/scripts/build_bui.sh\""
+    ],
+    "dflags-windows": ["-mscrtlib=msvcrt"],
+    "lflags-windows": [
+        "/LIBPATH:$PACKAGE_DIR/.bui/lib",
+        "bui_api.lib",
+        "bui_kit.lib",
+        "bui_gpu.lib",
+        "bui_core.lib",
+        "user32.lib",
+        "gdi32.lib",
+        "imm32.lib"
+    ],
+    "lflags-posix": [
+        "-L$PACKAGE_DIR/.bui/lib",
+        "-lbui_api",
+        "-lbui_kit",
+        "-lbui_gpu",
+        "-lbui_core",
+        "-lm",
+        "-lpthread"
+    ],
+    "lflags-linux": ["-lstdc++", "-ldl"],
+    "lflags-osx": [
+        "-lc++",
+        "-framework", "Cocoa",
+        "-framework", "CoreGraphics",
+        "-framework", "AVFoundation",
+        "-framework", "CoreMedia",
+        "-framework", "CoreVideo",
+        "-lobjc"
+    ],
+    "configurations": [
+        {
+            "name": "library",
+            "targetType": "library",
+            "sourcePaths": ["source"]
+        },
+        {
+            "name": "hello",
+            "targetType": "executable",
+            "sourcePaths": ["source"],
+            "mainSourceFile": "examples/hello.d"
+        },
+        {
+            "name": "headless",
+            "targetType": "executable",
+            "sourcePaths": ["source"],
+            "mainSourceFile": "examples/headless.d"
+        },
+        {
+            "name": "rsx",
+            "targetType": "executable",
+            "sourcePaths": ["source"],
+            "mainSourceFile": "examples/rsx_page.d"
+        },
+        {
+            "name": "test",
+            "targetType": "executable",
+            "sourcePaths": ["source"],
+            "mainSourceFile": "tests/run.d"
+        }
+    ]
+}

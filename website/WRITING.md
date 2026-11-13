@@ -377,7 +377,7 @@ an automatic "N× more" note. Add `table={{ caption, columns, rows }}` for an
 ```mdx
 <StatusTable rows={[
   ["tkinter syntax", "done", "Every public name: 7,846 of 7,846"],
-  ["Qt syntax", "partial", "About 25% of the main classes' methods"],
+  ["Qt syntax", "partial", "31% of the core classes' methods"],
   ["macOS host", "experimental", "Written, not yet run on a Mac"],
   ["WebAssembly", "planned", "The kit in a <code>&lt;canvas&gt;</code>"],
 ]} />
@@ -540,7 +540,7 @@ Already written: `start/introduction`, `start/installation`,
 | File | Order | Scope |
 | --- | --- | --- |
 | `tkinter.mdx` | 10 | tkinter compatibility: the three ways in, module map, what you get, the Blender look, behaviour notes, limitations, testing your app against stdlib tkinter. Source: `docs/tkinter.md` |
-| `qt-syntax.mdx` | 20 | Qt syntax: how it maps, supported classes, signals, layouts, custom painting with `QPainter`, coverage (~25%) and what's missing. Source: `docs/qt.md` |
+| `qt-syntax.mdx` | 20 | Qt syntax: how it maps, supported classes, signals, layouts, custom painting with `QPainter`, coverage (31%, from `tools/qt_coverage.py`) and what's missing. Source: `docs/qt.md` |
 | `components.mdx` | 30 | The Blender components: `App`, the common API (`value`, `on_change`, `description`, `weight`), layout with `Column`/`Row`/`Panel`/`Split`, menus and pie menus. Source: `docs/components.md` |
 | `components-reference.mdx` | 40 | Every component's signature in tables: layout, values, buttons, views, menus, color and editors, node editor and areas. Source: `docs/components.md`, `bindings/python/bui/components/` |
 | `headless-testing.mdx` | 50 | Testing Python UIs without a window: `render_raster`, `press`/`motion`/`release`, pixels, frame budgets. Sources: `docs/components.md`, `bindings/python/tests/test_components.py` |

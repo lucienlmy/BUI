@@ -10,7 +10,7 @@ sources: ["docs/publishing.md", "docs/javascript.md", "pyproject.toml", ".github
 
 This page is for maintainers cutting a release. If you just want to use BUI, [Install BUI](../../start/installation/) is what you're after.
 
-BUI ships to three registries: **PyPI** (`blenderui`), **npm** (`@blender-ui/native` and `@blender-ui/react`) and **crates.io** (the `blenderui` crates). Each has its own version and its own steps.
+BUI ships to four registries: **PyPI** (`blenderui`), **npm** (`@blender-ui/native` and `@blender-ui/react`), **crates.io** (the `blenderui` crates) and **LuaRocks** (`blenderui`). Each has its own version and its own steps.
 
 ## At a glance
 
@@ -19,6 +19,7 @@ BUI ships to three registries: **PyPI** (`blenderui`), **npm** (`@blender-ui/nat
 | PyPI | `blenderui` | `bindings/python/bui/_version.py` | Push a `v*` tag; CI builds, tests and publishes |
 | npm | `@blender-ui/native`, `@blender-ui/react` | Each package's `package.json` | `npm publish`, by hand, native first |
 | crates.io | `blenderui-tailwind`, `-macros`, `-sys`, `-paint`, `-table`, `-vlist`, `blenderui`, `blenderui-imgui` | `bindings/rust/Cargo.toml` (`[workspace.package]`) | `cargo publish`, by hand, after vendoring the C sources |
+| LuaRocks | `blenderui` | `bindings/lua/blenderui-<version>-1.rockspec` (its name, `version` and source `tag`) | Push a `v*` tag; `release.yml` uploads the rockspec |
 
 ## PyPI
 
@@ -131,7 +132,7 @@ A published crate can't reach files outside itself, so `blenderui-sys` must carr
 
 <Steps>
 
-1. **Bump the version** in `bindings/rust/Cargo.toml` (`[workspace.package]`); the crates share one version. Then update the `version = "..."` of the path dependencies in `blenderui/Cargo.toml`, `blenderui-macros/Cargo.toml`, `blenderui-imgui/Cargo.toml`, `blenderui-table/Cargo.toml` and `blenderui-vlist/Cargo.toml`. `python tools/check_versions.py vX.Y.Z` checks all of them.
+1. **Bump the version** in `bindings/rust/Cargo.toml` (`[workspace.package]`); the crates share one version. Then update the `version = "..."` of the path dependencies in `blenderui/Cargo.toml`, `blenderui-macros/Cargo.toml`, `blenderui-imgui/Cargo.toml`, `blenderui-table/Cargo.toml` and `blenderui-vlist/Cargo.toml`. The DUB package (`bindings/d/dub.json`) and its `BUI_KIT_VERSION_*` copies in `bindings/d/source/bui/kit.d` move with the same version. `python tools/bump_version.py minor` updates all of them, and `python tools/check_versions.py vX.Y.Z` checks them.
 
 2. **Log in once** with `cargo login` and a crates.io API token.
 
@@ -147,6 +148,14 @@ A published crate can't reach files outside itself, so `blenderui-sys` must carr
    `--allow-dirty` is needed because `csrc/` is untracked. Users need CMake and a C compiler to build `blenderui-sys`. The benchmark in `bench/` is excluded from the workspace and never published.
 
 </Steps>
+
+## LuaRocks
+
+`bindings/lua/blenderui-<version>-1.rockspec` is the package. It builds the C kit and the `_bui` module with CMake against the Lua that runs the rock (Lua 5.4), and installs `_bui` with the `bui.lua` wrapper, so `luarocks install blenderui` is enough for `require("bui")`. The user needs CMake and a C compiler. `tools/bump_version.py` moves the rockspec's version and source tag and renames the file; `tools/check_versions.py` checks them against the tag.
+
+CI (`ci.yml`, job `luarocks`) lints the rockspec, runs `luarocks make` on Linux and macOS and loads the installed module. On a tag, the `luarocks` job of `release.yml` uploads the rockspec (a version that is already there is skipped).
+
+One-time setup: a repository secret `LUAROCKS_API_KEY`, an API key made on luarocks.org (Settings > API keys) by the account that owns the package. The first upload creates the package.
 
 ## Known gaps before 1.0
 

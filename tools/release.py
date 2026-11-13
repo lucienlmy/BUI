@@ -12,7 +12,7 @@ What it does, in order (it stops at the first problem and never tags a red commi
    files, committed on their own and pushed (anything you committed before goes out with it);
 3. waits for the `ci` and `wheels` workflows on that commit to finish, and stops if either fails;
 4. `tools/bump_version.py --tag --push`: tags `vX.Y.Z` and pushes the tag, which starts
-   `release.yml` (crates.io, npm, GitHub Release) and `wheels.yml` (PyPI);
+   `release.yml` (crates.io, npm, LuaRocks, GitHub Release) and `wheels.yml` (PyPI);
 5. waits for those two runs, then checks every registry for the new version.
 
 If a publish step fails (a registry timeout, a secret), nothing needs re-tagging: fix it and use
@@ -87,6 +87,17 @@ def http_json(url: str) -> tuple[int, dict]:
         return 0, {}
 
 
+def http_status(url: str) -> int:
+    """The status of a GET (a page that is not JSON, like a rockspec); 0 when the registry can't be reached."""
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "bui-release-script"}), timeout=30) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
+    except (urllib.error.URLError, TimeoutError):
+        return 0
+
+
 def runs_for(slug: str, sha: str) -> list[dict]:
     code, body = http_json(f"https://api.github.com/repos/{slug}/actions/runs?head_sha={sha}&per_page=50")
     if code == 403 and "rate limit" in str(body.get("message", "")).lower():
@@ -142,6 +153,9 @@ def registry_status(version: str) -> dict[str, bool | None]:
             out[label] = None  # not on npm at all: trusted publishing needs the package to exist first
         else:
             out[label] = http_json(f"https://registry.npmjs.org/{name}/{meta['version']}")[0] == 200
+    # LuaRocks serves a user's rockspecs at /manifests/<user>/; the user is the repository's owner
+    owner = repo_slug().split("/")[0].lower()
+    out[f"LuaRocks   blenderui {version}-1"] = http_status(f"https://luarocks.org/manifests/{owner}/blenderui-{version}-1.rockspec") == 200
     out[f"PyPI       blenderui {version}"] = http_json(f"https://pypi.org/pypi/blenderui/{version}/json")[0] == 200
     return out
 

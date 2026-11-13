@@ -7,6 +7,29 @@ All notable changes to **blenderui** (BUI). The format follows
 ## [Unreleased]
 
 ### Added
+- **Controls inside node-editor nodes** (issue #38): a node can hold a push button, a checkbox and a dropdown in its body,
+  between the outputs and the inputs, as Blender's node buttons do (`node_update_basis_buttons`, `draw_buttons`). The kit's
+  node items take `"b|Label"`, `"c|Label|0 or 1"` and `"d|Label|index|Option;Option"`; a press or change is a node
+  `BK_EV_CHANGE` with `a = 5` and `b` the control's index. Python: `Node(..., controls=[("button", "Run"),
+  ("checkbox", "Wireframe", True), ("dropdown", "Mode", ["Fast", "Exact"], 0)])`, `node.control_value(i)` and
+  `on_change(node, "control", (i, value))`. A class can now take the item picked from a menu it opened (`popup_pick`).
+  Arbitrary child layouts in a node are not done yet.
+- **Python components:** `TextArea(value="", *, rows=None)` puts the kit's multi-line `textarea` in `bui.components`
+  (`value`, `set_value`, `on_change` on every edit; the node's `ta_*` methods edit by byte offset), and
+  `FileBrowser(directory, *, file, mode, multiple, filters, button, on_change, on_submit)` embeds Blender's File
+  Browser in any layout (`directory`, `file`, `hidden`, `state`, `result`, `execute()`, `cancel()`, `refresh()`);
+  `bui.filebrowser.ask` now builds its window from the same component. Every component can edit its children after
+  it is built: `insert(index, child)`, `remove(child)`, `replace(old, new)` and `clear()`, working where `add` does
+  (a `Panel` or `Popover` edits its body). This is what a renderer that keeps a live tree in sync with a changing
+  description (for example an A2UI surface) needs.
+- **Node editor height:** the `nodeeditor` node's natural height follows its `"height"` (units; 14 when unset)
+  instead of always 14 units, and `NodeEditor(height=...)` sets it.
+- **JavaScript: `@blender-ui/vue`**, Vue 3 in native windows. A custom renderer (Vue's `createRenderer`) over `@blender-ui/native`, so Vue's own runtime and compiler run unchanged: `.vue` single-file components (`<script setup>`, TypeScript, scoped `<style>`), refs, `v-model` (inputs, checkboxes, radios, selects and the Blender widgets), `v-if` / `v-for`, slots, `provide` / `inject`, plugins through `createApp(...).use()`, `Teleport`, and Blender's widgets as components. `node --import @blender-ui/vue/register`, Bun and `bui build` (a Bun plugin) compile `.vue` files, cached in `node_modules/.cache/@blender-ui/vue` (a cached start never loads Vue's compiler: Node.js reaches its first frame in 125 ms, not 209); `require()` and `import` both work. Benchmarks (`bench/cells.js --vue`, `bench/startup.js --vue`) and a Vue task-list screenshot are in the docs. `<Transition>`, `v-html` and DOM-based component libraries don't work; bindings/vue/README.md lists it.
+- **`@blender-ui/native`:** `el.style.display = 'none'` and the other CSS properties as camelCase properties of `el.style`, as in a browser (they were silently ignored); `host.styleRegistry()`, the registry of components' scoped `<style>` blocks that the Svelte and Vue bindings share.
+- **D bindings** (`bindings/d`): a DUB package with raw `extern(C)` declarations for the whole kit, GPU and stable C API, plus idiomatic wrappers for nodes, contexts, windows, menus, rasters, images, video, canvases, trees, text areas, custom nodes and themes. The kit is built through CMake from `preBuildCommands`, ownership follows the Python binding's reference-hook model, and `dub run --config=test` covers the wrappers, raw API, events, menus and host errors end to end. Examples: `hello.d` and `headless.d`.
+- **D HTML, CSS and RSX** (`bindings/d`): `bui.html` adds an `Element` tree and tag constructors, `bui.css` a selector cascade with a practical CSS subset, and `bui.rsx` a compile-time `rsx!` mixin that lowers markup and `{expression}` values to `Element` calls. `Document` realises the styled tree as kit nodes with flex, grid and table layout, widgets, dynamic `:hover`/`:active` states through `Element.setState` and `Document.restyle`, and in-place text updates through `Element.setText`. Tag constructors use `body_`, `template_`, `object_` and `select_` where D or the existing API already uses the name; markup keeps the HTML spelling. `dub run --config=rsx` opens the new example, and `--config=test` covers the cascade, realiser and RSX. The D wrappers also follow the kit's current header: focus callbacks, `Context.hitAt`, custom theme files, text shadows, font size and transparent rasters.
+- **Qt syntax:** containers drawn the Blender way (`QStackedWidget`, `QToolBox` as Blender panels, `QSplitter` with region edges to drag, `QToolBar`, `QDockWidget`, `QTabBar`, and `QMainWindow.addToolBar` / `addDockWidget` / `setStatusBar`); model/view (`QStandardItemModel`, `QStringListModel`, the abstract models, `QListView`, `QTreeView`, `QTableView` in Blender's tree list); real `QMessageBox` and `QInputDialog` dialogs; `QSettings` (an INI file with Qt's groups and arrays), `QKeySequence`, `QShortcut` and `QClipboard`; `blockSignals`, dynamic properties, `findChildren`, point mapping, `showEvent` / `hideEvent` and the descriptive properties on every widget. Actions shared by menus, tool buttons and shortcuts (`QAction` with visibility, data, tips and shortcuts bound on its window, `QActionGroup`, a real `QToolButton`, menu sections and corner widgets, `triggered` up to the menu bar), `QButtonGroup` ids, Qt's full layout API (`QBoxLayout` directions, `insert*`, `takeAt`, `replaceWidget`, `QSpacerItem`, grid cell queries and minimum sizes, `QFormLayout` rows), `QDialogButtonBox` (which `QMessageBox` and `QInputDialog` now use), `QAbstractSpinBox`, validators and `maxLength` on `QLineEdit`, spin box prefix / wrapping / special value text, slider tracking and page steps, combo box icons, models and popups, checkable `QGroupBox`, `QFrame` boxes and lines, a `QStatusBar` with permanent widgets, window states, opacity and size limits through the host, `startTimer`, `QFontMetrics`, `QPalette` from Blender's theme, `QCursor.pos`, `QScreen`, and the context-menu policies. Dates and times: `QDate`, `QTime`, `QDateTime` with Qt's format strings, `QDateTimeEdit` / `QDateEdit` / `QTimeEdit` as Blender's aligned number fields, and `QCalendarWidget`. Measured by the new `tools/qt_coverage.py` against Qt's headers: 57% of the core widget classes' methods (was 21% by the same count), 37% across all 142 classes.
+- **Kit:** a `select` node flag draws a button held in (Blender's `UI_SELECT`, for checked push buttons), and a separator with `vertical` draws its line across a row (`uiButSeparatorLine.is_vertical`).
 - **Animation: GSAP and Motion on one engine** (feature `anim`, on by default; `BUI_ANIM` in CMake). One C engine
   in the kit (`kit/intern/anim`, `BUI_anim.h`) runs every animation, so Rust, JavaScript, Python, Lua and C animate
   the same way and none carries its own. Eases: every name of GSAP, Motion, CSS and Blender, `cubic-bezier()`,
@@ -35,6 +58,72 @@ All notable changes to **blenderui** (BUI). The format follows
     `BK_anim_node` for kit widgets.
   - Docs: the website's Motion and GSAP pages for Rust, JavaScript, Python and Lua (with Svelte transitions in the JavaScript page); `docs/animation-api.md` (status of every entry point, the numbers contract, what a frame costs).
   - Examples: `examples/animation/` (a hero intro, a card grid, magnetic buttons, a marquee with drag and an equalizer).
+
+### Fixed
+- **Python components:** `NodeEditor` follows `add`, `insert`, `remove`, `replace` and `clear` (its `nodes` and `links` went stale when
+  children were edited that way, and a link now keeps naming the same nodes when an earlier one is inserted or removed);
+  `replace(old, new)` puts an earlier sibling in `old`'s place, not the slot after it; `FileBrowser.directory = same_folder` no longer
+  navigates (and calls `on_change`) again; a `TextArea` written with the text it already holds keeps its selection and spans.
+- **Node editor height:** an infinite, huge or not-a-number `"height"` no longer overflows the float-to-int conversion (capped at 1000 units; unset or invalid is 14).
+- **D bindings**: `[attr*=x]` no longer crashes on a value shorter than `x`; `onKey` fires once per key press; `grid-template-columns: 1fr 1fr` counts two tracks; `Image.fromRgba` rejects negative strides; `TreeItem.add` rejects cycles and items that already have a parent; a `Window` stays rooted until freed and `Context.free()` throws while a window uses it; in `Document`, radios sharing a `name` are exclusive, number inputs are no longer clamped at 0, column flex containers no longer share a row between buttons, button labels use descendant text, hidden table rows are skipped and `rowspan` reserves its columns.
+- **Qt syntax:** `QStandardItemModel.setRowCount` with a negative count no longer hangs and `setColumnCount` drops the extra cells; closing a `QMessageBox` window now closes it; `QSettings.sync` writes atomically; `setRange` clamps the value (and emits `valueChanged`); `startTimer` ids are never reused; `QGridLayout.addWidget(w, r, c, alignment)` reads the fourth argument as the alignment; `QInputDialog.getText` honours `QLineEdit.Password` (`setEchoMode` works); `QShortcut.setKey` stops the old key firing; `QInputDialog.getItem` survives a bad `current`.
+- **Qt syntax:** `QMessageBox.information` / `question` / ... returned `Ok` or `Yes` without showing anything, and `QStackedWidget` was a plain `QWidget`; `QAbstractButton.setShortcut`, `QWidget.setFocusPolicy` and `QApplication.setApplicationName` did nothing. All work now, as do `setWindowFlags` (stay on top), `setMinimumSize` / `setMaximumSize`, `setFocus`, `setMaxLength`, `setValidator`, `setPageStep`, `setTracking`, `setDefault` / `setFlat`, `setFrameShape` and the scroll area's vertical bar policy, which were accepted and ignored.
+- **Qt syntax:** setting a value from code emitted nothing: `setValue` (sliders, spin boxes), `QComboBox.setCurrentIndex`, `QLineEdit.setText` and `setChecked` on check boxes and radio buttons now emit `valueChanged`, `currentIndexChanged`, `textChanged` and `toggled` / `stateChanged` when the value changes, as Qt does, and a radio button turned off by its sibling says so. A click on the checked button of an exclusive group no longer unchecks it; a button or action removed from a group or menu and added again no longer fires twice; `Ctrl++` showed as `Ctrl` in menus; an integer spin box accepted `3.5`.
+- **Qt syntax:** `QSpinBox` was a `QAbstractSlider`; it is a `QAbstractSpinBox` now. Spin box `suffix()`, `decimals()` and `placeholderText()` read back empty.
+- **tkinter:** a vertical `ttk.Separator` drew a horizontal line in a tall box.
+- **Rust Motion: gap audit.** Letting go of a drag after a pause no longer throws the element (only the last 100 ms of pointer movement count, over at least 8 ms); a `layout` element under a parent that moves (a drag, an animated `x`) or scrolls no longer animates against it (its box is measured relative to the parent); `use_transform`, `use_velocity` and a `use_spring` of a motion value follow their source without a render (they are read through it, and springs retarget each frame); a selector with combinators or pseudo-classes (`"ul > li"`, `"a:hover"`) is an error from `Targets::selector` instead of silently matching wrongly, and one that matches nothing is counted by `motion::unmatched_selectors()` (and logged in debug builds); a NaN duration or delay is refused and a negative one is zero; made-up property and variant names are bounded (4096) instead of leaking for ever. A redraw of moving values walks only the animated elements and what is under them, not every box of the page.
+- **Animation engine: robustness** (PR #36 audit). A callback that kills a sibling or its own timeline (`onComplete`,
+  `onUpdate`) or starts a motion no longer leaves the render walking freed memory; a killed motion stays killed
+  (`play`, `resume`, `reverse`, `seek` and `add` do nothing to it, and `BK_anim_exit` can't hang on one). One contract
+  for numbers, in C, for every binding: a negative duration, delay or repeat delay is 0 (Python used to raise), NaN and
+  infinity are errors in the binding's idiom (`ValueError`, a Lua error), `repeat` of any size is at most
+  `BK_MOTION_MAX_REPEAT` (1,000,000; `-1` and `math.huge` are for ever; Python's `2**32` is no longer 0), totals don't
+  overflow, and a repeat for ever of a zero-length motion ends instead of keeping the host drawing. Timeline positions
+  are exactly GSAP's grammar (a number, `+=n`, `-=n`, `<`, `>`, `<n`, `>n`, labels with `+=n`, `n%`): anything else, or
+  a label that doesn't exist, is an error instead of a label made at the end. Ease tables are shared by content,
+  capped at 65,535 (a full pool refuses the ease instead of wrapping its id), checked after `BK_anim_exit`, and
+  `expoScale` from 0 or NaN/inf eases are safe. `BK_tween` refuses tracks without values or keys, and non-finite values.
+  Motion's default duration and ease live in one C function (`BK_motion_vars_motion_defaults`) that Rust, Python and
+  Lua call. A spring's settle time is a closed form instead of up to 2,400 `exp`/`sin`/`cos` steps per property (it is
+  the last time outside the rest thresholds: up to about 1.2x later than the old stepping's early stop for slowly
+  oscillating springs); killing a timeline measures it once.
+- **Animation: review fixes.** Adding a timeline to itself or to one of its own children is refused instead of recursing forever; a nested `exiting_scope` restores the outer scope; a canvas item's clip and a line's thickness count in `hititems` hit testing; the JS view frees removed nodes once nothing is leaving; a Motion prop nested too deeply is skipped in the QuickJS host without dropping its commit.
+- **Rust: form widgets and overlays** (issue #35). An element painted after a `<TextArea>`, `<Button>` or other form widget
+  (a dialog with `z-index`, a later sibling) now draws over it and takes the pointer there: widgets sit on the canvas
+  their paint order puts them on, above what comes before and below what overlaps them. A widget partly cut by an
+  ancestor's `overflow: hidden` or a scroller is cut there too (a clip rectangle on the kit node, `clipx` / `clipy` /
+  `clipw` / `cliph` in `BK_geom_set`), and an overlay with `pointer-events: none` lets the pointer through to the widget
+  below it (`BKCanvasItem.no_hit`).
+- **Rust: `whileInView`** counts what a scroller clips as out of view, so a row below a scroller's edge animates when
+  it is scrolled in, not at mount.
+- **Rust: widgets and Motion.** A frame of moving values (no layout) freed every form widget; it keeps them now.
+- **Windows: a window that animates for ever ignored the mouse, the keyboard and its title bar.** The frames of an animation are
+  posted messages (`WM_BK_RENDER`, one after another), and Windows hands a thread its posted messages before hardware input and
+  timers, so with an endless animation (a loop, a spinner, a marquee) none of them got through: no hover, no drag, no maximize,
+  no alt-tab, and the busy cursor over the window. Between two frames the host now takes the input, paint and timer messages
+  that are waiting.
+- **Windows (and every native window): ghosts of moved things after `getBoundingClientRect()` and `screenshot()`.** Both
+  rendered the window into its own raster without presenting it, so the kit's record of what is on the screen moved on while the
+  screen didn't: whatever had changed since the last present (a dragged square's old place) stayed painted for good. `bounds`
+  now only brings the layout up to date (`App::layout`), and `draw` on a native window renders into a raster of its own and
+  asks the window to repaint everything.
+- **`repeat: -1` in a timeline** (and so on every element or selector, which GSAP-style calls run through a timeline): a
+  child that repeats for ever counted as zero long, so its timeline ended at once and it never moved. The timeline now plays
+  until it is killed.
+- **Text in a translated box moved twice** when it was a `white-space: pre` (or otherwise line-boxed) run: the words carried
+  their owner's `translate` as well as the box that held them. Animated `x` / `y` and CSS `translate` on such text are right now.
+- **QuickJS (`bui run`, `bui build`):** the runtime rejected `commit` calls that passed `undefined` for the motion props, so
+  every app drew nothing.
+
+## [0.5.1] - 2026-11-13
+
+### Added
+- **LuaRocks:** `luarocks install blenderui`, then `require("bui")`. The rockspec (`bindings/lua/blenderui-<version>-1.rockspec`)
+  builds the C kit and the `_bui` module with CMake against the Lua that runs the rock (Lua 5.4; it needs CMake and a C and C++20 compiler, and on Linux the X11 headers for native windows) and installs them with
+  the `bui.lua` wrapper; the new CMake option `BUI_LUA_ROCK` builds only the module (nothing is fetched, no `bui-lua`
+  executable). CI builds and loads the rock on Linux and macOS (`luarocks` job in `ci.yml`); `release.yml` uploads the
+  rockspec on a tag (secret `LUAROCKS_API_KEY`), and `tools/bump_version.py`, `check_versions.py` and `release.py` move,
+  check and verify it with the other registries.
 - **Custom themes.** A theme file (JSON, in gpui-kit's shape, with Blender's own names for the colors) adds your
   own themes to Dark and Light: `bui.load_theme(path_or_text)`, `blenderui::load_theme` / `load_theme_file`,
   `app.loadTheme`, `bui.load_theme` (Lua), `BK_theme_load_file` / `BK_theme_load_json` (C), then `set_theme(name)`.
@@ -110,49 +199,6 @@ All notable changes to **blenderui** (BUI). The format follows
   reads the setting when it starts.
 
 ### Fixed
-- **Rust Motion: gap audit.** Letting go of a drag after a pause no longer throws the element (only the last 100 ms of pointer movement count, over at least 8 ms); a `layout` element under a parent that moves (a drag, an animated `x`) or scrolls no longer animates against it (its box is measured relative to the parent); `use_transform`, `use_velocity` and a `use_spring` of a motion value follow their source without a render (they are read through it, and springs retarget each frame); a selector with combinators or pseudo-classes (`"ul > li"`, `"a:hover"`) is an error from `Targets::selector` instead of silently matching wrongly, and one that matches nothing is counted by `motion::unmatched_selectors()` (and logged in debug builds); a NaN duration or delay is refused and a negative one is zero; made-up property and variant names are bounded (4096) instead of leaking for ever. A redraw of moving values walks only the animated elements and what is under them, not every box of the page.
-- **Animation engine: robustness** (PR #36 audit). A callback that kills a sibling or its own timeline (`onComplete`,
-  `onUpdate`) or starts a motion no longer leaves the render walking freed memory; a killed motion stays killed
-  (`play`, `resume`, `reverse`, `seek` and `add` do nothing to it, and `BK_anim_exit` can't hang on one). One contract
-  for numbers, in C, for every binding: a negative duration, delay or repeat delay is 0 (Python used to raise), NaN and
-  infinity are errors in the binding's idiom (`ValueError`, a Lua error), `repeat` of any size is at most
-  `BK_MOTION_MAX_REPEAT` (1,000,000; `-1` and `math.huge` are for ever; Python's `2**32` is no longer 0), totals don't
-  overflow, and a repeat for ever of a zero-length motion ends instead of keeping the host drawing. Timeline positions
-  are exactly GSAP's grammar (a number, `+=n`, `-=n`, `<`, `>`, `<n`, `>n`, labels with `+=n`, `n%`): anything else, or
-  a label that doesn't exist, is an error instead of a label made at the end. Ease tables are shared by content,
-  capped at 65,535 (a full pool refuses the ease instead of wrapping its id), checked after `BK_anim_exit`, and
-  `expoScale` from 0 or NaN/inf eases are safe. `BK_tween` refuses tracks without values or keys, and non-finite values.
-  Motion's default duration and ease live in one C function (`BK_motion_vars_motion_defaults`) that Rust, Python and
-  Lua call. A spring's settle time is a closed form instead of up to 2,400 `exp`/`sin`/`cos` steps per property (it is
-  the last time outside the rest thresholds: up to about 1.2x later than the old stepping's early stop for slowly
-  oscillating springs); killing a timeline measures it once.
-- **Animation: review fixes.** Adding a timeline to itself or to one of its own children is refused instead of recursing forever; a nested `exiting_scope` restores the outer scope; a canvas item's clip and a line's thickness count in `hititems` hit testing; the JS view frees removed nodes once nothing is leaving; a Motion prop nested too deeply is skipped in the QuickJS host without dropping its commit.
-- **Rust: form widgets and overlays** (issue #35). An element painted after a `<TextArea>`, `<Button>` or other form widget
-  (a dialog with `z-index`, a later sibling) now draws over it and takes the pointer there: widgets sit on the canvas
-  their paint order puts them on, above what comes before and below what overlaps them. A widget partly cut by an
-  ancestor's `overflow: hidden` or a scroller is cut there too (a clip rectangle on the kit node, `clipx` / `clipy` /
-  `clipw` / `cliph` in `BK_geom_set`), and an overlay with `pointer-events: none` lets the pointer through to the widget
-  below it (`BKCanvasItem.no_hit`).
-- **Rust: `whileInView`** counts what a scroller clips as out of view, so a row below a scroller's edge animates when
-  it is scrolled in, not at mount.
-- **Rust: widgets and Motion.** A frame of moving values (no layout) freed every form widget; it keeps them now.
-- **Windows: a window that animates for ever ignored the mouse, the keyboard and its title bar.** The frames of an animation are
-  posted messages (`WM_BK_RENDER`, one after another), and Windows hands a thread its posted messages before hardware input and
-  timers, so with an endless animation (a loop, a spinner, a marquee) none of them got through: no hover, no drag, no maximize,
-  no alt-tab, and the busy cursor over the window. Between two frames the host now takes the input, paint and timer messages
-  that are waiting.
-- **Windows (and every native window): ghosts of moved things after `getBoundingClientRect()` and `screenshot()`.** Both
-  rendered the window into its own raster without presenting it, so the kit's record of what is on the screen moved on while the
-  screen didn't: whatever had changed since the last present (a dragged square's old place) stayed painted for good. `bounds`
-  now only brings the layout up to date (`App::layout`), and `draw` on a native window renders into a raster of its own and
-  asks the window to repaint everything.
-- **`repeat: -1` in a timeline** (and so on every element or selector, which GSAP-style calls run through a timeline): a
-  child that repeats for ever counted as zero long, so its timeline ended at once and it never moved. The timeline now plays
-  until it is killed.
-- **Text in a translated box moved twice** when it was a `white-space: pre` (or otherwise line-boxed) run: the words carried
-  their owner's `translate` as well as the box that held them. Animated `x` / `y` and CSS `translate` on such text are right now.
-- **QuickJS (`bui run`, `bui build`):** the runtime rejected `commit` calls that passed `undefined` for the motion props, so
-  every app drew nothing.
 - **Crash at exit on Wayland:** `exit` on another thread closed libwayland-client while the event loop still called into
   it (SIGSEGV in about 1 of 15 benchmark exits). The library now stays loaded until the process ends.
 - **X11 frame pacing:** an animation frame is due one refresh after the previous frame started, so the render time is part

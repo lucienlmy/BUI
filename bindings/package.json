@@ -1,8 +1,8 @@
 {
   "name": "blenderui-js",
   "private": true,
-  "description": "Workspace for the JavaScript packages: @blender-ui/native, @blender-ui/react and @blender-ui/svelte",
-  "workspaces": ["node", "react", "svelte"],
+  "description": "Workspace for the JavaScript packages: @blender-ui/native, @blender-ui/react, @blender-ui/svelte and @blender-ui/vue",
+  "workspaces": ["node", "react", "svelte", "vue"],
   "scripts": {
     "build": "npm run build -w @blender-ui/native",
     "test": "npm test --workspaces"

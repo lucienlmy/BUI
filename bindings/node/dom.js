@@ -432,6 +432,22 @@ class Style {
   toString () { return this.cssText }
 }
 
+const hyphenate = (k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase())
+const isCssKey = (style, k) => typeof k === 'string' && !(k in style)
+
+/** `el.style.display = 'none'` as in a browser: a property that is not one of Style's own is a CSS
+ *  property in camelCase (`backgroundColor` is `background-color`). */
+function styleProxy (style) {
+  return new Proxy(style, {
+    get: (t, k) => (isCssKey(t, k) ? t.getPropertyValue(hyphenate(k)) : Reflect.get(t, k)),
+    set (t, k, v) {
+      if (!isCssKey(t, k)) return Reflect.set(t, k, v)
+      t.setProperty(hyphenate(k), v)
+      return true
+    },
+  })
+}
+
 /** `el.classList`, over the `class` attribute. */
 class ClassList {
   constructor (el) { this._el = el }
@@ -566,7 +582,7 @@ class Element extends Node {
   /** The inline style (`cssText`, `setProperty` ...). */
   get style () {
     const x = (this._x ??= {})
-    return (x.style ??= new Style(this))
+    return (x.style ??= styleProxy(new Style(this)))
   }
   /** A CSS declaration string, or an object (`{ backgroundColor: 'red', width: 40 }`);
    *  its motion values (`{ x: mv }`) are read each frame by the engine. */

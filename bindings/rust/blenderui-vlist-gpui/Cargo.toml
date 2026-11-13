@@ -20,8 +20,8 @@ publish = false
 [workspace]
 
 [dependencies]
-blenderui-vlist = { path = "../blenderui-vlist", version = "0.5.0" }
-blenderui-paint-gpui = { path = "../blenderui-paint-gpui", version = "0.5.0" }
+blenderui-vlist = { path = "../blenderui-vlist", version = "0.5.1" }
+blenderui-paint-gpui = { path = "../blenderui-paint-gpui", version = "0.5.1" }
 gpui = { package = "gpui-pre", version = "=0.3.11" }
 
 [dev-dependencies]

@@ -1,0 +1,239 @@
+---
+title: BUI for D
+sidebarLabel: Overview
+description: A DUB package with a one-to-one raw C API, idiomatic D wrappers and an HTML, CSS and RSX layer for BUI's nodes, windows, menus, images, canvases, trees and custom drawing.
+section: D
+order: 10
+languages: ["d"]
+sources: ["bindings/d/README.md", "bindings/d/dub.json", "bindings/d/source/bui/node.d", "bindings/d/source/bui/context.d", "bindings/d/source/bui/window.d", "bindings/d/source/bui/menu.d", "bindings/d/source/bui/raster.d", "bindings/d/source/bui/theme.d", "bindings/d/source/bui/html/realize.d", "bindings/d/source/bui/rsx.d", "bindings/d/tests/run.d", "docs/d.md"]
+---
+
+**The `bindings/d` package gives D programs Blender's widget drawing, layout and interaction rules.** It is a DUB package with three layers: raw `extern(C)` declarations that match the C headers one to one, D classes and delegates for the common paths, and an HTML/CSS/RSX authoring layer. All of them come from `import bui;`.
+
+The package lives in the repository. Add it to a DUB project as a path dependency:
+
+```json title="dub.json"
+{
+    "name": "my-app",
+    "targetType": "executable",
+    "dependencies": {
+        "bui": { "path": "../BUI/bindings/d" }
+    }
+}
+```
+
+The first build runs CMake and builds the C kit into `bindings/d/.bui/`; later builds reuse it. You need a D compiler with DUB, CMake and a C compiler. The binding is tested with LDC 1.43 (the DMD 2.113 front end); on Windows, the build script finds Visual Studio's CMake when it is not on `PATH`.
+
+## A first window
+
+```d title="source/app.d"
+import bui;
+import std.stdio;
+
+void main() {
+    auto root = new Node("frame");
+    root.set("padding", 8);
+
+    auto size = new Node("slider");
+    size.set("label", "Size");
+    size.set("min", 0);
+    size.set("max", 10);
+    size.set("value", 2.5);
+    size.onChange((NodeEvent e) {
+        writeln("size = ", e.node.num("value"));
+    });
+    root.add(size);
+    size.pack("fill", 1);
+
+    auto apply = new Node("button");
+    apply.set("text", "Apply");
+    apply.onClick((NodeEvent) {
+        writeln("clicked");
+        quit();
+    });
+    root.add(apply);
+    apply.pack("fill", 1).pack("pady0", 6);
+
+    auto context = new Context(root);
+    auto window = new Window(context, "BUI from D", 320, 120);
+    window.show();
+    run();
+}
+```
+
+`new Node("frame")` creates a node in the kit's retained tree. `set`, `num`, `str`, `color`, `setStrs` and `strs` read and write properties by name. `pack`, `grid` and `place` select Tk's geometry managers.
+
+`Context` owns input state, focus, popups and undo. `Window` is one native top-level window that drives a context. `run` enters the platform message loop and `quit` leaves it.
+
+## Headless rendering
+
+A window is optional. A `Raster` is a frame buffer, and `Context.render` draws the tree into it:
+
+```d
+auto root = new Node("column");
+auto button = new Node("button");
+button.set("text", "Click me");
+button.onClick((NodeEvent) { ++clicks; });
+root.add(button);
+
+auto context = new Context(root);
+auto raster = new Raster(320, 200);
+context.render(raster, true);
+
+const r = button.rect();
+context.press(r[0] + r[2] / 2, r[1] + r[3] / 2, 0);
+context.release(r[0] + r[2] / 2, r[1] + r[3] / 2, 0);
+```
+
+`render` returns the number of damaged regions it redrew; `full = true` forces a complete frame. `press`, `release`, `motion`, `wheel`, `scroll`, `key`, `keyRelease` and `contextMenu` drive widgets without a platform window. The integration suite uses the same path.
+
+## What the package covers
+
+| Module         | What it wraps                                                                  |
+| -------------- | ------------------------------------------------------------------------------ |
+| `bui.node`     | `Node`, properties, geometry, events, images, video, ramps, curves, histograms |
+| `bui.context`  | `Context`, host services, input, rendering, popups, menus, undo, clipboard, IME |
+| `bui.window`   | `Window`, the event loop, timers, focus and window-manager requests             |
+| `bui.menu`     | `MenuItem` descriptions for context menus, pie menus and menu buttons           |
+| `bui.raster`   | Drawing, alpha, damage, text, textures and GPU attach                           |
+| `bui.image`    | Shared-decoder images, generated pixels, probes and frame animation            |
+| `bui.video`    | Playback, seeking, listeners and frame textures                                |
+| `bui.canvas`   | `CanvasItem` display lists on `canvas` nodes                                   |
+| `bui.tree`     | `TreeItem` rows and the `tree` node operations                                 |
+| `bui.textarea` | Text and selection editing by UTF-8 byte offsets                               |
+| `bui.custom`   | Event, frame and draw callbacks for host-drawn `custom` nodes                   |
+| `bui.theme`    | Scale, fonts, text shadows, theme files, theme colors and Blender's icons      |
+| `bui.css`      | `Stylesheet`, `Style`, selectors, colours and tokens                           |
+| `bui.html`     | `Element`, tag constructors, the user-agent sheet and `Document`               |
+| `bui.rsx`      | The compile-time `rsx!` markup mixin                                           |
+| `bui.kit`      | The complete raw `BK_*` API                                                    |
+| `bui.gpu`      | The complete raw `BUI_*` raster, text, texture and sink API                    |
+| `bui.capi`     | The stable render-sink ABI                                                     |
+
+Node types include layouts (`frame`, `column`, `row`, `grid`, `box`, `panel`, `tabs`, `scroll`), widgets (`label`, `button`, `checkbox`, `slider`, `number`, `dropdown`, `enum`, `swatch`, `menubar`), views (`list`, `tree`, `gridview`, `canvas`, `textarea`, `image`, `video`), editors (`nodeeditor`, `filebrowser`) and `custom`.
+
+## HTML, CSS and RSX
+
+`bui.html` builds an `Element` tree and realises it as kit nodes. `bui.css` cascades a CSS subset over it. `bui.rsx` parses markup into the same calls at compile time:
+
+```d
+import bui;
+
+int count;
+
+auto page = mixin(rsx!`
+    <body>
+        <style>
+            h1 { color: #e6e6e6; }
+            button:hover { color: #8fd4ff; }
+        </style>
+        <h1>Hello</h1>
+        <button onclick={() { ++count; }}>Add</button>
+    </body>
+`);
+
+auto document = new Document(page);
+auto context = new Context(document.node());
+```
+
+Tag constructors work without the mixin: `body_(div("text").class_("card"))`. `Document.find` queries the tree by CSS selector, `Element.setText` updates a realised text leaf, and `Document.restyle` re-runs the cascade after a state change. The supported CSS subset, tag naming rules and limits have [their own page](../html-css-rsx/).
+
+## Events
+
+Handlers are `void delegate(NodeEvent)`:
+
+```d
+button.onClick((NodeEvent e) {
+    writeln("clicked ", e.node.typeName());
+});
+slider.onChange((NodeEvent e) {
+    writeln("value = ", e.node.num("value"));
+});
+```
+
+`on(handler)` sees every event, `on(kind, handler)` sees one `BK_EV_*` kind, and `onClick`, `onChange`, `onSubmit`, `onActivate`, `onToggle` and `onBrowse` are shorthands. Events carry the node, the kind, the payload reference, two doubles and, for raw key events, the key text.
+
+Callbacks run inside C frames. The wrappers catch exceptions and store the first one: `Context.pendingError()` returns it and `Context.check()` rethrows it. Every context input and render method calls `check()` for you, so a throwing host callback surfaces at the next input or render call. `Custom` and `Video` callbacks use the same pattern.
+
+## Ownership
+
+A `Node` created in D owns its C node. `free()` releases it and is idempotent; the destructor calls it too. Nodes the kit returns (`parent`, `child`, `hover`, `focus`, `popup`) are borrowed and never free their C node. When the node has a D wrapper, that wrapper is returned, so identity survives the round trip.
+
+Attaching a node to a parent makes the kit retain its D wrapper through the reference hooks. Dropping your last reference to an attached node is therefore safe. Freeing an owned child detaches it first, then frees it.
+
+The same split applies elsewhere:
+
+- `Window.raster()` is borrowed; `new Raster(w, h)` owns its raster.
+- `Node.setImage` and `Node.setVideo` borrow the buffer or player and keep the D wrapper alive. A `CanvasItem` only borrows its `Image` or `Video`; keep the wrapper alive yourself while the item can be drawn. The canvas keeps a `CanvasItem.family` string alive.
+- A `TreeItem` is retained when it is added to a parent or made a root. `free()` does nothing while a parent or tree still holds it; replace the roots first.
+- Menu descriptions are copied and their callbacks retained, so the `MenuItem` objects can be temporary.
+
+`Context` keeps its root `Node` alive, and `Window` keeps its `Context` alive. `free()` is safe to call more than once on all of them.
+
+## Menus, images and custom nodes
+
+```d
+context.openMenu(root, [
+    new MenuItem("Open", { /* ... */ }).shortcut_("Ctrl+O"),
+    MenuItem.separator(),
+    MenuItem.check("Grid", true, { /* ... */ }),
+    MenuItem.submenu("Recent", [
+        new MenuItem("a.txt", { /* ... */ }),
+    ]),
+]);
+```
+
+`Context.openPie` opens a pie menu at the pointer or at explicit window pixels, `Context.hitAt` finds the interactive node under a point, and `Node.setMenu` fills a menu button. For tests, `popupCount`, `popup`, `popupOwner`, `menuRowCount`, `menuRowText` and `menuRowRect` inspect the open menu.
+
+`Image.load` decodes a file through the kit's shared decoders; `Image.fromRgba` builds pixels you generated. `Video` opens a file or URL and plays it on an `image` or `video` node or into a texture. `bui.canvas` adds `CanvasItem` rectangles, ovals, lines, text, images and video to a `canvas` node, with ids for replace, delete, insert and z-order.
+
+`bui.custom` gives a `custom` node its own event, frame and draw callbacks:
+
+```d
+auto custom = setCustom(node, CustomHandlers(
+    (Node node, CustomEvent event) { return 1; },
+    (Node node) { /* frame */ },
+    (Node node, Raster raster, const(int)* clip) { /* draw */ },
+));
+```
+
+The node keeps the `Custom` object alive, and `custom.pendingError()` / `custom.check()` report exceptions from its callbacks.
+
+## Raw declarations
+
+When a wrapper does not cover something, use the raw module directly:
+
+```d
+import bui.kit;
+import bui.gpu;
+
+BKNode* n = BK_node_new("label");
+BK_set_str(n, "text", "raw");
+BK_node_free(n);
+
+auto r = BUI_raster_create(320, 200);
+BUI_raster_free(r);
+```
+
+The declarations match `kit/include/BUI_kit.h`, `gpu/include/GPU_raster.h`, `gpu/include/GPU_backend_sink.h` and `api/bui_c_api.h`. Opaque handles are `struct` declarations, enums keep the C values, and function pointer parameters use `extern(C)` aliases. The two names that collide with D keywords are renamed: `ref` becomes `ref_`, `align` becomes `align_`.
+
+## Build and test
+
+```sh
+cd bindings/d
+dub run --config=hello      # a native window
+dub run --config=headless   # render off-screen
+dub run --config=rsx        # an HTML/CSS page in a window
+dub run --config=test       # the integration suite
+```
+
+The pre-build script configures CMake with the other language bindings off, builds `bui_kit` and `bui_api` in Release, and copies the four static libraries into `.bui/lib`. Set `BUI_SOURCE_DIR` to build another BUI checkout. On Windows the C kit uses the dynamic UCRT, so the package passes `-mscrtlib=msvcrt` to LDC to keep one CRT in the process.
+
+<CardGrid>
+  <Card title="D binding source" href="https://github.com/ppmpreetham/BUI/tree/main/bindings/d" icon="github" kicker="GitHub">
+    The package, examples and the integration suite.
+  </Card>
+  <Card title="CMake options" href="docs/reference/cmake-options/" icon="terminal" kicker="Reference">
+    The kit and window-host options the pre-build script sets.
+  </Card>
+</CardGrid>

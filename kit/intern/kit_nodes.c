@@ -11,8 +11,13 @@
  * `items` are its links: "from_node from_output to_node to_input" (indices
  * among the editor's nodes and among each node's outputs / inputs).
  *
+ * A node can also hold controls, Blender's node buttons (`draw_buttons`, laid out by
+ * node_update_basis_buttons between the outputs and the inputs): "b|Label" a push
+ * button, "c|Label|0 or 1" a checkbox and "d|Label|index|Option;Option" a dropdown.
+ *
  * Events (BK_EV_CHANGE): on a node, a = 1 moved, 2 selection, 3 input value
- * (b = input index), 4 collapsed; on the editor, a = 10 links changed,
+ * (b = input index), 4 collapsed, 5 a control was pressed or changed (b = control
+ * index; its value is in the item); on the editor, a = 10 links changed,
  * 11 delete the selected nodes.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
@@ -33,7 +38,7 @@
 #define NODE_LINK_RESOL 12
 #define NOODLE_CURVING 4.0f /* theme space_node.noodle_curving */
 
-enum { EV_MOVED = 1, EV_SELECT = 2, EV_VALUE = 3, EV_COLLAPSE = 4, EV_LINKS = 10, EV_DELETE = 11 };
+enum { EV_MOVED = 1, EV_SELECT = 2, EV_VALUE = 3, EV_COLLAPSE = 4, EV_CONTROL = 5, EV_LINKS = 10, EV_DELETE = 11 };
 
 /* -------------------------------------------------------------------- */
 /** \name Data
@@ -44,7 +49,7 @@ typedef struct GNode {
   bool collapsed, active;
 } GNode;
 
-typedef enum { M_NONE, M_PAN, M_ZOOM, M_MOVE, M_BOX, M_LINK, M_VALUE, M_CUT } Mode;
+typedef enum { M_NONE, M_PAN, M_ZOOM, M_MOVE, M_BOX, M_LINK, M_VALUE, M_CUT, M_CONTROL } Mode;
 
 #define MAX_CUT 256
 
@@ -59,6 +64,8 @@ typedef struct NodeEdit {
   bool link_from_output;
   int value_node, value_sock;
   double value_start;
+  BKNode *ctl_node; /* the control pressed (M_CONTROL), or the one whose menu is open */
+  int ctl_k;
   bool shift;
   float cut[MAX_CUT][2];
   int ncut;
@@ -162,6 +169,80 @@ static int sock_count(const BKNode *node, bool input)
   return count;
 }
 
+/* A control from the node's items (see the header). */
+enum { CTL_BUTTON, CTL_CHECK, CTL_MENU };
+
+typedef struct Ctl {
+  int kind;
+  char label[64];
+  int value;      /* a checkbox: 0 / 1; a dropdown: the chosen option */
+  char opts[256]; /* a dropdown: "Option;Option" */
+  int item;       /* index in items */
+} Ctl;
+
+static bool ctl_parse(const char *s, Ctl *r)
+{
+  memset(r, 0, sizeof(*r));
+  if (!s || s[1] != '|' || (s[0] != 'b' && s[0] != 'c' && s[0] != 'd')) {
+    return false;
+  }
+  r->kind = s[0] == 'b' ? CTL_BUTTON : (s[0] == 'c' ? CTL_CHECK : CTL_MENU);
+  const char *p = s + 2;
+  const char *end = strchr(p, '|');
+  snprintf(r->label, sizeof(r->label), "%.*s", end ? (int)(end - p) : (int)strlen(p), p);
+  if (r->kind != CTL_BUTTON && end) {
+    r->value = atoi(end + 1);
+    const char *o = strchr(end + 1, '|');
+    if (r->kind == CTL_MENU && o) {
+      snprintf(r->opts, sizeof(r->opts), "%s", o + 1);
+    }
+  }
+  return true;
+}
+
+static bool ctl_get(const BKNode *node, int k, Ctl *r)
+{
+  int count = 0;
+  for (int i = 0; i < node->items.n; i++) {
+    Ctl c;
+    if (ctl_parse(node->items.v[i], &c) && count++ == k) {
+      *r = c;
+      r->item = i;
+      return true;
+    }
+  }
+  return false;
+}
+
+static int ctl_count(const BKNode *node)
+{
+  int count = 0;
+  for (int i = 0; i < node->items.n; i++) {
+    Ctl c;
+    count += ctl_parse(node->items.v[i], &c);
+  }
+  return count;
+}
+
+/* The k-th option of a dropdown control; false past the end. */
+static bool ctl_option(const Ctl *c, int k, char *out, size_t size)
+{
+  const char *p = c->opts;
+  for (int i = 0; *p || i == 0; i++) {
+    const char *end = strchr(p, ';');
+    const int len = end ? (int)(end - p) : (int)strlen(p);
+    if (i == k) {
+      snprintf(out, size, "%.*s", len, p);
+      return true;
+    }
+    if (!end) {
+      break;
+    }
+    p = end + 1;
+  }
+  return false;
+}
+
 /* std_node_socket_colors (node_socket.cc), Blender 4.x / 5.x */
 static void socket_color(const char *type, float c[4])
 {
@@ -256,13 +337,30 @@ static bool input_linked(const BKNode *e, int node, int in, Link *r)
 /** \name Node layout (node_update_basis), in graph units
  * \{ */
 
+/* The controls' block (node_update_basis_buttons): padded NODE_DYS / 4 above and below, one
+ * row per control, between the outputs and the inputs. */
+static float ctl_block(const BKNode *node)
+{
+  const int n = ctl_count(node);
+  return n ? NODE_DYS / 2 + n * (NODE_DY + NODE_ITEM_SPACING_Y) : 0.0f;
+}
+
 static float node_height(const BKNode *node)
 {
   if (gn(node)->collapsed) {
     return NODE_DY;
   }
   const int rows = sock_count(node, false) + sock_count(node, true);
-  return NODE_DY + NODE_DYS / 2 + rows * (NODE_DY + NODE_ITEM_SPACING_Y) + NODE_DYS / 2;
+  return NODE_DY + NODE_DYS / 2 + rows * (NODE_DY + NODE_ITEM_SPACING_Y) + ctl_block(node) +
+         NODE_DYS / 2;
+}
+
+/* The row center of a control. */
+static float ctl_y(const BKNode *node, int k)
+{
+  const GNode *g = gn(node);
+  return g->y + NODE_DY + NODE_DYS / 2 + sock_count(node, false) * (NODE_DY + NODE_ITEM_SPACING_Y) +
+         NODE_DYS / 4 + k * (NODE_DY + NODE_ITEM_SPACING_Y) + NODE_DY * 0.5f;
 }
 
 /* The row center of a socket (outputs first, then inputs). */
@@ -273,7 +371,8 @@ static float socket_y(const BKNode *node, bool input, int k)
     return g->y + NODE_DY * 0.5f;
   }
   const int row = input ? sock_count(node, false) + k : k;
-  return g->y + NODE_DY + NODE_DYS / 2 + row * (NODE_DY + NODE_ITEM_SPACING_Y) + NODE_DY * 0.5f;
+  return g->y + NODE_DY + NODE_DYS / 2 + row * (NODE_DY + NODE_ITEM_SPACING_Y) +
+         (input ? ctl_block(node) : 0.0f) + NODE_DY * 0.5f;
 }
 
 static float socket_x(const BKNode *node, bool input)
@@ -497,6 +596,34 @@ static void draw_input_field(BKRect r, const char *name, const char *value)
   bk_text_in(&vr, value, w.text, BK_ALIGN_RIGHT, false);
 }
 
+/* A node's control: a push button, a checkbox or a dropdown (the widgets of Blender's node buttons). */
+static void draw_ctl(BKRect r, const Ctl *c, bool pressed)
+{
+  const int st = pressed ? ST_SELECT : 0;
+  BKWCol w;
+  if (c->kind == CTL_CHECK) {
+    bk_widget_state(&w, &bk_theme.option, st | (c->value ? ST_SELECT : 0));
+    bk_widget_optionbut(&w, &r, st | (c->value ? ST_SELECT : 0));
+    bk_text_in_pad(&r, c->label, w.text, BK_ALIGN_LEFT, false, 0);
+  }
+  else if (c->kind == CTL_MENU) {
+    bk_widget_state(&w, &bk_theme.menu, st);
+    bk_widget_menubut(&w, &r, st, CNR_ALL);
+    char text[64];
+    if (!ctl_option(c, c->value, text, sizeof(text))) {
+      text[0] = '\0';
+    }
+    char buf[160];
+    snprintf(buf, sizeof(buf), c->label[0] ? "%s: %s" : "%s%s", c->label, text);
+    bk_text_in(&r, buf, w.text, BK_ALIGN_LEFT, false);
+  }
+  else {
+    bk_widget_state(&w, &bk_theme.regular, st);
+    bk_widget_but(&w, &r, st, CNR_ALL);
+    bk_text_in(&r, c->label, w.text, BK_ALIGN_CENTER, false);
+  }
+}
+
 static void draw_node(BKNode *e, BKNode *node, int index)
 {
   const GNode *g = gn(node);
@@ -539,6 +666,18 @@ static void draw_node(BKNode *e, BKNode *node, int index)
     BKRect tr = bk_rect((int)(x + 1.0f * u() * ed(e)->zoom - bk_pad()), (int)y,
                         (int)(w - 1.2f * u() * ed(e)->zoom), (int)hh);
     bk_text_in(&tr, node->label ? node->label : "", tc, BK_ALIGN_LEFT, false);
+  }
+  /* the controls, between the outputs and the inputs */
+  if (!g->collapsed && s > 0.3f) {
+    const float m = NODE_DYS * s;
+    const int count = ctl_count(node);
+    for (int k = 0; k < count; k++) {
+      Ctl c;
+      ctl_get(node, k, &c);
+      const float cy = sy(e, ctl_y(node, k));
+      const BKRect row = bk_rect((int)(x + m), (int)(cy - hh * 0.5f), (int)(w - 2 * m), (int)hh);
+      draw_ctl(row, &c, ed(e)->mode == M_CONTROL && ed(e)->ctl_node == node && ed(e)->ctl_k == k);
+    }
   }
   /* sockets and their rows */
   for (int pass = 0; pass < 2; pass++) {
@@ -703,6 +842,30 @@ static bool field_at(const BKNode *e, int x, int y, int *r_node, int *r_k)
     sock_get(node, true, k, &so);
     const float cy = sy(e, socket_y(node, true, k));
     if (so.value[0] && fabsf(y - cy) <= NODE_DY * s * 0.5f && !input_linked(e, i, k, NULL)) {
+      *r_node = i;
+      *r_k = k;
+      return true;
+    }
+  }
+  return false;
+}
+
+/* A node's control under a point. */
+static bool ctl_at(const BKNode *e, int x, int y, int *r_node, int *r_k)
+{
+  const int i = node_at(e, x, y);
+  if (i < 0 || gn(e->kids[i])->collapsed) {
+    return false;
+  }
+  const BKNode *node = e->kids[i];
+  const float s = scale_of(e);
+  const float x0 = sx(e, gn(node)->x) + NODE_DYS * s, x1 = x0 + (gn(node)->width - 2 * NODE_DYS) * s;
+  if (x < x0 || x > x1) {
+    return false;
+  }
+  const int count = ctl_count(node);
+  for (int k = 0; k < count; k++) {
+    if (fabsf(y - sy(e, ctl_y(node, k))) <= NODE_DY * s * 0.5f) {
       *r_node = i;
       *r_k = k;
       return true;
@@ -883,6 +1046,68 @@ static void set_input_value(BKNode *node, int k, double v)
   bk_emit(node, BK_EV_CHANGE, NULL, EV_VALUE, k);
 }
 
+/* A checkbox or dropdown takes a new value; every control reports it. */
+static void ctl_set_value(BKNode *node, int k, int v)
+{
+  Ctl c;
+  if (!ctl_get(node, k, &c)) {
+    return;
+  }
+  if (c.kind != CTL_BUTTON) {
+    char buf[512];
+    if (c.kind == CTL_CHECK) {
+      snprintf(buf, sizeof(buf), "c|%s|%d", c.label, v ? 1 : 0);
+    }
+    else {
+      snprintf(buf, sizeof(buf), "d|%s|%d|%s", c.label, v, c.opts);
+    }
+    free(node->items.v[c.item]);
+    node->items.v[c.item] = strdup(buf);
+  }
+  bk_invalidate(node->parent);
+  bk_emit(node, BK_EV_CHANGE, NULL, EV_CONTROL, k);
+}
+
+/* A dropdown control opens a menu of its options, owned by the editor. */
+static void ctl_open_menu(BKNode *e, BKNode *node, int k)
+{
+  BKContext *ctx = bk_ctx(e);
+  Ctl c;
+  if (!ctx || !ctl_get(node, k, &c)) {
+    return;
+  }
+  BKMenuSpec items[64];
+  char names[64][64];
+  int n = 0;
+  while (n < 64 && ctl_option(&c, n, names[n], sizeof(names[n]))) {
+    memset(&items[n], 0, sizeof(items[n]));
+    items[n].text = names[n];
+    items[n].checked = -1;
+    items[n].enabled = 1;
+    items[n].data = (void *)(intptr_t)n; /* the picked option (editor_popup_pick) */
+    n++;
+  }
+  if (!n) {
+    return;
+  }
+  ed(e)->ctl_node = node;
+  ed(e)->ctl_k = k;
+  char cur[64];
+  ctl_option(&c, c.value, cur, sizeof(cur));
+  bk_open_popup(ctx, bk_menu_new(items, n, NULL, cur), e, NULL); /* the menu copies its items */
+}
+
+static void editor_popup_pick(BKNode *e, void *data)
+{
+  NodeEdit *d = ed(e);
+  for (int i = 0; i < e->nkids; i++) { /* the node may have gone while the menu was open */
+    if (e->kids[i] == d->ctl_node) {
+      ctl_set_value(d->ctl_node, d->ctl_k, (int)(intptr_t)data);
+      break;
+    }
+  }
+}
+
 static int editor_press(BKNode *e, BKEvent *ev)
 {
   NodeEdit *d = ed(e);
@@ -919,6 +1144,13 @@ static int editor_press(BKNode *e, BKEvent *ev)
       d->link_from_output = !input;
     }
     d->mode = M_LINK;
+    bk_invalidate(e);
+    return 1;
+  }
+  if (ctl_at(e, ev->x, ev->y, &ni, &k)) { /* a node's button, checkbox or dropdown */
+    d->mode = M_CONTROL;
+    d->ctl_node = e->kids[ni];
+    d->ctl_k = k;
     bk_invalidate(e);
     return 1;
   }
@@ -1091,6 +1323,21 @@ static int editor_release(BKNode *e, BKEvent *ev)
     case M_CUT:
       cut_links(e);
       break;
+    case M_CONTROL: {
+      int ni, k;
+      if (ctl_at(e, ev->x, ev->y, &ni, &k) && e->kids[ni] == d->ctl_node && k == d->ctl_k) {
+        Ctl c;
+        if (ctl_get(d->ctl_node, k, &c)) {
+          if (c.kind == CTL_MENU) {
+            ctl_open_menu(e, d->ctl_node, k);
+          }
+          else {
+            ctl_set_value(d->ctl_node, k, c.kind == CTL_CHECK ? !c.value : 0);
+          }
+        }
+      }
+      break;
+    }
     default:
       break;
   }
@@ -1185,7 +1432,10 @@ static void editor_free(BKNode *e)
 static void editor_measure(BKNode *e, int *rw, int *rh)
 {
   *rw = 20 * u();
-  *rh = 14 * u();
+  /* "height" in units; unset, not a number (the test is false for NaN) or negative: 14. Capped so the
+   * float-to-int conversion stays defined. */
+  const float h = e->height_units;
+  *rh = h > 0.0f ? (int)((h > 1000.0f ? 1000.0f : h) * u()) : 14 * u();
 }
 
 static void editor_arrange(BKNode *e)
@@ -1257,6 +1507,7 @@ const BKClass bk_cls_nodeeditor = {.name = "nodeeditor",
                                    .drag = editor_drag,
                                    .release = editor_release,
                                    .cancel = editor_cancel,
+                                   .popup_pick = editor_popup_pick,
                                    .wheel = editor_wheel,
                                    .key = editor_key,
                                    .cursor_at = editor_cursor_at,

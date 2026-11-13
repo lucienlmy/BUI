@@ -238,6 +238,36 @@ const tablesBase = {
     ],
     note: "Before: signals as stores ($style), Svelte's own update functions through the DOM, Map attributes. JS heap is sampled without a forced GC, so it includes garbage.",
   },
+  jsVue3000: {
+    caption:
+      "Vue next to React and Svelte, 3,000 animated cells (bench/cells.js --vue [--isolate]): one cell changes per frame, GPU renderer, medians of 3 interleaved runs, one session (2026-11-11)",
+    columns: ["3,000 cells", "FPS", "RAM", "JS heap", "JavaScript per update"],
+    numeric: [1, 2, 3, 4],
+    rows: [
+      ["Node 26: React with state", "51.0", "228 MB", "45 MB", "3.1 ms"],
+      ["Node 26: Svelte with runes", "54.9", "115 MB", "22 MB", "50 µs"],
+      ["Node 26: Vue, state in the root component", "54.7", "260 MB", "44 MB", "5.4 ms"],
+      ["Node 26: Vue, cell 0 a component of its own", "53.9", "<strong>112</strong> MB", "<strong>21</strong> MB", "<strong>25</strong> µs"],
+      ["Bun 1.4: React with state", "53.6", "118 MB", "8 MB", "3.9 ms"],
+      ["Bun 1.4: Svelte with runes", "53.4", "<strong>98</strong> MB", "10 MB", "48 µs"],
+      ["Bun 1.4: Vue, state in the root component", "53.4", "142 MB", "16 MB", "6.7 ms"],
+      ["Bun 1.4: Vue, cell 0 a component of its own", "56.0", "107 MB", "11 MB", "<strong>27</strong> µs"],
+    ],
+    note: "This session's machine ran every variant at 49–56 FPS, so compare these rows with each other, not with the 2026-11-06 tables. With the state in the root component Vue re-runs the render function and compares the 3,000 cells, as React does; with the changing cell in a component of its own, only that component re-renders. Vue applies updates in a microtask, so JavaScript per update includes the nextTick hop. CPU per frame is left out: for Vue with state in the root on Bun it varied between runs (80%, 45% and 50% of a core, against a steady ~100% for the others). There is no signals row: a BUI signal binds an attribute or a style in a Vue template, not text.",
+  },
+  jsVueStartup: {
+    caption:
+      "React vs Vue, startup: the same small counter app (bench/first-frame.js, bench/first-frame-vue.js) quits after its first frame; median of 8 launches after a warm-up, one session (2026-11-11)",
+    columns: ["First frame", "React", "Vue", "RAM at first frame (React / Vue)"],
+    numeric: [1, 2, 3],
+    rows: [
+      ["<strong>QuickJS executable</strong> (bui build, 6.4 / 6.5 MB)", "<strong>43 ms</strong>", "66 ms", "14.5 / 17.5 MB"],
+      ["Bun executable (bui build --bun)", "<strong>46 ms</strong>", "77 ms", "29.9 / 40.3 MB"],
+      ["Bun (bun --preload …/register app.js)", "<strong>58 ms</strong>", "101 ms", "34.7 / 48.7 MB"],
+      ["Node.js (node --import …/register app.js)", "<strong>72 ms</strong>", "125 ms", "43.7 / 56.3 MB"],
+    ],
+    note: "Vue's SFC compiler is most of its size, so register caches compiled components in node_modules/.cache/@blender-ui/vue, and a cached start never loads its SFC compiler (vue/compiler-sfc): before the cache Node.js took 209 ms and Bun 189 ms. The executables bundle compiled components and don't use the cache. The React and Vue columns ran one after the other, not interleaved.",
+  },
   jsAnim1000: {
     caption: "JavaScript animation, 1,000 cells",
     columns: ["1,000 cells", "FPS", "CPU per frame", "RAM"],

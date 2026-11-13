@@ -16,11 +16,11 @@ readme = "README.md"
 include = ["src/**", "tests/**", "examples/**", "README.md", "Cargo.toml", "LICENSE", "THIRD_PARTY_NOTICES.md"]
 
 [dependencies]
-blenderui-table = { path = "../blenderui-table", version = "0.5.0" }
-blenderui-vlist = { path = "../blenderui-vlist", version = "0.5.0" }
-blenderui-sys = { path = "../blenderui-sys", version = "0.5.0", default-features = false }
-blenderui-macros = { path = "../blenderui-macros", version = "0.5.0" }
-blenderui-tailwind = { path = "../blenderui-tailwind", version = "0.5.0" }
+blenderui-table = { path = "../blenderui-table", version = "0.5.1" }
+blenderui-vlist = { path = "../blenderui-vlist", version = "0.5.1" }
+blenderui-sys = { path = "../blenderui-sys", version = "0.5.1", default-features = false }
+blenderui-macros = { path = "../blenderui-macros", version = "0.5.1" }
+blenderui-tailwind = { path = "../blenderui-tailwind", version = "0.5.1" }
 taffy = { version = "0.15", default-features = false, features = ["std", "taffy_tree", "flexbox", "flexbox_balance", "grid", "block_layout", "float_layout", "calc", "content_size"] }
 paste = "1"
 foldhash = { version = "0.2", default-features = false }

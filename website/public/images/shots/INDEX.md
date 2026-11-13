@@ -42,6 +42,7 @@ bindings/node).
 | `js-dom-tasks-{dark,light}.png` | A task list with the native DOM-like API (createElement, appendChild, addEventListener), Blender TextField / Button / Checkbox / ProgressBar | `examples/site/js/todo_dom.js` (+ `todo_style.js`; shot by `shoot.mjs`) |
 | `js-react-tasks-{dark,light}.png` | The same task list in React (@blender-ui/react, hooks) | `examples/site/js/todo_react.js` |
 | `js-svelte-tasks-{dark,light}.png` | The same task list in Svelte 5 (@blender-ui/svelte, runes); pixel-identical to the React shot | `examples/site/js/TodoSvelte.svelte` (+ `todo_svelte.mjs`) |
+| `js-vue-tasks-{dark,light}.png` | The same task list in Vue 3 (@blender-ui/vue, refs and v-model) | `examples/site/js/TodoVue.vue` (+ `todo_vue.mjs`) |
 
 ## Lua
 

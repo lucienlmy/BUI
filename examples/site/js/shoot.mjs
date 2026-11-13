@@ -61,4 +61,7 @@ await save(r.window, 'js-react-tasks')
 await import('../../../bindings/svelte/register.js') // .svelte files import as components
 const svelte = await import('./todo_svelte.mjs')
 await save(svelte.build({ app }).window, 'js-svelte-tasks')
+await import('../../../bindings/vue/register.js') // .vue files too
+const vue = await import('./todo_vue.mjs')
+await save(vue.build({ app }).window, 'js-vue-tasks')
 app.quit()

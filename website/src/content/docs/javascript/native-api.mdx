@@ -11,7 +11,7 @@ sources: ["docs/javascript.md", "bindings/node/README.md", "bindings/node/index.
 
 If you've ever written `document.createElement`, you already know this API. **`@blender-ui/native` gives you the DOM's shape, Tailwind classes and signals, and draws the result in a native window** with BUI's engine. There's no browser underneath and no webview: just your script, Node.js or Bun, and a small native addon.
 
-It's also the layer the [React renderer](../react/) and the [Svelte binding](../svelte/) are built on, so everything here works there too.
+It's also the layer the [React renderer](../react/), the [Svelte binding](../svelte/) and the [Vue binding](../vue/) are built on, so everything here works there too.
 
 <Callout type="note" title="Before you start">
 You need Node.js 18 or newer, or Bun. Install with `npm install @blender-ui/native` (or `bun add @blender-ui/native`). The addon is prebuilt for Windows x64; on Linux, build it from source. The [installation page](../../start/installation/) has the details.
@@ -127,9 +127,9 @@ The events are `click`, `mousedown`, `mouseup`, `mousemove`, `mouseenter`, `mous
 
 ## Framework bindings
 
-The React and Svelte packages are thin adapters over this API, and a binding for another framework plugs in the same way:
+The React, Svelte and Vue packages are thin adapters over this API, and a binding for another framework plugs in the same way:
 
-- **`@blender-ui/native/host`** holds what every binding shares: `open(options)` (the `App` and window behind a `render(..., options)`), `blenderWidgets(wrap)` (Blender's widgets as the framework's components) and `applyProps(el, prev, next)` (JSX-style props such as `className`, `style` objects, `onClick` and signals, onto an element). A renderer that works with props (React's reconciler; Vue's or Solid's custom renderers) calls these.
+- **`@blender-ui/native/host`** holds what every binding shares: `open(options)` (the `App` and window behind a `render(..., options)`), `blenderWidgets(wrap)` (Blender's widgets as the framework's components) `styleRegistry()` (components' scoped `<style>` blocks, added to each window once) and `applyProps(el, prev, next)` (JSX-style props such as `className`, `style` objects, `onClick` and signals, onto an element). A renderer that works with props (React's reconciler, Vue's `createRenderer`, Solid's custom renderer) calls these.
 - **`@blender-ui/native/globals`** installs `document`, `window`, the node classes and `requestAnimationFrame` as globals, for frameworks whose compiled code calls the DOM (Svelte; Solid's or Lit's DOM output too).
 - **`bui build`** bundles with the Bun plugin of every `@blender-ui/*` package that declares one in its `package.json` (`"bui": { "bunPlugin": "./plugin.js" }`). That's how `.svelte` files compile into a standalone app.
 
@@ -192,6 +192,9 @@ The numbers, with their context, are on the [standalone executables](../standalo
   </Card>
   <Card title="Svelte" href="docs/javascript/svelte/" icon="layers" kicker="JavaScript">
     Svelte 5 components, runes and snippets on the same engine.
+  </Card>
+  <Card title="Vue" href="docs/javascript/vue/" icon="layers" kicker="JavaScript">
+    Vue 3 single-file components on the same engine.
   </Card>
   <Card title="Signals" href="docs/javascript/signals/" icon="zap" kicker="JavaScript">
     How a signal updates one node without re-rendering anything.

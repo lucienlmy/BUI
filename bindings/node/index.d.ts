@@ -128,8 +128,94 @@ export class Comment extends Node {
 /** Nodes inserted together: inserting the fragment moves its children. */
 export class DocumentFragment extends Node {}
 
+/** The CSS properties `el.style` reads and writes in camelCase (`backgroundColor` is `background-color`).
+ *  Any other property works through `getPropertyValue` / `setProperty`, and any camelCase key works at
+ *  run time; these are the common ones, typed. */
+export interface CssProperties {
+  alignContent?: string
+  alignItems?: string
+  alignSelf?: string
+  background?: string
+  backgroundColor?: string
+  backgroundImage?: string
+  border?: string
+  borderBottom?: string
+  borderColor?: string
+  borderLeft?: string
+  borderRadius?: string
+  borderRight?: string
+  borderStyle?: string
+  borderTop?: string
+  borderWidth?: string
+  bottom?: string
+  boxShadow?: string
+  boxSizing?: string
+  color?: string
+  columnGap?: string
+  cursor?: string
+  display?: string
+  flex?: string
+  flexBasis?: string
+  flexDirection?: string
+  flexFlow?: string
+  flexGrow?: string
+  flexShrink?: string
+  flexWrap?: string
+  font?: string
+  fontFamily?: string
+  fontSize?: string
+  fontStyle?: string
+  fontWeight?: string
+  gap?: string
+  gridColumn?: string
+  gridRow?: string
+  gridTemplateColumns?: string
+  gridTemplateRows?: string
+  height?: string
+  justifyContent?: string
+  justifyItems?: string
+  left?: string
+  letterSpacing?: string
+  lineHeight?: string
+  margin?: string
+  marginBottom?: string
+  marginLeft?: string
+  marginRight?: string
+  marginTop?: string
+  maxHeight?: string
+  maxWidth?: string
+  minHeight?: string
+  minWidth?: string
+  opacity?: string
+  outline?: string
+  overflow?: string
+  overflowX?: string
+  overflowY?: string
+  padding?: string
+  paddingBottom?: string
+  paddingLeft?: string
+  paddingRight?: string
+  paddingTop?: string
+  pointerEvents?: string
+  position?: string
+  right?: string
+  rowGap?: string
+  textAlign?: string
+  textDecoration?: string
+  textOverflow?: string
+  textTransform?: string
+  top?: string
+  transform?: string
+  userSelect?: string
+  verticalAlign?: string
+  visibility?: string
+  whiteSpace?: string
+  width?: string
+  zIndex?: string
+}
+
 /** `el.style`: the inline style. */
-export interface Style {
+export interface Style extends CssProperties {
   cssText: string
   getPropertyValue (name: string): string
   setProperty (name: string, value: string | null, priority?: string): void

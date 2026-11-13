@@ -21,10 +21,10 @@ import time
 import buipy
 
 from bui import host
+from bui.components.views import FileBrowser
 
 __all__ = ["ask", "enabled", "tk_filters", "qt_filters"]
 
-_MODES = {"open": 0, "save": 1, "directory": 2}
 _TITLES = {"open": "Open", "save": "Save As", "directory": "Select Folder"}
 _POLL_SECONDS = 0.004
 
@@ -62,14 +62,10 @@ def qt_filters(filter_str) -> list:
 
 
 def _browser(kind, initialdir, initialfile, entries, multiple):
-    """A configured ``filebrowser`` node."""
-    fb = buipy.KitNode("filebrowser")
-    fb.set("mode", _MODES.get(kind, 0))
-    fb.set("multiple", int(bool(multiple)))
-    for key, value in (("filters", entries), ("dir", initialdir), ("file", initialfile)):
-        if value:
-            fb.set(key, value if key == "filters" else os.fspath(value))
-    return fb
+    """A configured file browser component."""
+    return FileBrowser(initialdir or "", file=initialfile or "",
+                       mode=kind if kind in FileBrowser.MODES else "open",
+                       multiple=multiple, filters=entries)
 
 
 def _run(fb, title):

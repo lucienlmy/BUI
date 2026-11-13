@@ -434,6 +434,9 @@ static void menu_pick(BKNode *n, int row)
       ctx->host.emit(ctx->host.data, owner, BK_EV_CALL, ref, 0, 0);
     }
   }
+  else if (owner && owner->cls->popup_pick) {
+    owner->cls->popup_pick(owner, data);
+  }
   else if (owner && (owner->cls == &bk_cls_dropdown || owner->cls == &bk_cls_enum)) {
     bk_set_value(owner, (double)(intptr_t)data); /* enum menu: the item index */
   }

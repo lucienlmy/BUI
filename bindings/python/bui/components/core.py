@@ -120,10 +120,44 @@ class Component(buipy.KitNode):
     def corners(self) -> int:
         return int(self.get("corners"))
 
+    # -- children (a Panel or Popover keeps them in its body) ----------------------------
+    def _content(self) -> buipy.KitNode:
+        """The node that holds this component's children."""
+        return self
+
     def add(self, *components: "Component"):
+        content = self._content()
         for c in components:
-            buipy.KitNode.add(self, c)
+            buipy.KitNode.add(content, c)
         return components[0] if len(components) == 1 else self
+
+    def insert(self, index: int, component: "Component") -> "Component":
+        """Put ``component`` at ``index`` (negative or past the end: last). A
+        component that has a parent moves here."""
+        return buipy.KitNode.add(self._content(), component, int(index))
+
+    def remove(self, component: "Component") -> "Component":
+        """Take a child out; it can be added again later."""
+        buipy.KitNode.remove(self._content(), component)
+        return component
+
+    def clear(self):
+        """Remove every child."""
+        content = self._content()
+        for c in content.children:
+            buipy.KitNode.remove(content, c)
+        return self
+
+    def replace(self, old: "Component", new: "Component") -> "Component":
+        """Put ``new`` where the child ``old`` is."""
+        content = self._content()
+        # `new` leaves its old place first when it is already a child, so count without it
+        kids = [c for c in content.children if c is not new]
+        index = next((i for i, c in enumerate(kids) if c is old), None)
+        if index is None:
+            raise ValueError("replace(): old is not a child of this component")
+        buipy.KitNode.remove(content, old)
+        return buipy.KitNode.add(content, new, index)
 
     def _on_event(self, kind, ref, a, b):
         pass

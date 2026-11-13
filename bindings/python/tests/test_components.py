@@ -1007,6 +1007,149 @@ def test_textarea_editing():
     ctx.render(300, 200, r, False)
 
 
+def test_textarea_component():
+    from bui.components import TextArea
+    got = []
+    ta = TextArea("one", rows=3, on_change=got.append)
+    tall = TextArea(rows=6)
+    d = Driver(ta, tall)
+    assert ta.type == "textarea" and ta.value == "one"
+    assert tall.h > ta.h                                  # rows sets the natural height
+    d.click(ta)
+    d.key("End")
+    d.key("Return")
+    d.type("two")
+    assert ta.value == "one\ntwo", repr(ta.value)
+    assert got[-1] == "one\ntwo"                          # on_change on every edit
+    got.clear()
+    ta.set_value("a\nb", notify=False)
+    assert ta.value == "a\nb" and got == []
+    ta.value = "c"
+    assert got == ["c"]
+    ta.value = "c"                                        # unchanged: no callback
+    assert got == ["c"]
+    ta.reset()
+    assert ta.value == "" and got == ["c", ""]
+
+
+def test_file_browser_component():
+    import shutil
+    import tempfile
+    from bui.components import FileBrowser
+    tmp = tempfile.mkdtemp(prefix="bui_fbc_")
+    saved = os.environ.get("BUI_BOOKMARKS")
+    os.environ["BUI_BOOKMARKS"] = os.path.join(tmp, "bookmarks.txt")
+    try:
+        root = os.path.join(tmp, "files")
+        os.makedirs(os.path.join(root, "sub"))
+        open(os.path.join(root, "a.txt"), "w").close()
+        folders, chosen = [], []
+        fb = FileBrowser(root, filters=["Text\t*.txt"], on_change=folders.append,
+                         on_submit=chosen.append, fill=True)
+        d = Driver(Label("Pick a file"), fb, size=(900, 600))
+        assert fb.type == "filebrowser" and fb.directory == root + os.sep
+        assert fb.w > 0 and fb.h > 0 and fb.y > 0             # laid out below the label
+        assert fb.get("count") == 3                           # "..", sub, a.txt
+        fb.directory = os.path.join(root, "sub")
+        assert folders == [os.path.join(root, "sub") + os.sep]
+        fb.directory = root
+        fb.file = "a.txt"
+        fb.execute()
+        assert fb.state == 1 and chosen == [[os.path.join(root, "a.txt")]]
+        assert fb.result == [os.path.join(root, "a.txt")]
+        d.frame()
+
+        saver = FileBrowser(root, mode="save", file="new.txt", on_submit=chosen.append)
+        Driver(saver, size=(900, 600))
+        saver.cancel()
+        assert saver.state == -1 and chosen[-1] == []
+        try:
+            FileBrowser(mode="load")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unknown mode accepted")
+    finally:
+        if saved is None:
+            os.environ.pop("BUI_BOOKMARKS", None)
+        else:
+            os.environ["BUI_BOOKMARKS"] = saved
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_editing_children():
+    a, b, c = Label("a"), Label("b"), Label("c")
+    col = Column(a, b)
+    panel = Panel("Panel", Label("x"))
+    d = Driver(col, panel)
+    texts = lambda node: [n.get_str("text") for n in node.children]  # noqa: E731
+    assert col.insert(1, c) is c and texts(col) == ["a", "c", "b"]
+    d.frame()
+    assert a.y < c.y < b.y                                # relaid out in the new order
+    assert col.remove(a) is a and texts(col) == ["c", "b"] and a.parent is None
+    assert col.insert(-1, a) is a and texts(col) == ["c", "b", "a"]
+    new = Label("n")
+    assert col.replace(b, new) is new and texts(col) == ["c", "n", "a"]
+    try:
+        col.replace(b, Label("z"))
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("replace() of a non-child accepted")
+    assert col.clear() is col and col.children == []
+    # a Panel edits its body, like add()
+    y = panel.insert(0, Label("y"))
+    assert texts(panel.body) == ["y", "x"] and len(panel.children) == 1
+    panel.replace(y, a)                                   # moves a from nowhere into the body
+    assert texts(panel.body) == ["a", "x"]
+    col.add(a)                                            # adding elsewhere moves it
+    assert texts(panel.body) == ["x"] and texts(col) == ["a"]
+    panel.clear()
+    assert panel.body.children == [] and len(panel.children) == 1
+    d.frame()
+
+
+
+def test_editing_review_fixes():
+    from bui.components import Node, NodeEditor
+    # replace(): an earlier sibling takes old's place, not the slot after it
+    a, b, c, d_ = Label("a"), Label("b"), Label("c"), Label("d")
+    col = Column(a, b, c, d_)
+    col.replace(c, a)
+    assert [n.get_str("text") for n in col.children] == ["b", "a", "d"]
+    # a NodeEditor follows every way of editing its children, and its links follow their nodes
+    n1, n2, n3 = (Node(t, outputs=[("o", "float")], inputs=[("i", "float")]) for t in "xyz")
+    ed = NodeEditor([n1, n2], links=[(n1, 0, n2, 0)])
+    ed.add(n3)
+    assert ed.nodes == [n1, n2, n3] and ed.links == [(n1, 0, n2, 0)]
+    first = Node("w", inputs=[("i", "float")])
+    ed.insert(0, first)                                   # every index moves up by one
+    assert ed.nodes == [first, n1, n2, n3] and ed.links == [(n1, 0, n2, 0)]
+    ed.remove(first)
+    assert ed.nodes == [n1, n2, n3] and ed.links == [(n1, 0, n2, 0)]
+    other = Node("v", outputs=[("o", "float")], inputs=[("i", "float")])
+    ed.replace(n3, other)
+    assert ed.nodes == [n1, n2, other]
+    ed.remove(n1)                                         # a link to a removed node goes with it
+    assert ed.nodes == [n2, other] and ed.links == []
+    assert ed.clear() is ed and ed.nodes == [] and ed.links == []
+    # a TextArea written with the text it holds keeps its selection
+    from bui.components import TextArea
+    ta = TextArea("hello")
+    ta.set_value("hello")
+    assert ta.value == "hello"
+
+
+def test_node_editor_height():
+    from bui.components import Node, NodeEditor
+    u = buipy.kit_unit()
+    short = NodeEditor([Node("Value", outputs=[("Value", "float")])], height=8)
+    default = NodeEditor()
+    assert short.natural()[1] == 8 * u
+    assert default.natural()[1] == 14 * u
+    Driver(short, default, size=(500, 900))
+    assert short.h == 8 * u and default.h == 14 * u
+
 def main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

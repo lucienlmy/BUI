@@ -368,6 +368,35 @@ class TextField(ValueComponent):
         return bool(self.get("editing"))
 
 
+class TextArea(ValueComponent):
+    """Multi-line text (the kit's ``textarea``: Blender's text editing over
+    several lines, wheel scrolling, clipboard, undo). ``rows`` sets the
+    natural height in lines; ``on_change`` gets the text on every edit. The
+    node's ``ta_insert`` / ``ta_delete`` / ``ta_caret`` / ``ta_selection`` /
+    ``ta_see`` edit it by byte offset."""
+
+    TYPE = "textarea"
+
+    def __init__(self, value: str = "", *, rows: int = None, **kw):
+        super().__init__("", value or "", **kw)
+        if rows:
+            self.set("rows", int(rows))
+
+    def _store(self, v, notify):
+        text = "" if v is None else str(v)
+        changed = text != self._load()
+        if changed:  # setting it again would clear the selection and the spans
+            self.set("value", text)  # the kit's textarea has no "set_value": it notifies here
+        if notify and changed and self.on_change is not None:
+            self.on_change(text)
+
+    def _load(self):
+        return self.get_str("value")
+
+    def _default(self):
+        return ""
+
+
 class SearchField(TextField):
     """Blender search box: magnifier icon, live filtering."""
 

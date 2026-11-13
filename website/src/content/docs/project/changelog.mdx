@@ -9,9 +9,36 @@ sources: ["CHANGELOG.md", "bindings/python/bui/_version.py", "bindings/node/pack
 
 Here's the story of BUI so far, in plain words: what the first release gave you, and what's waiting in the next one. For every detail, read the full [CHANGELOG.md](https://github.com/ppmpreetham/BUI/blob/main/CHANGELOG.md); it follows [Keep a Changelog](https://keepachangelog.com), and versions follow [Semantic Versioning](https://semver.org).
 
-## Coming in 0.5.0
+## Coming in 0.5.1
 
-The biggest release since 0.1.0: faster on Linux, input methods, a Wayland host, Lua, and a lot of polish. Everything here is on `main`; the details are under **Unreleased** in the changelog.
+Your own themes, windows that are see-through, panels and pie menus, and Lua on LuaRocks. Everything here is on `main`; the details are under **Unreleased** in the changelog.
+
+### Your own themes
+
+A theme file (JSON) adds themes next to Dark and Light. Keys are plain English (`button.background`) or Blender's own names (`user_interface.wcol_regular.inner`), all 782 of them, so a theme exported from Blender loads whole. Colors, fonts, corner radius, borders and shadows can all change, and single values can change at run time. Errors name the line and column. See the theming docs and the Catppuccin example.
+
+### Windows that are see-through, and panels (Linux, Windows, macOS)
+
+`wm "transparent"` gives a window per-pixel alpha on all three systems. On Wayland, `wm "layer"` makes layer-shell windows (a panel, a bar, an overlay) with keyboard interactivity. Rust and JavaScript get window kinds (floating, pop-up and more), a `transparent` option and focus and blur events. Linux windows can also be hidden, shown, made frameless or kept on top.
+
+### Pie menus, as in Blender
+
+Open a pie while a key is held and release the key to pick, as Blender does. Also new: `BK_hit_at` finds the interactive widget under a point, a window reports when it gets or loses the keyboard focus, and `<input live>` reports every keystroke, for a search box or a date field.
+
+### LuaRocks
+
+`luarocks install blenderui`, then `require("bui")`: the rock builds the kit and the Lua module with CMake for Lua 5.4. See the [Lua page](../../lua/overview/).
+
+### Smoother and safer
+
+- Text fields blink their caret like a browser's, and Python text no longer has Blender's drop shadow, which made small text look soft.
+- Wayland: no more crash at exit, the first window draws at once, frames copy only what changed, and cursors use the compositor's cursor shapes.
+- Rust views are lighter and quicker: one hasher, 136-byte elements, and a display list that changes everywhere redraws only what changed.
+- Fixed: closing a pie during its open animation, input methods typing key names, a frame callback that closed its own window, the Lua module that could not be loaded, a macOS link error for the npm runtime, and `bui_version_string()` stuck at 0.1.0.
+
+## In 0.5.0
+
+The biggest release since 0.1.0: faster on Linux, input methods, a Wayland host, Lua, and a lot of polish. It came out on 8 November 2026; the details are under **0.5.0** in the changelog.
 
 ### Faster to start on Linux
 

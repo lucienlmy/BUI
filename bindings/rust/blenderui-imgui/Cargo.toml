@@ -15,7 +15,7 @@ include = ["src/**", "tests/**", "examples/**", "Cargo.toml", "LICENSE", "THIRD_
 
 [dependencies]
 # builds and links bui_cimgui (Dear ImGui + its C API + the BUI backend) with the C kit
-blenderui-sys = { path = "../blenderui-sys", version = "0.5.0", features = ["imgui"] }
+blenderui-sys = { path = "../blenderui-sys", version = "0.5.1", features = ["imgui"] }
 
 [features]
 # ImGui's widgets drawn and handled as Blender's widgets (bindings/imgui/blender)

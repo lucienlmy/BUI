@@ -1,0 +1,138 @@
+---
+title: HTML, CSS and RSX in D
+sidebarLabel: HTML, CSS and RSX
+description: Build BUI interfaces from D with an Element tree, tag constructors, a CSS cascade and compile-time rsx! markup.
+section: D
+order: 20
+languages: ["d"]
+sources: ["bindings/d/source/bui/html/element.d", "bindings/d/source/bui/html/tags.d", "bindings/d/source/bui/html/realize.d", "bindings/d/source/bui/css/style.d", "bindings/d/source/bui/rsx.d", "bindings/d/examples/rsx_page.d", "bindings/d/tests/run.d", "docs/d.md"]
+---
+
+**You can write a BUI interface in D as HTML and CSS.** `rsx!` parses markup at compile time, `Document` cascades the styles and realises the tree as kit nodes, and the result opens in a native window like any other BUI root. There is no webview and no browser.
+
+## A counter page
+
+```d title="source/app.d"
+import bui;
+import std.conv : to;
+
+void main() {
+    int count;
+    Element counter;
+
+    auto page = mixin(rsx!`
+        <body class="app">
+            <style>
+                .app { background: #1e1e1e; padding: 12px; color: #e6e6e6; }
+                .row { display: flex; flex-direction: row; gap: 6px; }
+                button:hover { color: #8fd4ff; }
+            </style>
+            <h1>BUI RSX</h1>
+            <p id="count">Count: {count}</p>
+            <div class="row">
+                <button onclick={() { ++count; counter.setText("Count: " ~ to!string(count)); }}>Add</button>
+                <button onclick={() { count = 0; counter.setText("Count: 0"); }}>Reset</button>
+            </div>
+        </body>
+    `);
+
+    auto document = new Document(page);
+    counter = document.find("#count");
+
+    auto context = new Context(document.node());
+    auto window = new Window(context, "BUI RSX", 360, 180);
+    window.show();
+    run();
+}
+```
+
+`rsx!` runs in CTFE and lowers every element to ordinary `Element` calls, so the markup has the same types and event handlers as the hand-written API. `{count}` interpolates a D expression; `onclick` takes a D delegate. `Document` runs the user-agent stylesheet, the page's `<style>` elements and an optional CSS string passed to its constructor.
+
+## The same tree without rsx
+
+Tag constructors and chainable methods build exactly the same document:
+
+```d
+auto page = body_(
+    style(".app { padding: 12px; }"),
+    h1("BUI"),
+    div(
+        input().attr("type", "text").attr("value", "hello"),
+        button("OK").onClick((NodeEvent) { quit(); }),
+    ).class_("row"),
+);
+```
+
+`Element` has `id`, `class_`, `attr`, `style`, `text`, `setText`, `child`, `append` and the event shorthands (`onClick`, `onChange`, `onPress`, `onRelease`, `onDoubleClick`, `onSubmit`, `onToggle`, `onKey`, `onWheel`). `makeElement!"tag"(...)` accepts text, elements and arrays of them.
+
+## What the CSS does
+
+`bui.css` parses a practical subset and cascades it with standard specificity, source order and inline-style precedence. `Document` maps the computed values onto the kit:
+
+| CSS | Kit |
+| --- | --- |
+| block boxes, inline text | `frame`, `label` |
+| `display: flex` with `flex-direction` | pack row or column |
+| `display: grid` | frame grid with column weights |
+| `padding`, `margin`, `gap` | pack/grid insets |
+| `width`, `height`, `flex-grow` | requested size and expand |
+| colours, borders, `font-size`, `font-weight`, `text-align` | the matching node properties |
+| `cursor`, `visibility`, `object-fit` | cursor, visibility, image fit |
+| `table`, `tr`, `td`, `caption` | a frame grid with the caption above it |
+
+Selectors include type, `#id`, `.class`, attributes, descendant, child and sibling combinators, and dynamic states such as `:hover` and `:active`. Custom properties and `var()` resolve. Lengths can be `px`, `em`, `rem`, `vw` or `vh`.
+
+```css
+.card { background: #202020; padding: 8px; border: 2px solid #ff8800; }
+.card:hover { background: #2a2a2a; }
+#title { font-size: 20px; color: #e6e6e6; }
+input[type=text] { margin: 4px 0; }
+```
+
+Standard widgets become their kit controls: `input` (text, search, checkbox, radio, number, range, color, file, submit), `select`, `textarea`, `button`, `progress` and `meter`. `img`, `canvas` and `video` become the replaced nodes.
+
+## Tag names and markup
+
+Tag constructors keep their HTML spelling except for four names:
+
+| Markup | Constructor | Why |
+| --- | --- | --- |
+| `<body>` | `body_` | D keyword |
+| `<template>` | `template_` | D keyword |
+| `<object>` | `object_` | D's implicit `object` module |
+| `<select>` | `select_` | `bui.tree.select` already exists |
+
+Markup is unaffected: `<body>`, `<select>` and the rest keep their HTML names inside `rsx!`. Custom elements such as `<my-widget>` work and are laid out as boxes.
+
+`rsx!` also handles quoted and unquoted attributes, `{expression}` values, boolean attributes (`checked`, `disabled`, `hidden`), HTML entities, comments, void tags, raw `<style>` text and self-closing tags. A dynamic boolean attribute toggles through `Element.flagAttr`:
+
+```d
+bool enabled = true;
+auto field = mixin(rsx!`<input type="text" disabled={enabled}>`);
+```
+
+## Dynamic updates
+
+Layout structure is fixed when a `Document` is built. Visual properties can change afterwards: `Document.restyle` re-runs the cascade, and the kit's `ENTER`/`LEAVE`/`PRESS`/`RELEASE` events set `Element` states for `:hover` and `:active` automatically. `Element.setText` replaces the direct text of a realised leaf in place.
+
+```d
+auto document = new Document(page);
+auto button = document.find("button");
+
+button.setState("hover", true);
+document.restyle();
+
+document.find("#count").setText("Done");
+```
+
+A different element structure needs a new `Document` and a new `Context`.
+
+## Limits
+
+The subset is deliberately smaller than a browser's CSS: no flex wrapping, media queries, pseudo-elements, animations, transforms or Tailwind. Text is one label per leaf and does not wrap around floats. There is no `<link rel=stylesheet>` loading; `<style>` elements and CSS strings are the inputs. Structure-based selectors are evaluated when the document is built; `Document.restyle` re-runs the cascade for visual properties, but it does not rebuild the layout.
+
+<CardGrid>
+  <Card title="The D package" href="docs/d/overview/" icon="book">The raw kit declarations and the D wrappers this layer sits on.</Card>
+  <Card title="Blender widgets" href="docs/concepts/blender-widgets/" icon="sliders">The interactions behind the controls the CSS realises.</Card>
+  <Card title="D binding source" href="https://github.com/ppmpreetham/BUI/tree/main/bindings/d" icon="github" kicker="GitHub">The Element tree, CSS engine, RSX parser, examples and tests.</Card>
+</CardGrid>

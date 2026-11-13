@@ -1,0 +1,191 @@
+---
+title: Vue on the desktop
+sidebarLabel: Vue
+description: Mount Vue 3 single-file components into native BUI windows with refs, v-model, slots, scoped styles, Tailwind classes and Blender's widgets, on Node.js or Bun.
+section: JavaScript & React
+order: 27
+languages: ["javascript"]
+badges: ["Vue 3.5"]
+sources: ["docs/javascript.md", "bindings/vue/README.md", "bindings/vue/index.js", "bindings/vue/props.js", "bindings/vue/model.js", "bindings/vue/compile.js", "bindings/vue/index.d.ts", "bindings/vue/package.json", "bindings/vue/examples/Counter.vue", "bindings/vue/examples/counter.js", "examples/site/js/TodoVue.vue", "examples/site/js/todo_vue.mjs", "bindings/node/bench/Grid.vue", "bindings/node/bench/cells.js", "bindings/node/host.js", "bindings/node/dom.js", "bindings/node/platform.js", "website/src/content/docs/start/installation.mdx"]
+---
+
+Write Vue components as you would for the browser, and get a native desktop window instead. **`@blender-ui/vue` mounts Vue 3 components into BUI**: refs, `v-model`, `v-if` and `v-for`, slots, `provide` / `inject`, `<script setup>` and TypeScript work as they do on the web, BUI draws the result on the CPU or the GPU, and Blender's widgets are one import away. No Electron, no webview.
+
+It is a custom renderer: Vue's own runtime and compiler do the work, and BUI is where the nodes go. Only the changes of each tick cross to BUI's UI thread.
+
+## Install
+
+```sh
+npm install @blender-ui/vue vue
+# or
+bun add @blender-ui/vue vue
+```
+
+It brings `@blender-ui/native` with it. Vue 3.5 or newer is a peer dependency, and Node.js needs to be 22.15 or newer (Bun works too). The native addon is prebuilt for Windows x64, Linux x64 (glibc 2.35 or later) and macOS, where JavaScript runs headless; on other systems, [build it from source](../../start/installation/).
+
+## Your first component
+
+```vue title="Counter.vue"
+<script setup>
+import { ref } from 'vue'
+import { Button } from '@blender-ui/vue'
+const count = ref(0)
+</script>
+
+<template>
+  <main class="p-6 flex flex-col gap-3">
+    <span>Clicks: {{ count }}</span>
+    <Button @click="count++">Add one</Button>
+  </main>
+</template>
+```
+
+```js title="app.js"
+import { render } from '@blender-ui/vue'
+import Counter from './Counter.vue'
+
+const { window } = render(Counter, { title: 'Counter', width: 360, height: 200, gpu: true })
+// the body is the page: `min-h-screen` makes its background fill the window, not only its content
+window.body.className = 'm-0 min-h-screen bg-[#2b2b2b] text-[#e6e6e6]'
+```
+
+The window's `body` is the page. A background on a component's root only paints that element's box (the `body` has an 8 px margin by default), so put the page color on `window.body`, with `m-0 min-h-screen` to make it fill the whole window.
+
+Run it:
+
+```sh
+node --import @blender-ui/vue/register app.js
+# or
+bun --preload @blender-ui/vue/register app.js
+```
+
+`register` teaches the runtime `.vue` files: they import as components, compiled by Vue's own compiler and cached in `node_modules/.cache/@blender-ui/vue`, so a cached start never loads the compiler. Every `import 'vue'` resolves to the one Vue this package uses, wherever the importing file is, and `require('@blender-ui/vue')` works as well as `import`. With Bun you can put the preload in `bunfig.toml` instead: `preload = ["@blender-ui/vue/register"]`.
+
+## `render`, `createApp` and `createRoot`
+
+`render(component, options)` opens a window and mounts the component into it. It returns `{ app, window, root, component }`, where `component` is the root component's instance.
+
+| Option | What it does |
+| --- | --- |
+| `props` | The root component's props |
+| `title`, `width`, `height`, `resizable` | The window |
+| `gpu` | Draw on the GPU (Direct3D 11 on Windows, OpenGL on Linux) |
+| `slug` | GPU text from glyph outlines (default) or an atlas |
+| `headless` | Render off-screen: tests and CI |
+| `theme` | Blender's `'dark'` (default) or `'light'` theme |
+| `app` | Reuse an `App` you already made, to open several windows |
+
+To install plugins first, make the app yourself and pass it to `render`:
+
+```js
+import { createApp, render } from '@blender-ui/vue'
+
+const app = createApp(Root).use(somePlugin, { option: 1 })
+render(app, { title: 'App', width: 800, height: 600 })
+```
+
+To mount into a window you opened yourself, use `createRoot(window)`, then `root.render(component)` and `root.unmount()`. Closing the window unmounts its root (`onUnmounted` runs). Everything `vue` exports (`ref`, `computed`, `h`, `nextTick` ...) is exported here too, so one import is enough.
+
+## Elements, events and `v-model`
+
+Elements are HTML elements, as in the browser:
+
+- **`class`** takes Tailwind classes, and `:class` objects and arrays work. **`:style`** takes strings and objects, and `v-show` works.
+- **Mouse, keyboard and form events** work: `@click`, `@mousedown`, `@mouseup`, `@mousemove`, `@mouseenter`, `@mouseleave`, `@wheel`, `@keydown`, `@keyup`, `@input` and `@change`, with the modifiers `.stop`, `.prevent`, `.self`, `.once`, `.enter` and the other key and button ones. Events BUI doesn't report (`focus`, `blur`, `dblclick`) never fire.
+- **`v-model`** works on `<input>` (text, number, range, checkbox, radio), `<textarea>`, `<select>` and the Blender widgets. A checkbox can be bound to an array or a `Set` (and takes `true-value` / `false-value`), `:value` keeps its type (a number stays a number), and number and range inputs give numbers.
+- **Errors in event handlers** go through Vue's error handling (`onErrorCaptured`, then `app.config.errorHandler`), not straight out of the event loop.
+- **Blocks and components:** `v-if`, `v-for` (keyed too), slots (named ones too), `provide` / `inject`, `defineProps`, `defineEmits`, `defineExpose`, lifecycle hooks and `<Teleport to="…">` to an element work.
+
+## Blender's widgets
+
+Import Blender's widgets as components. They're always drawn and handled the Blender way: drag a number to change it, <kbd>Ctrl</kbd> to snap, and click to type a value or a sum such as `2*pi`.
+
+```vue title="Panel.vue"
+<script setup>
+import { ref } from 'vue'
+import { NumberSlider, TextField, Button } from '@blender-ui/vue'
+const size = ref(2.5)
+const name = ref('')
+</script>
+
+<template>
+  <main class="p-4 flex flex-col gap-2">
+    <NumberSlider v-model="size" :min="0" :max="10" />
+    <TextField v-model.trim="name" />
+    <Button @click="console.log('apply', size, name)">Apply</Button>
+  </main>
+</template>
+```
+
+<Figure
+  shot="js-vue-tasks"
+  alt="A task list in Vue on BUI: a Blender text field and Add button, a list of tasks with Blender checkboxes, and a progress bar"
+  caption="Blender components in a Vue app: <code>TextField</code>, <code>Button</code>, <code>Checkbox</code> and <code>ProgressBar</code>, with <code>v-model</code> (<code>examples/site/js/TodoVue.vue</code>)."
+/>
+
+The ten components are `Button`, `Checkbox`, `Radio`, `NumberField`, `NumberSlider`, `TextField`, `TextArea`, `ColorSwatch`, `Dropdown` and `ProgressBar`. Each is an HTML element underneath (`NumberSlider` is an `<input type="range">`), so it takes the same attributes and events. Their lowercase twins (`<button>`, `<input>`) look like a browser's controls, except inside a `styled` element.
+
+## Styles
+
+A component's `<style>` and `<style scoped>` blocks work (plain CSS). Only `<style scoped>` is scoped, with a `data-v-…` attribute on the component's elements; a plain `<style>` stays global and applies to every component in the window. BUI adds each stylesheet to a window once, however many instances show it. Tailwind classes and `style` attributes work everywhere, as in the other bindings.
+
+## Signals
+
+Refs are the way to hold state in Vue. For state that lives outside components, `@blender-ui/vue` also exports BUI's signals (`signal`, `memo`, `batch`, `untrack`, `isSignal`). A signal as the value of an attribute or a style binds it: a write updates that node straight away, without a render. (`computed` and `effect` stay Vue's.)
+
+## What doesn't work yet
+
+- **`<Transition>`, `<TransitionGroup>`** and `<KeepAlive>`'s animations: they need a browser's CSS transitions and layout APIs.
+- **`v-html`** and `innerHTML`: build the content with elements.
+- **`v-model.trim`, `.number` and `.lazy` on a plain `<input>`:** Vue's template compiler drops the modifiers there. They work on the Blender widgets, and `type="number"` and `type="range"` give numbers anyway.
+- **`<style lang="scss">`** and the like: only CSS. `v-bind()` in `<style>`, `<style module>`, `src="…"` blocks and non-HTML templates are compile errors, not silently ignored.
+- **TypeScript enums and namespaces on Node.js:** it strips types only, as `node file.ts` does. Use a const object instead of an enum, or run on Bun, which compiles all of TypeScript.
+- **`<select multiple>`.**
+- **Browser APIs** (`window`, `localStorage`, `getComputedStyle`) and **libraries built on the DOM and CSS** (Vuetify, Element Plus): not available. Libraries that are plain JavaScript on top of Vue, such as a store or a router in memory mode, don't touch the DOM, but none is tested with BUI yet.
+
+## Standalone apps
+
+`bui build` bundles `.vue` files too: the Vue package registers its bundler plugin with `bui`, so there's nothing to configure.
+
+```sh
+npx bui build app.js           # app.exe: BUI + QuickJS, one small file
+npx bui build app.js --bun     # app.exe: a Bun executable
+npx bui run app.js             # run on the QuickJS runtime, no build
+```
+
+See [standalone executables](../standalone-executables/) for the options.
+
+## Performance
+
+The same scenes as the other bindings, measured in one session with React and Svelte alongside:
+
+<BenchTable id="jsVue3000" />
+
+<BenchTable id="jsVueStartup" />
+
+- **Put the part that changes in a component of its own.** With the state in the root, Vue re-runs the render function and compares all 3,000 cells (5.4–6.7 ms per update, as React with state does). With the changing cell in its own component only that component re-renders: 25–27 µs.
+- **Compiled components are cached** in `node_modules/.cache/@blender-ui/vue`, and a cached start never loads Vue's compiler: Node.js reaches its first frame in 125 ms and Bun in 101 ms (209 and 189 ms before the cache). Built with `bui build`, the app starts in 66 ms (QuickJS) or 77 ms (Bun).
+
+The [benchmarks page](../../performance/benchmarks/) has the method and the full tables.
+
+## How it works
+
+`@blender-ui/vue` calls Vue's `createRenderer` with node operations over `@blender-ui/native`'s DOM-like tree. `document` makes detached nodes that join a window's retained tree when they're inserted into it, comments and empty text nodes act as anchors without taking any space, and nodes Vue drops are freed natively at the end of the tick.
+
+Props reach an element one at a time. Attributes, `style` and removals go through the same `applyProps` as the [React renderer](../react/); `@click` and friends become BUI events (a handler, or an array of them), and `value` and `checked` are set as properties so a typed value isn't lost.
+
+Templates are compiled by Vue's own compiler with two changes. `v-model` uses the core transform, which gives an element `modelValue` and `onUpdate:modelValue` props, because the DOM's `vModelText` and friends need a browser. Static hoisting into HTML strings is off, because there is no HTML parser to insert it with.
+
+## Next steps
+
+<CardGrid>
+  <Card title="Svelte" href="docs/javascript/svelte/" icon="layers" kicker="JavaScript">
+    Svelte 5 components, runes and snippets on the same engine.
+  </Card>
+  <Card title="Standalone executables" href="docs/javascript/standalone-executables/" icon="terminal" kicker="JavaScript">
+    Turn app.js into one small executable.
+  </Card>
+  <Card title="The DOM-like API" href="docs/javascript/native-api/" icon="book" kicker="JavaScript">
+    The layer underneath: windows, elements, events, headless tests, and how a framework plugs in.
+  </Card>
+</CardGrid>
