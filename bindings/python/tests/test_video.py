@@ -107,6 +107,14 @@ def test_sound():
         except (TypeError, ValueError):
             pass
         assert getattr(v.player, name, None) == before, name
+    # NaN and infinite volumes are refused (ignored or raised), never taken
+    for bad in (float("nan"), float("inf")):
+        before = v.player.volume
+        try:
+            v.player.volume = bad
+        except (TypeError, ValueError, OverflowError):
+            pass
+        assert v.player.volume == before, bad
     loop = Loop(v)
     loop.run(5.0, lambda: v.player.state != bui.VIDEO_LOADING)
     loop.run(6.0, lambda: v.player.has_audio)  # an output can take seconds to wake
@@ -122,8 +130,24 @@ def test_sound():
         assert v.player.muted == want, (v.player.muted, want)
 
 
+def test_no_audio():
+    """A clip without an audio track has no sound, with or without an output device."""
+    if not bui.video_backends:
+        return
+    from bui.components import Video
+    v = Video(CLIP, controls=True, loop=True)
+    loop = Loop(v)
+    loop.run(5.0, lambda: v.player.state != bui.VIDEO_LOADING)
+    if v.player.state == bui.VIDEO_ERROR:
+        print("no decoder for the silent clip here: skipped")
+        return
+    loop.run(1.0)
+    assert not v.player.has_audio, "a clip without an audio track has no audio"
+
+
 def main():
     test_video()
+    test_no_audio()
     test_sound()
     print("video tests passed")
     return 0
