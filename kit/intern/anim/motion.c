@@ -1067,9 +1067,10 @@ static bool read_offset(const char *s, bool bare, double *r_amount, bool *r_perc
 
 /* GSAP's position parameter, all of it and nothing else: a number, "+=n", "-=n", "<", ">",
  * "<n", ">n" (n may be signed), "label", "label+=n", "label-=n", "n%" (of the timeline), and
- * a "%" after any n (of the last added). "" is the end. -1 when it isn't one of them, or the
- * label doesn't exist. */
-static double position(const BKMotion *tl, const char *pos)
+ * a "%" after any n (of the last added). "" is the end. -1 when it isn't one of them. As in GSAP,
+ * a label that doesn't exist yet is made at the end of the timeline, but only when the whole
+ * position is valid: a refused position makes nothing. */
+static double position(BKMotion *tl, const char *pos)
 {
   const double end = tl->dur;
   if (!pos || !*pos) {
@@ -1086,6 +1087,8 @@ static double position(const BKMotion *tl, const char *pos)
   const double rdur = r ? (rtotal >= NEVER ? r->dur : rtotal) / r->ts : 0.0;
   double base = end;
   const char *off = pos;
+  char name[64];
+  bool fresh = false; /* a label to make at the end */
   if (pos[0] == '<' || pos[0] == '>') {
     base = pos[0] == '<' ? rs : rs + (r ? rdur : 0.0);
     off = pos + 1;
@@ -1093,33 +1096,37 @@ static double position(const BKMotion *tl, const char *pos)
   else if ((pos[0] == '+' || pos[0] == '-') && pos[1] == '=') {
     off = pos;
   }
-  else { /* a label that exists, maybe with "+=1" / "-=1" after it */
+  else { /* a label, maybe with "+=1" / "-=1" after it */
     const char *op = pos;
     while (*op && !((*op == '+' || *op == '-') && op[1] == '=')) {
       op++;
     }
-    char name[64];
     const size_t len = (size_t)(op - pos);
-    if (len >= sizeof(name)) {
+    if (len == 0 || len >= sizeof(name)) {
       return -1.0;
     }
     memcpy(name, pos, len);
     name[len] = '\0';
     base = BK_timeline_label_time(tl, name);
     if (base < 0.0) {
-      return -1.0;
+      base = end; /* GSAP makes it at the end */
+      fresh = true;
     }
     off = op;
   }
-  if (!*off) {
-    return sane_time(base);
+  double at = base;
+  if (*off) {
+    double amount;
+    bool percent;
+    if (!read_offset(off, pos[0] == '<' || pos[0] == '>', &amount, &percent)) {
+      return -1.0;
+    }
+    at = base + (percent ? amount / 100.0 * rdur : amount);
   }
-  double amount;
-  bool percent;
-  if (!read_offset(off, pos[0] == '<' || pos[0] == '>', &amount, &percent)) {
-    return -1.0;
+  if (fresh) {
+    label_add(tl, name, end);
   }
-  return sane_time(base + (percent ? amount / 100.0 * rdur : amount));
+  return sane_time(at);
 }
 
 static void ensure_placed(BKMotion *m);

@@ -868,7 +868,7 @@ static void test_positions(void)
   /* everything else is refused, and nothing is placed or made */
   static const char *const bad[] = {"nan", "inf", "-inf", "0x10", "1e999", "<=1", "abc", "+=", "-=x", "<+=", "<x",
                                     "%", "<%", "a+=", "a+=x", "a++1", "1 2", "1x", "+", ".", "e5", "<<", ">>1",
-                                    "missing+=1", "+=nan", "<inf", "1e400%"};
+                                    "+=nan", "<inf", "1e400%"};
   for (size_t i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
     CHECK(BK_timeline_label(tl, "bad", bad[i]) == -1.0);
     BKMotion *x = to(&o, BK_PROP_Y, 1.0f, linear(1.0));
@@ -877,6 +877,13 @@ static void test_positions(void)
     BK_motion_release(x);
   }
   CHECK(BK_timeline_label_time(tl, "bad") < 0.0 && BK_timeline_label_time(tl, "abc") < 0.0);
+  /* GSAP: a label that doesn't exist yet is made at the end of the timeline, by any use of it... */
+  const double end0 = BK_motion_total_duration(tl);
+  CHECK(NEAR(BK_timeline_label(tl, "b2", "later"), end0, 1e-12) && NEAR(BK_timeline_label_time(tl, "later"), end0, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b3", "later+=1"), end0 + 1.0, 1e-12));
+  CHECK(NEAR(BK_timeline_label(tl, "b4", "fresh-=0.5"), end0 - 0.5, 1e-12) && NEAR(BK_timeline_label_time(tl, "fresh"), end0, 1e-12));
+  /* ...and a refused position makes nothing */
+  CHECK(BK_timeline_label(tl, "b5", "ghost+=x") == -1.0 && BK_timeline_label_time(tl, "ghost") < 0.0);
   CHECK(BK_timeline_call(tl, hook_fn, NULL, NULL, "<=1") == -1.0);
   CHECK(BK_motion_total_duration(tl) == 2.0);
   BK_motion_release(c);
