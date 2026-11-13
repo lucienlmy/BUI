@@ -24,9 +24,17 @@ typedef struct Table {
   BKEase inner;  /* expoScale: the ease it scales */
 } Table;
 
+/* The pool's ids are 16 bits (BKEase.table), valid for one generation: BK_anim_exit starts
+ * another, and an ease made before it (its `p[POOL_GEN]` is that generation) reads as none
+ * instead of as whatever table took its id. */
+#define POOL_GEN 3
+
 static struct {
   Table *t;
   int n, cap;
+  uint16_t *index; /* open addressing by content (table id, 0: empty): the same curve is one table */
+  int cap_index;
+  unsigned gen;
   struct Named { char *name; BKEase ease; } *names;
   int nnames, cap_names;
 } P;
@@ -62,14 +70,81 @@ static inline float fast_exp2(float x)
   return b.f * p;
 }
 
+/* an int from a user's float, clamped first (the cast alone is undefined out of range) */
+static inline int clamped_int(float x, int lo, int hi)
+{
+  return x >= (float)lo ? (x < (float)hi ? (int)x : hi) : lo; /* NaN: lo */
+}
+
+static uint32_t table_hash(const Table *tb)
+{
+  uint32_t h = 2166136261u ^ (uint32_t)tb->n;
+  const unsigned char *b = (const unsigned char *)tb->xy;
+  for (size_t i = 0, len = b ? sizeof(float) * 2 * (size_t)tb->n : 0; i < len; i++) {
+    h = (h ^ b[i]) * 16777619u;
+  }
+  b = (const unsigned char *)&tb->inner;
+  for (size_t i = 0; i < sizeof(BKEase); i++) {
+    h = (h ^ b[i]) * 16777619u;
+  }
+  return h;
+}
+
+static bool table_same(const Table *a, const Table *b)
+{
+  return a->n == b->n && !a->xy == !b->xy &&
+         (!a->xy || memcmp(a->xy, b->xy, sizeof(float) * 2 * (size_t)a->n) == 0) &&
+         memcmp(&a->inner, &b->inner, sizeof(BKEase)) == 0;
+}
+
+static void index_insert(uint16_t *index, int cap, uint32_t h, int id)
+{
+  uint32_t i = h & (uint32_t)(cap - 1);
+  while (index[i]) {
+    i = (i + 1) & (uint32_t)(cap - 1);
+  }
+  index[i] = (uint16_t)id;
+}
+
+/* The id of a table with this content, made when there is none; takes `xy` (freed when the
+ * table existed already). 0 when the pool is full: ids are 16 bits. */
 static int pool_add(float *xy, int n, const BKEase *inner)
 {
+  const Table tb = {n, xy, inner ? *inner : (BKEase){0}};
+  const uint32_t h = table_hash(&tb);
+  if (P.cap_index) {
+    for (uint32_t i = h & (uint32_t)(P.cap_index - 1); P.index[i]; i = (i + 1) & (uint32_t)(P.cap_index - 1)) {
+      if (table_same(&P.t[P.index[i] - 1], &tb)) {
+        MEM_SAFE_FREE(xy);
+        return P.index[i];
+      }
+    }
+  }
+  if (P.n >= BK_EASE_POOL_MAX) {
+    MEM_SAFE_FREE(xy);
+    return 0;
+  }
   if (P.n == P.cap) {
     P.cap = P.cap ? P.cap * 2 : 16;
     P.t = (Table *)MEM_reallocN(P.t, sizeof(Table) * (size_t)P.cap);
   }
-  P.t[P.n] = (Table){n, xy, inner ? *inner : (BKEase){0}};
+  P.t[P.n] = tb;
+  if ((P.n + 1) * 2 > P.cap_index) { /* at most half full: rebuilt twice the size */
+    MEM_SAFE_FREE(P.index);
+    P.cap_index = P.cap_index ? P.cap_index * 2 : 64;
+    P.index = (uint16_t *)MEM_callocN(sizeof(uint16_t) * (size_t)P.cap_index, "ease index");
+    for (int i = 0; i < P.n; i++) {
+      index_insert(P.index, P.cap_index, table_hash(&P.t[i]), i + 1);
+    }
+  }
+  index_insert(P.index, P.cap_index, h, P.n + 1);
   return ++P.n; /* 0 is "none" */
+}
+
+/* the table an ease points to, or NULL (none, or made before BK_anim_exit) */
+static const Table *pool_get(const BKEase *e)
+{
+  return e->table && e->table <= P.n && e->p[POOL_GEN] == (float)P.gen ? &P.t[e->table - 1] : NULL;
 }
 
 void bk_ease_exit(void)
@@ -81,8 +156,11 @@ void bk_ease_exit(void)
     MEM_freeN(P.names[i].name);
   }
   MEM_SAFE_FREE(P.t);
+  MEM_SAFE_FREE(P.index);
   MEM_SAFE_FREE(P.names);
+  const unsigned gen = P.gen + 1;
   memset(&P, 0, sizeof(P));
+  P.gen = gen;
   for (int i = 0; i < L.n; i++) {
     MEM_freeN(L.l[i].y);
   }
@@ -174,11 +252,11 @@ static float bezier(const float *p, float x)
 
 static float steps(const float *p, float t)
 {
-  const int n = BK_MAX(1, (int)p[0]), pos = (int)p[1];
+  const int n = clamped_int(p[0], 1, 1000000), pos = clamped_int(p[1], 0, BK_STEPS_BOTH);
   if (t >= 1.0f) {
     return 1.0f;
   }
-  if (t < 0.0f) {
+  if (!(t >= 0.0f)) { /* before it, and NaN */
     return 0.0f;
   }
   int step = (int)floorf(t * (float)n);
@@ -218,7 +296,7 @@ static float base_in(const BKEase *e, float t)
 {
   switch (e->kind) {
     case BK_EASE_POWER: { /* GSAP's are whole powers (quad .. quint): multiplied, not powf */
-      const int k = (int)e->p[0];
+      const int k = clamped_int(e->p[0], 0, 9);
       if ((float)k != e->p[0] || k < 1 || k > 8) {
         return powf(t, e->p[0]);
       }
@@ -239,7 +317,8 @@ static float base_in(const BKEase *e, float t)
       return t * t * ((s + 1.0f) * t - s);
     }
     case BK_EASE_ELASTIC: { /* in(t) = 1 - out(1 - t), out as GSAP and Penner */
-      const float a = BK_MAX(1.0f, e->p[0]), period = e->p[1] / BK_MIN(1.0f, BK_MAX(e->p[0], 1e-3f));
+      const float a = BK_MAX(1.0f, e->p[0]);
+      const float period = BK_MAX(e->p[1] / BK_MIN(1.0f, BK_MAX(e->p[0], 1e-3f)), 1e-3f); /* not 0: a division */
       const float s = period / (2.0f * PI_F) * asinf(1.0f / a);
       const float u = 1.0f - t;
       const float out = u >= 1.0f ? 1.0f :
@@ -259,21 +338,29 @@ float BK_ease_eval(const BKEase *e, float t)
     case BK_EASE_LINEAR:
       return t;
     case BK_EASE_BEZIER:
-      if (t <= 0.0f || t >= 1.0f) {
+      if (!(t > 0.0f && t < 1.0f)) { /* the ends, and NaN */
         return t;
       }
-      /* a table from before BK_anim_exit, or none: solve */
-      return e->table && e->table <= L.n ? lut_eval(L.l[e->table - 1].y, t) : bezier(e->p, t);
+      /* a table from before BK_anim_exit (its curve isn't the one now at its id), or none: solve */
+      return e->table && e->table <= L.n && memcmp(L.l[e->table - 1].p, e->p, sizeof(float[4])) == 0 ?
+                 lut_eval(L.l[e->table - 1].y, t) :
+                 bezier(e->p, t);
     case BK_EASE_STEPS:
       return steps(e->p, t);
-    case BK_EASE_TABLE:
-      return e->table > 0 && e->table <= P.n ? table_eval(&P.t[e->table - 1], t) : t;
+    case BK_EASE_TABLE: {
+      const Table *tb = pool_get(e);
+      return tb ? table_eval(tb, t) : t;
+    }
     case BK_EASE_SLOW:
       return slow(e->p, BK_CLAMP(t, 0.0f, 1.0f));
     case BK_EASE_EXPO_SCALE: {
       const float a = e->p[0], b = e->p[1];
-      const float inner = e->table ? BK_ease_eval(&P.t[e->table - 1].inner, t) : t;
-      return fabsf(b - a) < 1e-9f ? t : (a * powf(b / a, inner) - a) / (b - a);
+      if (!(a > 0.0f && b > 0.0f) || fabsf(b - a) < 1e-9f) { /* the scale is of positive values */
+        return t;
+      }
+      const Table *tb = pool_get(e);
+      const float inner = tb ? BK_ease_eval(&tb->inner, t) : t;
+      return (a * powf(b / a, inner) - a) / (b - a);
     }
     case BK_EASE_ANTICIPATE: {
       const float u = t * 2.0f;
@@ -328,7 +415,9 @@ static float lut_eval(const float *y, float t)
 
 BKEase BK_ease_bezier(float x1, float y1, float x2, float y2)
 {
-  BKEase e = {BK_EASE_BEZIER, BK_EASE_AS_IS, 0, {BK_CLAMP(x1, 0.0f, 1.0f), y1, BK_CLAMP(x2, 0.0f, 1.0f), y2}};
+  BKEase e = {BK_EASE_BEZIER, BK_EASE_AS_IS, 0,
+              {BK_CLAMP(finite_or(x1, 0.0f), 0.0f, 1.0f), finite_or(y1, 0.0f),
+               BK_CLAMP(finite_or(x2, 0.0f), 0.0f, 1.0f), finite_or(y2, 0.0f)}};
   e.table = (uint16_t)bezier_lut(e.p);
   return e;
 }
@@ -341,15 +430,26 @@ BKEase BK_ease_bezier(float x1, float y1, float x2, float y2)
 
 int BK_ease_points(const float (*xy)[2], int n, BKEase *r_ease)
 {
+  *r_ease = (BKEase){BK_EASE_LINEAR, BK_EASE_AS_IS, 0, {0}};
   if (!xy || n < 2) {
     return 0;
   }
   float *copy = (float *)MEM_mallocN(sizeof(float) * 2 * (size_t)n, "ease points");
   memcpy(copy, xy, sizeof(float) * 2 * (size_t)n);
+  for (int i = 0; i < 2 * n; i++) {
+    if (!isfinite(copy[i])) {
+      MEM_freeN(copy);
+      return 0;
+    }
+  }
   for (int i = 1; i < n; i++) { /* x never goes back */
     copy[2 * i] = BK_MAX(copy[2 * i], copy[2 * (i - 1)]);
   }
-  *r_ease = (BKEase){BK_EASE_TABLE, BK_EASE_AS_IS, (uint16_t)pool_add(copy, n, NULL), {0}};
+  const int id = pool_add(copy, n, NULL);
+  if (!id) {
+    return 0;
+  }
+  *r_ease = (BKEase){BK_EASE_TABLE, BK_EASE_AS_IS, (uint16_t)id, {0, 0, 0, (float)P.gen}};
   return 1;
 }
 
@@ -434,14 +534,14 @@ static float custom_bounce_fn(const float *p, float t)
  * p[2] taper (0 none, 1 in, 2 out, 3 both), p[3] clamp */
 static int rough(const float *p, const BKEase *tmpl, BKEase *r_ease)
 {
-  const int n = BK_CLAMP((int)p[1], 2, 200) + 2;
+  const int n = clamped_int(p[1], 2, 200) + 2;
   float(*xy)[2] = (float(*)[2])MEM_mallocN(sizeof(float) * 2 * (size_t)n, "rough ease");
   xy[0][0] = 0.0f;
   xy[0][1] = 0.0f;
   for (int i = 1; i < n - 1; i++) {
     const float x = (float)i / (float)(n - 1);
     float taper = 1.0f;
-    const int tp = (int)p[2];
+    const int tp = clamped_int(p[2], 0, 3);
     if (tp == 1 || tp == 3) {
       taper *= x;
     }
@@ -590,7 +690,7 @@ static int read_args(const char *s, float *v, int max, char *r_word, size_t word
       break;
     }
     char *end;
-    const float f = strtof(s, &end);
+    const float f = finite_or(strtof(s, &end), 0.0f); /* "nan" and "inf" are no numbers */
     if (end != s) {
       if (n < max) {
         v[n++] = *end == '%' ? f / 100.0f : f;
@@ -822,8 +922,12 @@ int BK_ease_parse(const char *name, BKEase *r_ease)
     if (word[0]) {
       BK_ease_parse(word, &inner);
     }
-    *r_ease = (BKEase){BK_EASE_EXPO_SCALE, BK_EASE_AS_IS, (uint16_t)pool_add(NULL, 0, &inner),
-                       {nargs > 0 ? v[0] : 1.0f, nargs > 1 ? v[1] : 2.0f}};
+    const int id = pool_add(NULL, 0, &inner);
+    if (!id) { /* the pool is full */
+      return 0;
+    }
+    *r_ease = (BKEase){BK_EASE_EXPO_SCALE, BK_EASE_AS_IS, (uint16_t)id,
+                       {nargs > 0 ? v[0] : 1.0f, nargs > 1 ? v[1] : 2.0f, 0, (float)P.gen}};
     return 1;
   }
   if (eq(low, "wiggle")) {

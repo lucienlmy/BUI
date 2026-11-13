@@ -9,6 +9,7 @@
 
 #pragma once
 
+#include <math.h>
 #include <stdbool.h>
 
 #include "BLI_string.h"
@@ -20,6 +21,12 @@
 #  define BK_MAX(a, b) ((a) > (b) ? (a) : (b))
 #  define BK_CLAMP(v, a, b) ((v) < (a) ? (a) : ((v) > (b) ? (b) : (v)))
 #endif
+
+/* a float from a user: NaN and infinity are `fallback` */
+static inline float finite_or(float x, float fallback)
+{
+  return isfinite(x) ? x : fallback;
+}
 
 #define MEM_reallocN(p, len) MEM_reallocN_id((p), (len), __func__)
 #define MEM_SAFE_FREE(p) \

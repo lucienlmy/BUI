@@ -227,7 +227,7 @@ static bool parse_func(const char *s, float rgba[4])
     }
     char *end;
     const float f = strtof(p, &end);
-    if (end == p) {
+    if (end == p || !isfinite(f)) {
       break;
     }
     pct[n] = *end == '%';
@@ -307,6 +307,9 @@ int BK_anim_parse_value(const char *text, float r_value[4], int *r_unit, int *r_
   }
   char *end;
   const float f = strtof(text, &end);
+  if (end != text && !isfinite(f)) {
+    return 0; /* "nan", "inf", "1e999": not a value */
+  }
   if (end == text) {
     if (!*r_rel && parse_color(text, r_value)) {
       *r_unit = BK_UNIT_COLOR;
