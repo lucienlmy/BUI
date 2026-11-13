@@ -233,9 +233,7 @@ BKImBuf *imb_play_advance(BKImPlay *p, double now)
   }
   const double c = p->next_seek ? -1.0 : heard(p);
   if (c >= 0.0) {
-    if (sound_wait(p, c) > 0.002) {
-      return NULL; /* the sound isn't there yet */
-    }
+    /* (imb_play_due above returned `now + wait`: here the sound has reached the frame) */
     if (!p->next_wrapped && heard_for(p, c, p->next_pts) - p->next_pts > 0.5) {
       imb_play_seek(p, heard_for(p, c, p->next_pts)); /* far behind the sound: go where it is */
       return NULL;

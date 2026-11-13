@@ -10,6 +10,9 @@
  * once the first frame is loaded, and the frames follow it. It follows the
  * controls (pause, seek, loop); at a rate other than 1 it pauses and the
  * frames keep their own time. It plays on while the picture is off screen.
+ * Only the first audio track plays; each video with sound owns one output stream and thread.
+ * Without an output at the time (none plugged in) the video plays silent and tries again every
+ * few seconds.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
@@ -34,6 +37,7 @@ struct BKVideo {
   uint64_t tex_key; /* BK_video_texture: the frame last copied */
   BKAudio *audio;   /* the sound (NULL: none, or not loaded yet) */
   bool audio_tried;
+  double audio_retry; /* no output at the last try: not before this bk_time (0: not waiting) */
   bool muted, loop, effects; /* effects: keep the system's audio effects (audio.h) */
   bool sound_synced;         /* the sound and the picture agreed: the picture follows the sound */
   float volume;
@@ -83,17 +87,24 @@ static void sound_gain(BKVideo *v)
   bk_audio_set_gain(v->audio, v->muted ? 0.0f : v->volume);
 }
 
+#define SOUND_RETRY_SECONDS 5.0 /* an output that was missing may be there later (plugged in) */
+
 /* Loaded: the sound opens where the frames are (its device and reader open on
- * the device's thread), and becomes their clock. */
+ * the device's thread), and becomes their clock. One output stream (and thread)
+ * per video, playing the file's first audio track. */
 static void sound_open(BKVideo *v)
 {
   BKImPlay *p = play_of(v);
   v->audio_tried = true;
   v->sound_synced = false;
   v->audio = bk_audio_new(imb_play_codec(p), bk_image_entry_path(v->entry),
-                          v->effects ? BK_AUDIO_EFFECTS : 0);  if (!v->audio) {
+                          v->effects ? BK_AUDIO_EFFECTS : 0);
+  if (!v->audio) {
+    /* no output now (or no sound in this codec): try again later, not at every frame */
+    v->audio_retry = imb_play_codec(p) ? bk_time() + SOUND_RETRY_SECONDS : 0.0;
     return;
   }
+  v->audio_retry = 0.0;
   sound_gain(v);
   bk_audio_set_loop(v->audio, v->loop);
   bk_audio_seek(v->audio, imb_play_time(p));
@@ -104,7 +115,9 @@ static void heard(void *owner)
 {
   BKVideo *v = (BKVideo *)owner;
   const int state = BK_video_state(v);
-  if (!v->audio_tried && state != BK_VIDEO_LOADING && state != BK_VIDEO_ERROR) {
+  if (state != BK_VIDEO_LOADING && state != BK_VIDEO_ERROR &&
+      (!v->audio_tried || (v->audio_retry > 0.0 && bk_time() >= v->audio_retry)))
+  {
     sound_open(v);
   }
   sound_follow(v);
@@ -131,7 +144,11 @@ BKVideo *BK_video_new(const char *src)
 void BK_video_free(BKVideo *v)
 {
   if (v) {
-    bk_audio_free(v->audio); /* its device thread stops first */
+    /* The entry can outlive this call (a request still out: cache.c orphans it and it stays
+     * in the playing list until the request returns), and the clock points at `v`: cut it
+     * before `v` goes. */
+    imb_play_set_clock(play_of(v), NULL, NULL);
+    bk_audio_free(v->audio); /* returns at once: the device winds down on its own thread */
     bk_image_entry_free(v->entry);
     bk_image_ref_clear(&v->poster);
     MEM_freeN(v);
@@ -147,6 +164,7 @@ static void changed(BKVideo *v)
 void BK_video_play(BKVideo *v)
 {
   if (v) {
+    v->audio_retry = v->audio_retry > 0.0 ? 1e-9 : 0.0; /* resumed: look for the output now */
     if (BK_video_state(v) == BK_VIDEO_ENDED) {
       bk_audio_seek(v->audio, 0.0); /* an ended video starts over (imb_play_pause) */
     }
