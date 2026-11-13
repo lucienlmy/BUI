@@ -11,6 +11,7 @@
 'use strict'
 
 const { isSignal, effect, unowned, memo } = require('./signals')
+const { vars: checkVars } = require('./validate')
 
 // Keep in sync with bindings/rust/blenderui-node/src/lib.rs.
 const OP = { CREATE: 0, TEXT: 1, SET_ATTR: 2, REMOVE_ATTR: 3, APPEND: 4, INSERT: 5, REMOVE: 6, SET_TEXT: 7, LISTEN: 8, FREE: 9, MOTION: 10 }
@@ -484,8 +485,12 @@ class Element extends Node {
   setAttribute (name, value) {
     if (isSignal(value)) {
       return this._bind(name, value, (v) => {
+        if (name === 'style') { // an object may carry motion values; anything else lets go of them
+          if (v !== null && typeof v === 'object') return this._setAttr(name, styleText(this._splitMotion(v)))
+          if (this._x?.motion?.style) this.setMotion('style', null)
+        }
         if (v == null || v === false) this._removeAttr(name)
-        else this._setAttr(name, name === 'style' && typeof v === 'object' ? styleText(v) : v === true ? '' : v)
+        else this._setAttr(name, v === true ? '' : v)
       })
     }
     this._unbind(name)
@@ -574,18 +579,25 @@ class Element extends Node {
       if (this._x?.motion?.style) this.setMotion('style', null) // replaced: its motion values let go
       return this.setAttribute('style', v)
     }
-    let motion = null
-    for (const k in v) if (isMotionValue(v[k])) (motion ??= {})[k] = v[k]
-    if (motion !== null || this._x?.motion?.style) {
-      this.setMotion('style', motion)
-      if (motion !== null) {
-        v = { ...v }
-        for (const k in motion) delete v[k]
-      }
-    }
     // an object: plain values, or some signals (`{ color: colorSignal }`), then bound
-    for (const k in v) if (isSignal(v[k])) return this.setAttribute('style', memo(() => styleText(v)))
-    this.setAttribute('style', styleText(v))
+    for (const k in v) if (isSignal(v[k])) return this.setAttribute('style', memo(() => styleText(this._splitMotion(v))))
+    this.setAttribute('style', styleText(this._splitMotion(v)))
+  }
+
+  /** The plain part of a style object: its motion values (`{ x: mv }`, or a signal's value) go to
+   *  the engine, which reads them each frame; with none, the ones of an earlier style let go. */
+  _splitMotion (v) {
+    let motion = null
+    let plain = v
+    for (const k in v) {
+      const x = isSignal(v[k]) ? v[k].value : v[k]
+      if (!isMotionValue(x)) continue
+      ;(motion ??= {})[k] = x
+      if (plain === v) plain = { ...v }
+      delete plain[k]
+    }
+    if (motion !== null || this._x?.motion?.style) this.setMotion('style', motion)
+    return plain
   }
 
   /**
@@ -600,6 +612,7 @@ class Element extends Node {
   setMotion (name, value) {
     const which = MOTION_PROPS[name]
     if (which === undefined) throw new TypeError(`blenderui: no Motion prop '${name}'`)
+    if (name !== 'style' && name !== 'variants') value = checkVars(value) // the boundary: times and repeats
     const m = ((this._x ??= {}).motion ??= {})
     if (value == null) delete m[name]
     else m[name] = value

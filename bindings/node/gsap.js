@@ -13,7 +13,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 'use strict'
 
-const { EV, Handle, motionsOf, start, position } = require('./anim')
+const { EV, Handle, motionsOf, start } = require('./anim')
+const check = require('./validate')
 
 /** A tween: GSAP's controls (getters without an argument, setters with one). */
 class Tween extends Handle {
@@ -87,7 +88,7 @@ class Timeline extends Tween {
     } else if (typeof child === 'function') {
       this.call(child, null, pos)
     } else if (child instanceof Tween && child._m === this._m) {
-      this._m.native.motionAdd(this.id, child.id, position(pos))
+      this._m.native.motionAdd(this.id, child.id, check.position(pos))
     } else {
       throw new TypeError('gsap: add() takes a tween, a timeline, a label or a function')
     }
@@ -95,7 +96,7 @@ class Timeline extends Tween {
   }
 
   addLabel (name, pos) {
-    this._m.native.motionLabel(this.id, String(name), position(pos))
+    this._m.native.motionLabel(this.id, String(name), check.position(pos))
     return this
   }
 
@@ -105,12 +106,13 @@ class Timeline extends Tween {
     const tl = this
     this._m._live.set(id, { _event () { try { fn.apply(tl, params ?? []) } catch (err) { queueMicrotask(() => { throw err }) } } })
     this._children.push(id)
-    this._m.native.motionCall(this.id, id, position(pos))
+    this._m.native.motionCall(this.id, id, check.position(pos))
     return this
   }
 }
 
 function timeline (vars = {}) {
+  vars = check.vars(vars)
   const m = motionsOf()
   const id = m._id()
   const tl = new Timeline(m, id, [vars], 'gsap')

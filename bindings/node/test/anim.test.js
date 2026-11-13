@@ -3,7 +3,7 @@
 // clock: `app.advanceClock(ms)` moves it and renders that frame.
 const test = require('node:test')
 const assert = require('node:assert')
-const { App } = require('..')
+const { App, signal } = require('..')
 const { gsap, CustomEase } = require('../gsap')
 const { animate, motionValue } = require('../motion')
 
@@ -294,4 +294,84 @@ test('el.animate: pause after the end, then play() replays; reverse() gets a new
   const first = a.finished
   a.reverse()
   assert.notStrictEqual(a.finished, first, 'reverse() is a new run: a new finished promise')
+})
+
+test('a style signal that supplies a motion value binds it (and a plain value lets go)', async (t) => {
+  const { app, box } = page(t)
+  const el = box('a')
+  const mv = motionValue(20)
+  const style = signal({ width: mv, height: 10 })
+  el.style = style
+  await app.advanceClock(16)
+  assert.ok(near(await width(el), 20), `bound through the signal: ${await width(el)}`)
+  mv.set(70)
+  await app.advanceClock(16)
+  assert.ok(near(await width(el), 70), 'and it moves the element')
+  style.value = 'width: 33px; height: 10px' // a string: the motion value lets go
+  mv.set(90)
+  await app.advanceClock(16)
+  assert.ok(near(await width(el), 33), `${await width(el)}`)
+  // a property that is a signal of a motion value
+  const el2 = box('b')
+  const mv2 = motionValue(15)
+  el2.style = { width: signal(mv2), height: 10 }
+  await app.advanceClock(16)
+  assert.ok(near(await width(el2), 15), `a signal property: ${await width(el2)}`)
+  mv2.set(45)
+  await app.advanceClock(16)
+  assert.ok(near(await width(el2), 45))
+})
+
+test('a position outside GSAP\'s grammar throws, the grammar passes', async (t) => {
+  const { app, box } = page(t)
+  box('a')
+  const tl = gsap.timeline()
+  for (const ok of [0, 1.5, -1, '+=1', '-=0.5', '<', '>', '<0.5', '>-0.2', '<+=1', 'intro', 'intro+=0.5', 'a-b-=1', '50%', '+=25%', '<50%', null, undefined]) {
+    assert.doesNotThrow(() => tl.to('#a', { width: 20, duration: 0.1 }, ok), `accepts ${String(ok)}`)
+  }
+  for (const bad of ['<=1', 'abc def', '++1', '1x', '', '=1', '<<', '50%%']) {
+    assert.throws(() => tl.to('#a', { width: 20 }, bad), RangeError, `rejects '${bad}'`)
+  }
+  for (const bad of [{}, [], true, () => 0]) assert.throws(() => tl.to('#a', { width: 20 }, bad), TypeError)
+  for (const bad of [NaN, Infinity]) assert.throws(() => tl.addLabel('x', bad), RangeError)
+  assert.throws(() => tl.add(tl, '<=1'), RangeError)
+  await app.advanceClock(16)
+})
+
+test('times and repeats at the boundary: NaN and Infinity throw, negative is 0, huge repeats clamp', async (t) => {
+  const { app, box } = page(t)
+  const a = box('a')
+  await width(a)
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    assert.throws(() => gsap.to('#a', { width: 20, duration: bad }), RangeError, `duration ${bad}`)
+    assert.throws(() => gsap.to('#a', { width: 20, delay: bad }), RangeError, `delay ${bad}`)
+    assert.throws(() => gsap.to('#a', { width: 20, repeatDelay: bad }), RangeError, `repeatDelay ${bad}`)
+    assert.throws(() => animate('#a', { width: 20 }, { duration: bad }), RangeError, `motion duration ${bad}`)
+    assert.throws(() => gsap.timeline({ defaults: { duration: bad } }), RangeError, `defaults ${bad}`)
+  }
+  assert.throws(() => gsap.to('#a', { width: 20, repeat: NaN }), RangeError)
+  assert.throws(() => gsap.to('#a', { width: 20, duration: '1' }), TypeError)
+  assert.throws(() => a.animate([{ width: '10px' }, { width: '20px' }], { duration: NaN }), RangeError)
+  assert.throws(() => a.animate([{ width: '10px' }, { width: '20px' }], { duration: 100, iterations: NaN }), RangeError)
+  const tw = gsap.to('#a', { width: 20, duration: 1 })
+  for (const bad of [NaN, Infinity]) {
+    assert.throws(() => tw.seek(bad), RangeError, `seek ${bad}`)
+    assert.throws(() => tw.timeScale(bad), RangeError)
+    assert.throws(() => tw.progress(bad), RangeError)
+  }
+  tw.kill()
+  // negative durations and delays are 0: the tween ends at once, where it is going
+  gsap.to('#a', { width: 60, duration: -2, delay: -1 })
+  await app.advanceClock(50)
+  assert.ok(near(await width(a), 60), `negative duration is 0: ${await width(a)}`)
+  // a repeat beyond the maximum runs, clamped (it does not throw or wrap)
+  const big = gsap.to('#a', { width: 80, duration: 0.1, ease: 'none', repeat: 1e12 })
+  const forever = gsap.to('#a', { height: 80, duration: 0.1, repeat: Infinity })
+  await width(a) // the next layout finds the elements
+  await app.advanceClock(250)
+  assert.ok(near(big.totalDuration(), 100000.1, 1), `clamped to 1,000,000 repeats: ${big.totalDuration()}`)
+  assert.strictEqual(big.isActive(), true)
+  assert.ok((await a.getBoundingClientRect()).height > 10, 'Infinity repeats: forever, and it runs')
+  big.kill()
+  forever.kill()
 })

@@ -9,6 +9,7 @@
 'use strict'
 
 const { OP, isMotionValue } = require('./dom')
+const check = require('./validate')
 
 // The engine's events (kit/include/BUI_anim.h, BK_EV_MOTION_*) and a
 // timeline's call() (blenderui-jsview/src/motion.rs, EV_CALL).
@@ -73,9 +74,6 @@ function motionsOf (app) {
   return m
 }
 
-/** `"<"`, `"+=1"`, `1.5` ... as the engine's position text (`""`: the end). */
-function position (p) { return p == null ? '' : String(p) }
-
 /** An element as a selector: a hidden attribute only the native tree sees. */
 function elementSelector (el) {
   const w = el.ownerWindow
@@ -135,6 +133,7 @@ class Handle {
 
   _ctl (op, value) {
     if (this._needed) this._m._live.set(this.id, this) // its events matter again
+    if (typeof value === 'number') check.finite(`${op} value`, value) // before anything changes
     this._done = false
     this._m.native.motionControl(this.id, op, value)
     return this
@@ -205,6 +204,8 @@ Handle.prototype._child = false
  *  `timeline` at `pos`, else a handle of class `Kind`. */
 function start (verb, targets, vars, extra, { timeline = null, pos, Kind = null, flavor = 'gsap', events = 0 } = {}) {
   if (vars === null || typeof vars !== 'object') throw new TypeError('blenderui: vars must be an object')
+  vars = check.vars(vars)
+  if (verb === 'animate') extra = check.vars(extra)
   const t = targetsOf(targets)
   const m = timeline ? timeline._m : (t.motions ?? motionsOf(t.app))
   if (timeline && t.motions && t.motions !== m) throw new TypeError('blenderui: a motion value of another App can\'t be added to this timeline')
@@ -215,7 +216,7 @@ function start (verb, targets, vars, extra, { timeline = null, pos, Kind = null,
   if (t.object || t.values?.some((v) => v._on !== null)) events |= EV.UPDATE
   m._flush()
   const names = m.native.motionTween(id, verb, t.selector, t.values?.map((v) => v.id), t.object, vars, extra,
-    timeline?.id, timeline ? position(pos) : undefined, events | (Kind ? EV.COMPLETE | EV.REVERSE_COMPLETE : 0))
+    timeline?.id, timeline ? check.position(pos) : undefined, events | (Kind ? EV.COMPLETE | EV.REVERSE_COMPLETE : 0))
   if (names) h._object = [t.object, names]
   if (t.values) h._values = t.values
   h._needed = !!(names || t.values || CALLBACKS.some(([bit]) => callback(sources, bit)))
@@ -292,4 +293,4 @@ class MotionValue {
 
 function motionValue (init, app) { return new MotionValue(init, app) }
 
-module.exports = { EV, Motions, Handle, MotionValue, motionValue, isMotionValue, motionsOf, start, position }
+module.exports = { EV, Motions, Handle, MotionValue, motionValue, isMotionValue, motionsOf, start }
