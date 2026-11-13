@@ -1013,7 +1013,8 @@ fn paint_node(frame: &Frame, styles: &StyleStore, tc: &mut TextCache, i: usize, 
         Content::Text(t) if n.taffy.is_some() || n.folded => {
             let flags = text::flags(c);
             let nowrap = matches!(c.white_space, WhiteSpace::NoWrap | WhiteSpace::Pre);
-            if !c.ellipsis && !t.contains([' ', '\n']) && text::break_mode(c) == 0 {
+            let ellipsis = c.ellipsizes();
+            if !ellipsis && !t.contains([' ', '\n']) && text::break_mode(c) == 0 {
                 // one word: one line (the common label case)
                 let lw = tc.width(t, c.font_size, flags);
                 let x = match c.text_align {
@@ -1031,7 +1032,7 @@ fn paint_node(frame: &Frame, styles: &StyleStore, tc: &mut TextCache, i: usize, 
             };
             let lh = c.line_px();
             for (k, line) in lines.iter().enumerate() {
-                let line = if c.ellipsis { tc.ellipsize(line, c.font_size, flags, b.size.width) }
+                let line = if ellipsis { tc.ellipsize(line, c.font_size, flags, b.size.width + 0.5) }
                            else { line.clone() };
                 let lw = tc.width(&line, c.font_size, flags);
                 let x = match c.text_align {

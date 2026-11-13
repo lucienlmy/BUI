@@ -27,7 +27,8 @@ These apply to inline content:
 
 - `white-space`: `normal`, `nowrap`, `pre`, `pre-wrap`, `pre-line`
 - `text-align`, `text-indent`, `letter-spacing`, `word-spacing`
-- `vertical-align: sub | super`, `text-transform`, `text-overflow: ellipsis`
+- `vertical-align: sub | super`, `text-transform`
+- `text-overflow: ellipsis | clip`: on a block whose `overflow-x` is not `visible` (usually with `white-space: nowrap`, Tailwind's `truncate`), a line wider than the content box is cut to it and ends with `…`; with `overflow: visible` it has no effect, as in CSS
 - `word-break: break-all`, `overflow-wrap: anywhere | break-word`, `tab-size`
 
 `text-align: justify` aligns left for now <ComingSoon inline />.

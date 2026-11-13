@@ -568,6 +568,12 @@ impl Computed {
         }
     }
 
+    /// `text-overflow: ellipsis` takes effect: it only applies to a block
+    /// container that clips its overflow horizontally (CSS Overflow 3).
+    pub fn ellipsizes(&self) -> bool {
+        self.ellipsis && self.layout.overflow.x != taffy::Overflow::Visible
+    }
+
     pub fn bold(&self) -> bool {
         self.weight >= 600
     }
@@ -1376,10 +1382,12 @@ fn line_height(t: &Tok, ctx: &Ctx) -> Option<LineHeight> {
         Tok::Ident(s) if s == "normal" => LineHeight::Normal,
         Tok::Num(n) => LineHeight::Factor(*n),
         Tok::Pct(p) => LineHeight::Factor(p / 100.0),
-        _ => LineHeight::Px(match length(t)? {
-            Length::Em(e) => e * ctx.c.font_size,
-            other => other.to_px(&ctx.u)?,
-        }),
+        _ => match length(t)? {
+            // `calc(1.25 / 0.875)` (Tailwind's `text-sm`) is a number, a factor of the font size
+            Length::Calc(c) if c.is_number() => LineHeight::Factor(c.eval_units(&ctx.u, 0.0)),
+            Length::Em(e) => LineHeight::Px(e * ctx.c.font_size),
+            other => LineHeight::Px(other.to_px(&ctx.u)?),
+        },
     })
 }
 

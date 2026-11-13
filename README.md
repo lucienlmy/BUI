@@ -1381,6 +1381,7 @@ rsx! {
     // control flow right in the markup
     <ul>{for item in items { <li class="py-1">{item}</li> }}</ul>
     {if dirty { <p text-amber-400>"Unsaved changes"</p> }}
+    {maybe_title}   // an Option<T> is an element: None renders nothing
 
     // real CSS, evaluated by the engine
     <div style="width: calc(100% - 2 * var(--gap)); background: color-mix(in oklch, var(--brand) 60%, white)" />
