@@ -33,4 +33,4 @@ export function transform (input: number[], output: number[]): (v: number) => nu
 
 /** An element removed while it has an `exit` animates out before it goes (every element does, in or out of
  *  this component); it passes its children through, so Motion code that names it works. */
-export function AnimatePresence (props: { children?: import('react').ReactNode, [prop: string]: unknown }): import('react').ReactElement | null
+export function AnimatePresence (props: { children?: import('react').ReactNode, [prop: string]: unknown }): import('react').ReactNode
