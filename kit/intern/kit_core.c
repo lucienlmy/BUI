@@ -2246,6 +2246,21 @@ int BK_needs_render(BKContext *ctx)
 
 static void anim_step(BKContext *ctx);
 
+/* The window's size is `w` x `h`: lays out and reports the new geometry (BK_EV_CONFIGURE), whose
+ * handlers can rebuild the tree before anything is drawn. True when the size changed. */
+int BK_configure(BKContext *ctx, int w, int h)
+{
+  const bool changed = w != ctx->win_w || h != ctx->win_h;
+  if (changed) {
+    ctx->win_w = w;
+    ctx->win_h = h;
+    ctx->layout_dirty = true;
+    layout(ctx);
+    bk_views_check(ctx);
+  }
+  return changed;
+}
+
 int BK_render(BKContext *ctx, BuiRaster *r, int w, int h, int full)
 {
   BK_image_poll(); /* decoded images arrive (and damage where they show) */
@@ -2256,11 +2271,8 @@ int BK_render(BKContext *ctx, BuiRaster *r, int w, int h, int full)
     BK_anim_tick(bk_time()); /* motions write their values (nodes damage themselves) */
   }
   anim_step(ctx);
-  if (w != ctx->win_w || h != ctx->win_h || BUI_raster_width(r) != w ||
-      BUI_raster_height(r) != h)
-  {
-    ctx->win_w = w;
-    ctx->win_h = h;
+  BK_configure(ctx, w, h);
+  if (BUI_raster_width(r) != w || BUI_raster_height(r) != h) {
     ctx->layout_dirty = true;
   }
   if (full || ctx->layout_dirty) {

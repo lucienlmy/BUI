@@ -32,6 +32,7 @@
 #  define ID_ANIM 2
 #  define ID_WAKE 3 /* BK_TIMER_CUSTOM: custom nodes' frames */
 #  define ID_GPU 4  /* checks the GPU device until it is ready */
+#  define ID_SIZE 5 /* the render of a size change, one refresh after the last */
 #  define ID_USER_BASE 1000
 
 /* How a transparent window shows its frame: UpdateLayeredWindow copies the software raster
@@ -46,6 +47,11 @@ struct BKWindow {
   BuiRaster *raster;
   BKWindowCallbacks cb;
   int render_pending, frames, cursor, tip_id, next_timer, tracking, full;
+  int present_full;            /* the next present covers the whole frame (area became visible) */
+  int size_wait;               /* ID_SIZE is armed */
+  int presented_whole;         /* the last present was of the whole frame */
+  int pos_x, pos_y;            /* the window's last position */
+  LARGE_INTEGER last_render;   /* when the last render ended */
   int want_frame, frame_vsync; /* BK_window_request_frame */
   LARGE_INTEGER frame_start;    /* when the last animation frame began */
   float scale;
@@ -544,21 +550,92 @@ static void present(BKWindow *win, int full)
   }
 }
 
-static void do_render(BKWindow *win)
+/* BUI_PROFILE: kit raster and present times, averaged over 60 frames, and at exit a summary of
+ * the window's renders (how many, how long, and how long the last size change took to reach the
+ * screen). */
+static struct {
+  int on, sizes, renders;
+  double ms[8192]; /* one sample per render (ring) */
+  LARGE_INTEGER last_size, last_present;
+} g_prof = {-1};
+
+static double qpc_ms(LARGE_INTEGER a, LARGE_INTEGER b)
 {
-  gpu_window_check(win);
+  LARGE_INTEGER freq;
+  QueryPerformanceFrequency(&freq);
+  return (double)(b.QuadPart - a.QuadPart) * 1000.0 / (double)freq.QuadPart;
+}
+
+static int prof_cmp(const void *a, const void *b)
+{
+  const double x = *(const double *)a, y = *(const double *)b;
+  return (x > y) - (x < y);
+}
+
+static void prof_report(void)
+{
+  const int n = g_prof.renders < 8192 ? g_prof.renders : 8192;
+  double sum = 0.0;
+  for (int i = 0; i < n; i++) {
+    sum += g_prof.ms[i];
+  }
+  qsort(g_prof.ms, (size_t)n, sizeof(double), prof_cmp);
+  fprintf(stderr,
+          "kit stats: sizes %d  renders %d  avg %.2f ms  p95 %.2f ms  last size to present %.2f ms\n",
+          g_prof.sizes, g_prof.renders, n ? sum / n : 0.0, n ? g_prof.ms[(n * 95) / 100] : 0.0,
+          qpc_ms(g_prof.last_size, g_prof.last_present));
+}
+
+static int prof_on(void)
+{
+  if (g_prof.on < 0) {
+    g_prof.on = getenv("BUI_PROFILE") != NULL;
+    if (g_prof.on) {
+      atexit(prof_report);
+    }
+  }
+  return g_prof.on;
+}
+
+/* Runs the app's timers that are due now (a rebuild asked for with a 0 ms timer) ahead of the
+ * render, as the WM_TIMER that would come after it. */
+static void fire_due_timers(BKWindow *win)
+{
+  for (int i = 0; i < win->ntimers && win->cb.on_timer;) {
+    const UINT_PTR id = win->timers[i].id;
+    if (id >= ID_USER_BASE && win->timers[i].due <= GetTickCount64()) {
+      timer_kill(win, id);
+      win->cb.on_timer(win->cb.data, win, (int)(id - ID_USER_BASE));
+      i = 0; /* the callback can arm or kill timers */
+    }
+    else {
+      i++;
+    }
+  }
+}
+
+static void client_size(const BKWindow *win, int *r_w, int *r_h)
+{
   RECT rc;
   GetClientRect(win->hwnd, &rc);
-  const int w = BK_MAX(1, rc.right - rc.left), h = BK_MAX(1, rc.bottom - rc.top);
-  const int resized = BUI_raster_width(win->raster) != w || BUI_raster_height(win->raster) != h;
-  /* BUI_PROFILE: kit raster and present times, averaged over 60 frames */
-  static int prof = -1;
-  static double acc_render, acc_present;
-  static int acc_n;
-  LARGE_INTEGER t0, t1, t2, freq;
-  if (prof < 0) {
-    prof = getenv("BUI_PROFILE") != NULL;
+  *r_w = BK_MAX(1, rc.right - rc.left);
+  *r_h = BK_MAX(1, rc.bottom - rc.top);
+}
+
+static void do_render(BKWindow *win)
+{
+  if (IsIconic(win->hwnd)) {
+    win->present_full = 1; /* the restored window shows a whole frame; no layout at 0x0 meanwhile */
+    return;
   }
+  gpu_window_check(win);
+  int w, h;
+  client_size(win, &w, &h);
+  const int whole = BUI_raster_width(win->raster) != w || BUI_raster_height(win->raster) != h ||
+                    win->present_full;
+  static double acc_render, acc_present;
+  LARGE_INTEGER t0, t1, t2;
+  const int prof = prof_on();
   QueryPerformanceCounter(&t0);
   if (BUI_raster_gpu_poll(win->raster)) {
     win->full = 1; /* the renderer changed: its frame starts empty */
@@ -567,26 +644,99 @@ static void do_render(BKWindow *win)
   ime_sync(win); /* the draw placed the caret */
   QueryPerformanceCounter(&t1);
   win->full = 0;
-  if (regions || resized) {
-    present(win, resized);
+  if (regions || whole) {
+    present(win, whole);
+    win->presented_whole = whole;
+    win->present_full = 0;
     win->frames++;
   }
   QueryPerformanceCounter(&t2);
+  win->last_render = t2;
   if (prof) {
-    QueryPerformanceFrequency(&freq);
-    acc_render += (double)(t1.QuadPart - t0.QuadPart) * 1000.0 / (double)freq.QuadPart;
-    acc_present += (double)(t2.QuadPart - t1.QuadPart) * 1000.0 / (double)freq.QuadPart;
-    if (++acc_n == 60) {
+    acc_render += qpc_ms(t0, t1);
+    acc_present += qpc_ms(t1, t2);
+    g_prof.ms[g_prof.renders++ & 8191] = qpc_ms(t0, t2);
+    g_prof.last_present = t2;
+    if (g_prof.renders % 60 == 0) {
       fprintf(stderr, "kit ms: raster %.2f  present %.2f  (%dx%d)\n", acc_render / 60,
               acc_present / 60, w, h);
       acc_render = acc_present = 0;
-      acc_n = 0;
     }
   }
   if (BK_animating(win->ctx)) {
     vsync(); /* pace animation frames to the display */
     host_request(win);
   }
+}
+
+/* One render: the new size reaches the app before anything is drawn (its rebuild, the frame
+ * below, then draws once at this size, not a stale tree and then the rebuilt one), the app's frame
+ * runs, the window renders and presents. */
+static void render_message(BKWindow *win, bool serve_between)
+{
+  if (!IsIconic(win->hwnd)) {
+    int w, h;
+    client_size(win, &w, &h);
+    if (BK_configure(win->ctx, w, h)) {
+      fire_due_timers(win);
+      if (!win->hwnd) {
+        return;
+      }
+    }
+  }
+  if (win->want_frame && win->cb.on_frame) {
+    /* render_pending is still set: edits made here join this frame */
+    win->want_frame = 0;
+    QueryPerformanceCounter(&win->frame_start);
+    win->cb.on_frame(win->cb.data, win);
+    if (!win->hwnd) { /* the frame callback can close the window (as on X11, Wayland and Cocoa) */
+      return;
+    }
+  }
+  win->render_pending = 0;
+  do_render(win);
+  if (win->want_frame) { /* the host asked for the next frame */
+    bk_frame_ms = frame_ms(win);
+    bk_frame_budget_ms = win->frame_vsync ? refresh_ms() : 0.0;
+    if (win->frame_vsync && bk_frame_ms < refresh_ms() - 1.5) {
+      vsync(); /* early: wait for the next refresh; late: start right away */
+    }
+    if (serve_between) {
+      serve_input(); /* posted renders beat hardware input: without this an animated window starves */
+      if (!win->hwnd) { /* an input message closed the window */
+        return;
+      }
+    }
+    host_request(win);
+  }
+  else {
+    bk_frame_ms = 0.0; /* the animation ended */
+  }
+}
+
+/* A size change while the user drags renders at once, from the WM_SIZE (the modal loop sends it, no
+ * app callback is running), so the frame DWM composes for the new window size is already at that
+ * size, never an older frame or its stretched or cropped copy. Other size changes (the app's own
+ * SetWindowPos can come from inside its callbacks) render at most once per refresh, from the
+ * render message or, when one just ran, a timer (the render reads the latest client size). */
+static void size_request(BKWindow *win)
+{
+  if (win->user_sizing) {
+    win->render_pending = 1; /* edits made by the render join it */
+    render_message(win, false);
+    return;
+  }
+  LARGE_INTEGER now;
+  QueryPerformanceCounter(&now);
+  const double wait = refresh_ms() - qpc_ms(win->last_render, now);
+  if (wait > 1.5 && !win->render_pending) {
+    if (!win->size_wait) {
+      win->size_wait = 1;
+      timer_arm(win, ID_SIZE, (UINT)wait);
+    }
+    return;
+  }
+  host_request(win);
 }
 
 /* -- input mapping -- */
@@ -654,41 +804,38 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   BKContext *ctx = win->ctx;
   switch (msg) {
     case WM_BK_RENDER:
-      if (win->want_frame && win->cb.on_frame) {
-        /* render_pending is still set: edits made here join this frame */
-        win->want_frame = 0;
-        QueryPerformanceCounter(&win->frame_start);
-        win->cb.on_frame(win->cb.data, win);
-        if (!win->hwnd) { /* the frame callback can close the window (as on X11, Wayland and Cocoa) */
-          return 0;
-        }
-      }
-      win->render_pending = 0;
-      do_render(win);
-      if (win->want_frame) { /* the host asked for the next frame */
-        bk_frame_ms = frame_ms(win);
-        bk_frame_budget_ms = win->frame_vsync ? refresh_ms() : 0.0;
-        if (win->frame_vsync && bk_frame_ms < refresh_ms() - 1.5) {
-          vsync(); /* early: wait for the next refresh; late: start right away */
-        }
-        serve_input();
-        if (!win->hwnd) { /* an input message closed the window */
-          return 0;
-        }
-        host_request(win);
-      }
-      else {
-        bk_frame_ms = 0.0; /* the animation ended */
-      }
+      render_message(win, true);
       return 0;
     case WM_PAINT: {
+      /* An exposed region has no content in the compositor's surface (it was off screen or
+       * covered while dirty-rect presents went by): the frame is presented whole, before the next
+       * refresh, from the render message (a size change's render covers it too). */
       PAINTSTRUCT ps;
       BeginPaint(hwnd, &ps);
       EndPaint(hwnd, &ps);
-      win->full = 1;
-      do_render(win);
-      present(win, 1);
+      LARGE_INTEGER now;
+      QueryPerformanceCounter(&now);
+      /* the paint a size change leaves behind finds the frame just presented whole */
+      if (!(win->presented_whole && qpc_ms(win->last_render, now) < 50.0)) {
+        win->present_full = 1;
+        host_request(win);
+      }
+      win->presented_whole = 0;
       return 0;
+    }
+    case WM_WINDOWPOSCHANGED: {
+      /* A moved window can show what it never composed: the GPU frame is presented whole. The
+       * software frame is repainted by the WM_PAINT of the exposed region. */
+      const WINDOWPOS *wpos = (const WINDOWPOS *)lp;
+      const int moved = !(wpos->flags & SWP_NOMOVE) && (wpos->x != win->pos_x || wpos->y != win->pos_y);
+      win->pos_x = wpos->x;
+      win->pos_y = wpos->y;
+      if (BUI_raster_is_gpu(win->raster) && (moved || (wpos->flags & SWP_SHOWWINDOW))) {
+        win->present_full = 1;
+        win->presented_whole = 0;
+        host_request(win);
+      }
+      break; /* DefWindowProc sends WM_SIZE and WM_MOVE */
     }
     case WM_ERASEBKGND:
       if (win->layered == LAYER_GPU) { /* zero alpha: DWM blends the surface with what is behind */
@@ -698,7 +845,17 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       }
       return 1;
     case WM_SIZE:
-      host_request(win);
+      if (prof_on()) {
+        g_prof.sizes++;
+        QueryPerformanceCounter(&g_prof.last_size);
+      }
+      if (wp == SIZE_MINIMIZED) {
+        return 0; /* no layout at 0x0; the restore presents a whole frame */
+      }
+      if (wp == SIZE_RESTORED || wp == SIZE_MAXIMIZED) {
+        win->present_full = 1; /* the surface may be gone after a minimize */
+      }
+      size_request(win);
       return 0;
     case WM_DPICHANGED: {
       win->scale = HIWORD(wp) / 96.0f;
@@ -895,7 +1052,12 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
       return 0;
     }
     case WM_TIMER:
-      if (wp == ID_TIP) {
+      if (wp == ID_SIZE) {
+        timer_kill(win, ID_SIZE);
+        win->size_wait = 0;
+        host_request(win);
+      }
+      else if (wp == ID_TIP) {
         timer_kill(win, ID_TIP);
         BK_timer(ctx, win->tip_id);
       }

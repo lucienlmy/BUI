@@ -14,6 +14,7 @@ struct BuiRaster {
   int w, h;
   uint32_t *pix;  /* current frame */
   uint32_t *prev; /* last presented frame, for damage */
+  size_t pix_cap; /* pixels allocated in each (>= w * h) */
   int full_damage;
 
   /* clip, exclusive max, always inside the buffer */
@@ -141,19 +142,28 @@ static void raster_reset_clip(BuiRaster *r)
 
 static void raster_alloc(BuiRaster *r, int w, int h)
 {
-  free(r->pix);
-  free(r->prev);
   r->w = w > 0 ? w : 1;
   r->h = h > 0 ? h : 1;
-  if (r->gpu) { /* the frame lives on the GPU */
-    r->pix = r->prev = NULL;
-    r->full_damage = 1;
+  const size_t need = (size_t)r->w * r->h;
+  r->full_damage = 1;
+  if (!r->gpu && r->pix && r->prev && need <= r->pix_cap && r->pix_cap <= 2 * need) {
+    /* a drag-resize reuses the buffers: the frame is redrawn whole and `prev` follows it in
+     * BUI_raster_end_frame, so only the pixels start clear (as calloc's) */
+    memset(r->pix, 0, need * sizeof(uint32_t));
     raster_reset_clip(r);
     return;
   }
-  r->pix = (uint32_t *)calloc((size_t)r->w * r->h, sizeof(uint32_t));
-  r->prev = (uint32_t *)calloc((size_t)r->w * r->h, sizeof(uint32_t));
-  r->full_damage = 1;
+  free(r->pix);
+  free(r->prev);
+  r->pix_cap = 0;
+  if (r->gpu) { /* the frame lives on the GPU */
+    r->pix = r->prev = NULL;
+    raster_reset_clip(r);
+    return;
+  }
+  r->pix_cap = need + need / 8; /* slack: the next sizes of a drag fit */
+  r->pix = (uint32_t *)calloc(r->pix_cap, sizeof(uint32_t));
+  r->prev = (uint32_t *)calloc(r->pix_cap, sizeof(uint32_t));
   raster_reset_clip(r);
 }
 
