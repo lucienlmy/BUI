@@ -11,5 +11,5 @@ snippets = ["./snippets/rust.json", "./snippets/bui rsx.json"]
 # `rev` is a commit that contains grammar/src (regenerate with `tree-sitter generate`).
 [grammars.bui_rsx]
 repository = "https://github.com/ppmpreetham/BUI"
-rev = "REV"
+rev = "7c51f9fdf70f564399e12594f4f93a6e1675d5dc"
 path = "addons/bui-zed/grammar"
