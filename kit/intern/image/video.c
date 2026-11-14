@@ -3,7 +3,16 @@
  * rate, loop), shown on "video" and "image" nodes and canvas items, or
  * copied into a texture for Dear ImGui. The "video" node draws Blender-style
  * controls over it: a play/pause button and a scrubber with the time, like
- * the Timeline's playback controls and frame slider.
+ * the Timeline's playback controls and frame slider, and a speaker button
+ * when the video has sound.
+ *
+ * Sound (audio/audio.c): the file's audio track plays on the default output
+ * once the first frame is loaded, and the frames follow it. It follows the
+ * controls (pause, seek, loop); at a rate other than 1 it pauses and the
+ * frames keep their own time. It plays on while the picture is off screen.
+ * Only the first audio track plays; each video with sound owns one output stream and thread.
+ * Without an output at the time (none plugged in) the video plays silent and tries again every
+ * few seconds.
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
@@ -13,6 +22,7 @@
 
 #include "MEM_guardedalloc.h"
 
+#include "../audio/audio.h"
 #include "image.h"
 #include "kit_intern.h"
 
@@ -25,6 +35,13 @@ struct BKVideo {
   void (*fn)(BKVideo *v, int state, void *data);
   void *data;
   uint64_t tex_key; /* BK_video_texture: the frame last copied */
+  BKAudio *audio;   /* the sound (NULL: none, or not loaded yet) */
+  bool audio_tried;
+  double audio_retry; /* no output at the last try: not before this bk_time (0: not waiting) */
+  bool muted, loop, effects; /* effects: keep the system's audio effects (audio.h) */
+  bool sound_synced;         /* the sound and the picture agreed: the picture follows the sound */
+  float volume;
+  double rate;
 };
 
 static BKImPlay *play_of(const BKVideo *v)
@@ -32,11 +49,80 @@ static BKImPlay *play_of(const BKVideo *v)
   return bk_image_entry_play(v->entry);
 }
 
+/* The frames' clock: the sound heard. A sound that has just started (the output took its
+ * time to open, or opened again) was set to where the picture was when it was asked, which is
+ * stale: it goes to where the picture is now, behind or ahead, and the frames keep their own
+ * time until it is there. Once the two agree the picture follows the sound, which then keeps
+ * the beat even when the picture wasn't decoded for a while (play.c catches the picture up). */
+static double sound_clock(void *data)
+{
+  BKVideo *v = (BKVideo *)data;
+  const double c = bk_audio_clock(v->audio);
+  if (c < 0.0) {
+    return -1.0;
+  }
+  if (!v->sound_synced) {
+    const double t = imb_play_time(play_of(v)), dur = BK_video_duration(v);
+    double off = t - c; /* > 0: the sound is behind the picture */
+    if (v->loop && dur > 0.0) {
+      off -= dur * floor(off / dur + 0.5); /* round a loop: the nearest way round */
+    }
+    if (fabs(off) > 0.25) {
+      bk_audio_seek(v->audio, t + 0.1); /* ahead by about the time it takes to be heard */
+      return -1.0;
+    }
+    v->sound_synced = true;
+  }
+  return c;
+}
+
+/* The sound plays while the video plays at its own speed. */
+static void sound_follow(BKVideo *v)
+{
+  bk_audio_play(v->audio, BK_video_state(v) == BK_VIDEO_PLAYING && v->rate == 1.0);
+}
+
+static void sound_gain(BKVideo *v)
+{
+  bk_audio_set_gain(v->audio, v->muted ? 0.0f : v->volume);
+}
+
+#define SOUND_RETRY_SECONDS 5.0 /* an output that was missing may be there later (plugged in) */
+
+/* Loaded: the sound opens where the frames are (its device and reader open on
+ * the device's thread), and becomes their clock. One output stream (and thread)
+ * per video, playing the file's first audio track. */
+static void sound_open(BKVideo *v)
+{
+  BKImPlay *p = play_of(v);
+  v->audio_tried = true;
+  v->sound_synced = false;
+  v->audio = bk_audio_new(imb_play_codec(p), bk_image_entry_path(v->entry),
+                          v->effects ? BK_AUDIO_EFFECTS : 0);
+  if (!v->audio) {
+    /* no output now (or no sound in this codec): try again later, not at every frame */
+    v->audio_retry = imb_play_codec(p) ? bk_time() + SOUND_RETRY_SECONDS : 0.0;
+    return;
+  }
+  v->audio_retry = 0.0;
+  sound_gain(v);
+  bk_audio_set_loop(v->audio, v->loop);
+  bk_audio_seek(v->audio, imb_play_time(p));
+  imb_play_set_clock(p, sound_clock, v);
+}
+
 static void heard(void *owner)
 {
   BKVideo *v = (BKVideo *)owner;
+  const int state = BK_video_state(v);
+  if (state != BK_VIDEO_LOADING && state != BK_VIDEO_ERROR &&
+      (!v->audio_tried || (v->audio_retry > 0.0 && bk_time() >= v->audio_retry)))
+  {
+    sound_open(v);
+  }
+  sound_follow(v);
   if (v->fn) {
-    v->fn(v, BK_video_state(v), v->data);
+    v->fn(v, state, v->data);
   }
 }
 
@@ -47,7 +133,9 @@ BKVideo *BK_video_new(const char *src)
     return NULL;
   }
   BKVideo *v = (BKVideo *)MEM_callocN(sizeof(BKVideo), "BKVideo");
-  /* muted autoplay, played once (HTML: loop off) */
+  v->volume = 1.0f;
+  v->rate = 1.0;
+  /* autoplay with sound, played once (HTML: loop off) */
   v->entry = bk_image_entry_new(s, imb_play_new(false, 1), heard, v);
   bk_image_source_release(s); /* the entry keeps it */
   return v;
@@ -56,6 +144,11 @@ BKVideo *BK_video_new(const char *src)
 void BK_video_free(BKVideo *v)
 {
   if (v) {
+    /* The entry can outlive this call (a request still out: cache.c orphans it and it stays
+     * in the playing list until the request returns), and the clock points at `v`: cut it
+     * before `v` goes. */
+    imb_play_set_clock(play_of(v), NULL, NULL);
+    bk_audio_free(v->audio); /* returns at once: the device winds down on its own thread */
     bk_image_entry_free(v->entry);
     bk_image_ref_clear(&v->poster);
     MEM_freeN(v);
@@ -71,6 +164,10 @@ static void changed(BKVideo *v)
 void BK_video_play(BKVideo *v)
 {
   if (v) {
+    v->audio_retry = v->audio_retry > 0.0 ? 1e-9 : 0.0; /* resumed: look for the output now */
+    if (BK_video_state(v) == BK_VIDEO_ENDED) {
+      bk_audio_seek(v->audio, 0.0); /* an ended video starts over (imb_play_pause) */
+    }
     imb_play_pause(play_of(v), false);
     changed(v);
   }
@@ -88,6 +185,7 @@ void BK_video_seek(BKVideo *v, double seconds)
 {
   if (v && isfinite(seconds)) {
     imb_play_seek(play_of(v), seconds);
+    bk_audio_seek(v->audio, imb_play_time(play_of(v))); /* clamped to the duration */
     changed(v);
   }
 }
@@ -95,14 +193,23 @@ void BK_video_seek(BKVideo *v, double seconds)
 void BK_video_set_rate(BKVideo *v, double rate)
 {
   if (v && rate > 0.0 && isfinite(rate)) {
+    const double was = v->rate;
     imb_play_set_rate(play_of(v), rate);
+    v->rate = BK_CLAMP(rate, 1.0 / 16.0, 16.0);
+    if (v->rate == 1.0 && was != 1.0) {
+      bk_audio_seek(v->audio, BK_video_time(v)); /* the sound waited: from the frames' time */
+      v->sound_synced = false;
+    }
+    sound_follow(v);
   }
 }
 
 void BK_video_set_loop(BKVideo *v, int loop)
 {
   if (v) {
+    v->loop = loop != 0;
     imb_play_set_loops(play_of(v), loop ? 0 : 1);
+    bk_audio_set_loop(v->audio, v->loop);
     changed(v);
   }
 }
@@ -153,6 +260,57 @@ int BK_video_size(const BKVideo *v, int *r_w, int *r_h)
     *r_h = h;
   }
   return ok;
+}
+
+void BK_video_set_muted(BKVideo *v, int muted)
+{
+  if (v) {
+    v->muted = muted != 0;
+    sound_gain(v);
+    changed(v); /* the speaker button */
+  }
+}
+
+int BK_video_muted(const BKVideo *v)
+{
+  return v && v->muted;
+}
+
+void BK_video_set_audio_effects(BKVideo *v, int on)
+{
+  if (!v || (on != 0) == v->effects) {
+    return;
+  }
+  v->effects = on != 0;
+  if (v->audio) { /* the output opens again with the new setting, where the video is */
+    bk_audio_free(v->audio);
+    v->audio = NULL;
+    sound_open(v);
+    sound_follow(v);
+  }
+}
+
+int BK_video_audio_effects(const BKVideo *v)
+{
+  return v && v->effects;
+}
+
+void BK_video_set_volume(BKVideo *v, double volume)
+{
+  if (v && isfinite(volume)) {
+    v->volume = (float)BK_CLAMP(volume, 0.0, 1.0);
+    sound_gain(v);
+  }
+}
+
+double BK_video_volume(const BKVideo *v)
+{
+  return v ? v->volume : 0.0;
+}
+
+int BK_video_has_audio(const BKVideo *v)
+{
+  return v && bk_audio_has_track(v->audio);
 }
 
 void BK_video_set_listener(BKVideo *v, void (*fn)(BKVideo *v, int state, void *data), void *data)
@@ -219,8 +377,9 @@ static BKVideo *node_video(const BKNode *n)
   return n->image.kind == BK_IMREF_VIDEO ? n->image.u.video : NULL;
 }
 
-/* The controls bar along the bottom: the play button, then the scrubber. */
-static bool controls_rects(const BKNode *n, BKRect *r_button, BKRect *r_scrub)
+/* The controls bar along the bottom: the play button, the scrubber, and the
+ * speaker (mute) when the video has sound (its width 0 when not). */
+static bool controls_rects(const BKNode *n, BKRect *r_button, BKRect *r_scrub, BKRect *r_sound)
 {
   const BKVideo *v = node_video(n);
   const int uu = bk_unit(), pad = BK_MAX(2, uu / 5);
@@ -228,8 +387,10 @@ static bool controls_rects(const BKNode *n, BKRect *r_button, BKRect *r_scrub)
     return false;
   }
   const int y = n->y + n->h - uu - pad;
+  const int sound = BK_video_has_audio(v) && n->w >= 4 * uu ? uu + pad : 0;
   *r_button = bk_rect(n->x + pad, y, uu, uu);
-  *r_scrub = bk_rect(n->x + 2 * pad + uu, y, n->w - 3 * pad - uu, uu);
+  *r_scrub = bk_rect(n->x + 2 * pad + uu, y, n->w - 3 * pad - uu - sound, uu);
+  *r_sound = bk_rect(n->x + n->w - pad - uu, y, sound ? uu : 0, uu);
   return true;
 }
 
@@ -251,8 +412,8 @@ static void video_draw(BKNode *n)
 {
   const float box[4] = {(float)n->x, (float)n->y, (float)n->w, (float)n->h};
   bk_image_ref_draw(&n->image, n->image_fit, 0, box, NODE_ENABLED(n) ? 1.0f : 0.5f);
-  BKRect rb, rs;
-  if (!controls_rects(n, &rb, &rs)) {
+  BKRect rb, rs, ra;
+  if (!controls_rects(n, &rb, &rs, &ra)) {
     return;
   }
   const BKVideo *v = node_video(n);
@@ -272,14 +433,20 @@ static void video_draw(BKNode *n)
   format_time(b, sizeof(b), dur);
   snprintf(label, sizeof(label), "%s / %s", a, b);
   bk_text_in(&rs, label, w.text, BK_ALIGN_CENTER, false);
+  if (bk_rw(&ra) > 0) { /* the speaker: Blender's sound icon, crossed out when muted */
+    bk_widget_state(&w, &bk_theme.regular, NODE_ENABLED(n) ? 0 : ST_DISABLED);
+    bk_widget_but(&w, &ra, 0, CNR_ALL);
+    bk_icon(bk_icons_lookup(v->muted ? "MUTE_IPO_ON" : "PLAY_SOUND"), ra.xmin + bk_rw(&ra) * 0.5f,
+            ra.ymin + bk_rh(&ra) * 0.5f, w.text, 1.0f, 0);
+  }
 }
 
 static void scrub_to(BKNode *n, int x)
 {
-  BKRect rb, rs;
+  BKRect rb, rs, ra;
   BKVideo *v = node_video(n);
   const double dur = BK_video_duration(v);
-  if (controls_rects(n, &rb, &rs) && dur > 0.0) {
+  if (controls_rects(n, &rb, &rs, &ra) && dur > 0.0) {
     const double f = (x - rs.xmin) / (double)BK_MAX(1, bk_rw(&rs));
     BK_video_seek(v, BK_CLAMP(f, 0.0, 1.0) * dur);
   }
@@ -287,10 +454,14 @@ static void scrub_to(BKNode *n, int x)
 
 static int video_press(BKNode *n, BKEvent *e)
 {
-  BKRect rb, rs;
+  BKRect rb, rs, ra;
   BKVideo *v = node_video(n);
-  if (!controls_rects(n, &rb, &rs) || !NODE_ENABLED(n)) {
+  if (!controls_rects(n, &rb, &rs, &ra) || !NODE_ENABLED(n)) {
     return 0;
+  }
+  if (bk_rw(&ra) > 0 && bk_rect_inside(&ra, e->x, e->y)) {
+    BK_video_set_muted(v, !v->muted);
+    return 1;
   }
   if (bk_rect_inside(&rb, e->x, e->y)) {
     if (BK_video_state(v) == BK_VIDEO_PLAYING) {

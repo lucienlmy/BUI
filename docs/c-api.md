@@ -135,7 +135,16 @@ and `BK_set_animations(0)` holds them all. To step one yourself:
 `BK_video_*` (kit/intern/image/video.c) plays video files through the OS
 decoders (Media Foundation, GStreamer, AVFoundation; loaded at run time),
 decoded at the size drawn, in one GPU texture per player, and only while it
-shows. Muted autoplay; no audio yet.
+shows. It autoplays with its sound, played on the default output (WASAPI,
+CoreAudio, PulseAudio / PipeWire); the frames follow the sound, which plays on
+while the video is off screen (the picture catches up when it shows again).
+Only the file's first audio track plays, and each video with sound owns one
+output stream and thread, so many videos are many streams. The output opens on
+that thread (up to about 2 s on some drivers; the readers wait at most 3 s to
+preroll and 2 s per block), never on the UI thread: `BK_video_free` returns at
+once and the stream is released on a thread of its own (`BK_image_exit` waits
+up to 2 s for those at shutdown). With no output device a video plays silent
+and tries again every 5 s.
 
 ```c
 BKVideo *v = BK_video_new("intro.mp4");     /* loads when first drawn */
@@ -145,7 +154,9 @@ BK_video_set_listener(v, on_state, app);    /* BK_VIDEO_LOADING .. ENDED, ERROR 
 BKNode *n = BK_node_new("video");
 BK_node_set_video(n, v, BK_FIT_CONTAIN);    /* or a canvas item's .video */
 BK_video_seek(v, 10.0);
-BK_video_set_rate(v, 2.0);
+BK_video_set_rate(v, 2.0);                  /* the sound pauses at rates other than 1 */
+BK_video_set_muted(v, 1);                   /* or BK_video_set_volume(v, 0.5) */
+BK_video_set_audio_effects(v, 1);           /* keep the system's audio effects (Windows plays RAW otherwise) */
 int tex = BK_video_texture(v, 0, 640, 360); /* Dear ImGui: the frame in a texture */
 BK_video_free(v);                           /* after nodes / items let go */
 ```

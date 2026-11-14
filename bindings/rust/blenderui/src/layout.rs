@@ -807,13 +807,14 @@ impl<'a> Builder<'a> {
         &self.styles[self.nodes[i].style]
     }
 
-    /// `<video src>`'s player: muted autoplay unless `autoplay="false"` (React's
-    /// `autoPlay={false}`);
-    /// `loop`, `poster` (the HTML attributes).
+    /// `<video src>`'s player: autoplay with sound unless `autoplay="false"`
+    /// (React's `autoPlay={false}`); `loop`, `muted`, `poster`, `audioeffects` (the HTML attributes).
     fn video_src(&mut self, i: usize) -> Option<std::rc::Rc<crate::video::Video>> {
         let attrs = crate::video::VideoAttrs {
             autoplay: self.attr(i, "autoplay").or_else(|| self.attr(i, "autoPlay")) != Some("false"), // React: autoPlay
             looped: self.attr(i, "loop").is_some_and(|v| v != "false"),
+            muted: self.attr(i, "muted").is_some_and(|v| v != "false"),
+            audio_effects: self.attr(i, "audioeffects").is_some_and(|v| v != "false"),
             poster: self.attr(i, "poster").map(str::to_owned),
         };
         let src = self.attr(i, "src")?.to_owned();
@@ -2235,6 +2236,7 @@ pub(crate) fn layout(root: AnyElement, viewport: (f32, f32), state: &UiState, ca
         caches.matched.map.clear();
         caches.matched.author = caches.author.hash;
     }
+    caches.images.videos.begin_pass();
     let ua_styled = ua_styled_stylesheet();
     let LayoutCaches { styles, text, images, author, taffy, box_of, acc, matched, recon, text_box, containers,
                        wrap_widths, anim, .. } = caches;

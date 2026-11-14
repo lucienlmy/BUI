@@ -147,6 +147,7 @@ typedef struct BKImAnimInfo {
   int format;        /* BUI_PIXMAP_* of the frames */
   int loops;         /* plays the file asks for, 0 = forever */
   double duration;   /* seconds, 0 when unknown */
+  bool sound;        /* a movie with an audio track (a codec that can't tell says true) */
 } BKImAnimInfo;
 
 typedef struct BKImAnimCodec {
@@ -172,8 +173,24 @@ typedef struct BKImAnimCodec {
   bool (*seek)(void *state, double t);
   size_t (*bytes)(const void *state); /* decoder state (estimate for OS decoders) */
   void (*close)(void *state);
+  /* Sound (movies; NULL: none), read apart from the frames (its own reader,
+   * on the audio device's thread: audio/audio.c). The file's first audio
+   * track as interleaved float frames, at about `rate` Hz and `channels`
+   * (r_rate, r_channels: what it decodes to; audio.c converts the rest).
+   * NULL: no audio track, or none this backend decodes. */
+  void *(*audio_open)(const char *path, int rate, int channels, int *r_rate, int *r_channels);
+  /* The next block, in the reader's buffer (valid until the next call):
+   * frames, 0 past the end, -1 on errors; its time (< 0: right after the last). */
+  int (*audio_read)(void *state, const float **r_data, double *r_pts);
+  /* The next block holds `t` or starts a little before it (audio.c skips on). */
+  bool (*audio_seek)(void *state, double t);
+  void (*audio_close)(void *state);
 } BKImAnimCodec;
 extern const BKImAnimCodec imb_gif_codec, imb_webp_codec;
+/* The audio readers' block buffer: `*buf` (`*cap` floats) grown to hold `floats` (its old
+ * contents are not kept); returns it. A block is then `floats / channels` frames; a block of
+ * none is skipped by the reader, not taken for the end. */
+float *imb_audio_block_reserve(float **buf, size_t *cap, size_t floats);
 /* Video backends (movie_*.c), each compiled when the build has it. */
 extern const BKImAnimCodec imb_movie_mf, imb_movie_avf, imb_movie_gst;
 /* Those compiled in (movie.c: the build's choice), tried in order; NULL-ended. */
@@ -191,6 +208,7 @@ BKImAnim *imb_anim_open(uint8_t *file, size_t size, const BKImageFit *target);
 BKImAnim *imb_movie_open(const char *path, const BKImageFit *target);
 void imb_anim_free(BKImAnim *a);
 const BKImAnimInfo *imb_anim_info(const BKImAnim *a);
+const BKImAnimCodec *imb_anim_backend(const BKImAnim *a); /* the codec that reads it */
 int imb_anim_frames(const BKImAnim *a); /* from the header (at least what was decoded) */
 size_t imb_anim_bytes(const BKImAnim *a); /* its decoder state and file */
 /* Frames to `target` from now on (a movie reopens its decoder at the new
@@ -285,6 +303,7 @@ void bk_image_entry_free(BKImEntry *e);
 /* As bk_image_cache_get; the entry follows the size it is drawn at. */
 const BKImBuf *bk_image_entry_get(BKImEntry *e, const BKImageFit *target, const int rect[4]);
 BKImPlay *bk_image_entry_play(BKImEntry *e);
+const char *bk_image_entry_path(const BKImEntry *e); /* the file it plays */
 /* A control changed the clock: step now, redraw where it shows. */
 void bk_image_entry_changed(BKImEntry *e);
 
@@ -313,7 +332,8 @@ void imb_play_step_done(BKImPlay *p, BKImAnim *anim, BKImBuf *next, double pts, 
                         bool wrapped);
 void imb_play_step_cancelled(BKImPlay *p, BKImAnim *anim, BKImBuf *reuse); /* nothing decoded */
 void imb_play_drawn(BKImPlay *p, double now); /* the shown frame reached the screen */
-double imb_play_due(const BKImPlay *p);       /* when to advance (0: not waiting on time) */
+/* When to advance (0: not waiting on time). */
+double imb_play_due(const BKImPlay *p, double now);
 /* The frame to show from `now`, or NULL; the one it replaces goes back
  * through imb_play_recycle. */
 BKImBuf *imb_play_advance(BKImPlay *p, double now);
@@ -327,6 +347,14 @@ BKImPlayState imb_play_state(const BKImPlay *p);
 double imb_play_time(const BKImPlay *p);     /* seconds, of the frame shown */
 double imb_play_duration(const BKImPlay *p); /* seconds, 0 when unknown */
 bool imb_play_size(const BKImPlay *p, int *r_w, int *r_h); /* intrinsic, once loaded */
+/* The sound time `c` held against a frame at `pts` of a looping movie (see play.c). */
+#define BK_PLAY_WRAP_WINDOW 1.0 /* seconds either side of the loop boundary */
+double imb_play_heard_for(int loops, double duration, double c, double pts);
+/* A movie with sound: frames follow `clock` (the movie time heard, < 0 when
+ * there is none now: the frames' own time then); NULL: none. */
+void imb_play_set_clock(BKImPlay *p, double (*clock)(void *data), void *data);
+/* Once loaded, a movie with an audio track: the codec that reads it (NULL: no sound). */
+const BKImAnimCodec *imb_play_codec(const BKImPlay *p);
 
 /* draw.c: what a node or canvas item shows. One of an owned copy (set from
  * RGBA), a borrowed BKImBuf (the host keeps it alive) or a source decoded

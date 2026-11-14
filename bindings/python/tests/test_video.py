@@ -1,6 +1,7 @@
 """Video from Python: the bui.components.Video component and the buipy.Video
-player (play, pause, seek, rate, loop, state events), drawn by a context
-like a window loop would. Skipped where no backend decodes the H.264 clip.
+player (play, pause, seek, rate, loop, state events, sound: muted, volume and
+the mute button), drawn by a context like a window loop would. Skipped where
+no backend decodes the H.264 clip (the sound where there is no audio output).
 
 SPDX-License-Identifier: GPL-2.0-or-later
 """
@@ -14,8 +15,9 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 import bui  # noqa: E402
 import buipy  # noqa: E402
 
-CLIP = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tests", "videos",
-                    "clip.mp4")
+VIDEOS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "tests", "videos")
+CLIP = os.path.join(VIDEOS, "clip.mp4")
+CLIP_SOUND = os.path.join(VIDEOS, "clip_audio.mp4")
 
 
 class Loop:
@@ -82,8 +84,71 @@ def test_video():
         raise AssertionError("bad fit must raise")
 
 
+def test_sound():
+    if not bui.video_backends:
+        return
+    from bui.components import Video
+    v = Video(CLIP_SOUND, controls=True, loop=True, muted=True, volume=0.5)  # silent: a test
+    assert v.player.muted and v.player.volume == 0.5
+    assert v.player.audio_effects is False, "the system's effects are off by default"
+    v.player.audio_effects = True
+    assert v.player.audio_effects is True
+    v.player.audio_effects = False
+    assert Video(CLIP_SOUND, audio_effects=True).player.audio_effects is True
+    # a value that does not convert raises and changes nothing
+    class NoBool:
+        def __bool__(self):
+            raise ValueError("no")
+    for name, bad in (("volume", "loud"), ("rate", "fast"), ("muted", NoBool()), ("audio_effects", NoBool())):
+        before = getattr(v.player, name, None)
+        try:
+            setattr(v.player, name, bad)
+            raise AssertionError(name + " took a bad value")
+        except (TypeError, ValueError):
+            pass
+        assert getattr(v.player, name, None) == before, name
+    # NaN and infinite volumes are refused (ignored or raised), never taken
+    for bad in (float("nan"), float("inf")):
+        before = v.player.volume
+        try:
+            v.player.volume = bad
+        except (TypeError, ValueError, OverflowError):
+            pass
+        assert v.player.volume == before, bad
+    loop = Loop(v)
+    loop.run(5.0, lambda: v.player.state != bui.VIDEO_LOADING)
+    loop.run(6.0, lambda: v.player.has_audio)  # an output can take seconds to wake
+    if not v.player.has_audio:
+        print("no audio output here: sound skipped")
+        return
+    # the speaker button (right of the scrubber) toggles mute
+    x, y, w, h = v.rect
+    for want in (False, True):
+        loop.ctx.press(x + w - 8, y + h - 8, 0)
+        loop.ctx.release(x + w - 8, y + h - 8, 0)
+        loop.run(0.05)
+        assert v.player.muted == want, (v.player.muted, want)
+
+
+def test_no_audio():
+    """A clip without an audio track has no sound, with or without an output device."""
+    if not bui.video_backends:
+        return
+    from bui.components import Video
+    v = Video(CLIP, controls=True, loop=True)
+    loop = Loop(v)
+    loop.run(5.0, lambda: v.player.state != bui.VIDEO_LOADING)
+    if v.player.state == bui.VIDEO_ERROR:
+        print("no decoder for the silent clip here: skipped")
+        return
+    loop.run(1.0)
+    assert not v.player.has_audio, "a clip without an audio track has no audio"
+
+
 def main():
     test_video()
+    test_no_audio()
+    test_sound()
     print("video tests passed")
     return 0
 

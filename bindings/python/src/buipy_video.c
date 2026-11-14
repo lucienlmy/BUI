@@ -193,7 +193,7 @@ static PyObject *get_size(VideoObject *self, void *c)
 }
 
 /* write-only settings: the kit keeps them */
-#define SETTER(name, call) \
+#define SETTER(name, type, convert, call) \
   static int set_##name(VideoObject *self, PyObject *value, void *c) \
   { \
     (void)c; \
@@ -201,13 +201,48 @@ static PyObject *get_size(VideoObject *self, void *c)
       PyErr_SetString(PyExc_AttributeError, "can't delete or set on an uninitialized Video"); \
       return -1; \
     } \
+    const type v = convert; \
+    if (PyErr_Occurred()) { /* a failed conversion changes nothing */ \
+      return -1; \
+    } \
     call; \
-    return PyErr_Occurred() ? -1 : 0; \
+    return 0; \
   }
-SETTER(rate, BK_video_set_rate(self->v, PyFloat_AsDouble(value)))
-SETTER(loop, BK_video_set_loop(self->v, PyObject_IsTrue(value)))
-SETTER(controls, BK_video_set_controls(self->v, PyObject_IsTrue(value)))
-SETTER(poster, BK_video_set_poster(self->v, value == Py_None ? NULL : PyUnicode_AsUTF8(value)))
+SETTER(rate, double, PyFloat_AsDouble(value), BK_video_set_rate(self->v, v))
+SETTER(loop, int, PyObject_IsTrue(value), BK_video_set_loop(self->v, v))
+SETTER(controls, int, PyObject_IsTrue(value), BK_video_set_controls(self->v, v))
+SETTER(poster, const char *, value == Py_None ? NULL : PyUnicode_AsUTF8(value), BK_video_set_poster(self->v, v))
+SETTER(muted, int, PyObject_IsTrue(value), BK_video_set_muted(self->v, v))
+SETTER(volume, double, PyFloat_AsDouble(value), BK_video_set_volume(self->v, v))
+SETTER(audio_effects, int, PyObject_IsTrue(value), BK_video_set_audio_effects(self->v, v))
+
+static PyObject *get_muted(VideoObject *self, void *c)
+{
+  (void)c;
+  LIVE(self);
+  return PyBool_FromLong(BK_video_muted(self->v));
+}
+
+static PyObject *get_volume(VideoObject *self, void *c)
+{
+  (void)c;
+  LIVE(self);
+  return PyFloat_FromDouble(BK_video_volume(self->v));
+}
+
+static PyObject *get_audio_effects(VideoObject *self, void *c)
+{
+  (void)c;
+  LIVE(self);
+  return PyBool_FromLong(BK_video_audio_effects(self->v));
+}
+
+static PyObject *get_has_audio(VideoObject *self, void *c)
+{
+  (void)c;
+  LIVE(self);
+  return PyBool_FromLong(BK_video_has_audio(self->v));
+}
 
 static PyObject *get_on_state(VideoObject *self, void *c)
 {
@@ -235,6 +270,11 @@ static PyGetSetDef video_getset[] = {
     {"loop", NULL, (setter)set_loop, "Loop (write-only).", NULL},
     {"controls", NULL, (setter)set_controls, "Blender-style controls on video nodes.", NULL},
     {"poster", NULL, (setter)set_poster, "An image file shown until the first frame.", NULL},
+    {"muted", (getter)get_muted, (setter)set_muted, "Silent (its frames still follow the sound).", NULL},
+    {"volume", (getter)get_volume, (setter)set_volume, "The sound's volume, 0 .. 1.", NULL},
+    {"audio_effects", (getter)get_audio_effects, (setter)set_audio_effects,
+     "Keep the system's audio effects (Windows plays RAW by default: faster to open).", NULL},
+    {"has_audio", (getter)get_has_audio, NULL, "Its sound plays (an audio track, an output).", NULL},
     {"on_state", (getter)get_on_state, (setter)set_on_state, "callable(state) on changes.", NULL},
     {NULL, NULL, NULL, NULL, NULL},
 };
@@ -243,7 +283,7 @@ static PyTypeObject Video_Type = {
     PyVarObject_HEAD_INIT(NULL, 0).tp_name = "buipy.Video",
     .tp_basicsize = sizeof(VideoObject),
     .tp_flags = Py_TPFLAGS_DEFAULT | Py_TPFLAGS_HAVE_GC,
-    .tp_doc = "Video(src): a <video> player (muted autoplay; loads when first drawn).",
+    .tp_doc = "Video(src): a <video> player (autoplay with sound; loads when first drawn).",
     .tp_new = PyType_GenericNew,
     .tp_init = (initproc)video_init,
     .tp_dealloc = (destructor)video_dealloc,

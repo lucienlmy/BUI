@@ -2120,8 +2120,8 @@ ship. The tables below have the details.
   of Blender (its data system, window manager and operators) isn't included.
   There is no automated sync with Blender's releases.
 - **Partial areas:** Qt syntax (57% of the core classes' methods), CSS (261 of 745 properties render),
-  video has no audio, and image formats such as AVIF, EXR, TIFF, JPEG XL and
-  HEIC aren't supported.
+  video sound is tested on Windows only (macOS and Linux are written but untried),
+  and image formats such as AVIF, EXR, TIFF, JPEG XL and HEIC aren't supported.
 - **License.** GPL: a program that includes BUI is distributed under the GPL too
   ([why](#42-faq)).
 

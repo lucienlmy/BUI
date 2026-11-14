@@ -31,6 +31,26 @@ All notable changes to **blenderui** (BUI). The format follows
 - **D HTML, CSS and RSX** (`bindings/d`): `bui.html` adds an `Element` tree and tag constructors, `bui.css` a selector cascade with a practical CSS subset, and `bui.rsx` a compile-time `rsx!` mixin that lowers markup and `{expression}` values to `Element` calls. `Document` realises the styled tree as kit nodes with flex, grid and table layout, widgets, dynamic `:hover`/`:active` states through `Element.setState` and `Document.restyle`, and in-place text updates through `Element.setText`. Tag constructors use `body_`, `template_`, `object_` and `select_` where D or the existing API already uses the name; markup keeps the HTML spelling. `dub run --config=rsx` opens the new example, and `--config=test` covers the cascade, realiser and RSX. The D wrappers also follow the kit's current header: focus callbacks, `Context.hitAt`, custom theme files, text shadows, font size and transparent rasters.
 - **Qt syntax:** containers drawn the Blender way (`QStackedWidget`, `QToolBox` as Blender panels, `QSplitter` with region edges to drag, `QToolBar`, `QDockWidget`, `QTabBar`, and `QMainWindow.addToolBar` / `addDockWidget` / `setStatusBar`); model/view (`QStandardItemModel`, `QStringListModel`, the abstract models, `QListView`, `QTreeView`, `QTableView` in Blender's tree list); real `QMessageBox` and `QInputDialog` dialogs; `QSettings` (an INI file with Qt's groups and arrays), `QKeySequence`, `QShortcut` and `QClipboard`; `blockSignals`, dynamic properties, `findChildren`, point mapping, `showEvent` / `hideEvent` and the descriptive properties on every widget. Actions shared by menus, tool buttons and shortcuts (`QAction` with visibility, data, tips and shortcuts bound on its window, `QActionGroup`, a real `QToolButton`, menu sections and corner widgets, `triggered` up to the menu bar), `QButtonGroup` ids, Qt's full layout API (`QBoxLayout` directions, `insert*`, `takeAt`, `replaceWidget`, `QSpacerItem`, grid cell queries and minimum sizes, `QFormLayout` rows), `QDialogButtonBox` (which `QMessageBox` and `QInputDialog` now use), `QAbstractSpinBox`, validators and `maxLength` on `QLineEdit`, spin box prefix / wrapping / special value text, slider tracking and page steps, combo box icons, models and popups, checkable `QGroupBox`, `QFrame` boxes and lines, a `QStatusBar` with permanent widgets, window states, opacity and size limits through the host, `startTimer`, `QFontMetrics`, `QPalette` from Blender's theme, `QCursor.pos`, `QScreen`, and the context-menu policies. Dates and times: `QDate`, `QTime`, `QDateTime` with Qt's format strings, `QDateTimeEdit` / `QDateEdit` / `QTimeEdit` as Blender's aligned number fields, and `QCalendarWidget`. Measured by the new `tools/qt_coverage.py` against Qt's headers: 57% of the core widget classes' methods (was 21% by the same count), 37% across all 142 classes.
 - **Kit:** a `select` node flag draws a button held in (Blender's `UI_SELECT`, for checked push buttons), and a separator with `vertical` draws its line across a row (`uiButSeparatorLine.is_vertical`).
+- **Sound in video.** A `<video>` plays its audio track on the default output (WASAPI on Windows, CoreAudio on
+  macOS, PulseAudio / PipeWire on Linux, each loaded at run time), decoded by the same OS backend as its frames,
+  and the frames follow the sound as Blender's AV-sync does. The sound plays on while the video is off screen and
+  the picture catches up when it shows again; sound that starts late (an output waking up) moves to where the picture
+  is, never the other way round; on Windows the stream skips the system's audio effects (RAW) so it opens in about half the time
+  (opt in with `audio_effects`: `BK_video_set_audio_effects`, Python `audio_effects=`, Rust `set_audio_effects`,
+  the `audioeffects` attribute, Lua; or `BUI_AUDIO_EFFECTS=1` for every video), and only about 20 ms is queued ahead of the speakers, so pausing is heard
+  almost at once. New `BK_video_set_muted` / `muted`, `BK_video_set_volume` / `volume` and `BK_video_has_audio`, in Rust
+  (`Video::set_muted`, ...; the HTML `muted` attribute), Python (`muted`, `volume`, `has_audio`; the component's
+  `muted=` and `volume=`) and Lua; the Blender-style controls get a mute button. Videos autoplay with sound now
+  (they were silent): mute one with `muted`. Tested on Windows; the macOS and Linux outputs are written against
+  their documented APIs and untried.
+
+### Changed
+- **Breaking default: videos play with sound.** A `<video>` / `BK_video` autoplays with its audio track now (it
+  was silent): set `muted` (HTML attribute, `BK_video_set_muted`, `Video(muted=True)`, `Video::set_muted`) for a
+  silent one. Closing a video no longer waits for its audio device (the stream is released on a thread of its
+  own); a video with no output at the time retries every 5 s; a Rust `<video>` element that leaves the tree stops its
+  sound; platforms without PulseAudio / GStreamer (not Linux or BSD) build with silent video. Only the first
+  audio track plays and each video with sound owns one stream and thread.
 
 ### Fixed
 - **Rust: Tailwind `text-sm` / `text-xs` / `text-lg` line heights.** A unitless `calc()` line height (`calc(1.25 / 0.875)`, what the Tailwind theme sets) was read as pixels (1.4 px), so the text sat about 9 px above its box and a parent with `overflow: hidden` (`truncate`) cut it. It is now a factor of the font size, like a number.
@@ -46,6 +66,7 @@ All notable changes to **blenderui** (BUI). The format follows
 - **Qt syntax:** setting a value from code emitted nothing: `setValue` (sliders, spin boxes), `QComboBox.setCurrentIndex`, `QLineEdit.setText` and `setChecked` on check boxes and radio buttons now emit `valueChanged`, `currentIndexChanged`, `textChanged` and `toggled` / `stateChanged` when the value changes, as Qt does, and a radio button turned off by its sibling says so. A click on the checked button of an exclusive group no longer unchecks it; a button or action removed from a group or menu and added again no longer fires twice; `Ctrl++` showed as `Ctrl` in menus; an integer spin box accepted `3.5`.
 - **Qt syntax:** `QSpinBox` was a `QAbstractSlider`; it is a `QAbstractSpinBox` now. Spin box `suffix()`, `decimals()` and `placeholderText()` read back empty.
 - **tkinter:** a vertical `ttk.Separator` drew a horizontal line in a tall box.
+- **Video sound:** in a looping video whose sound was far ahead of the picture (a long pause, a slow decode), the picture froze until the sound came round; it now seeks to the sound. Two `<video>` elements of one file with different `loop`, `muted`, `poster` or `audioeffects` (Rust) no longer undo each other every render (each has its own player). Python's `Video.player` setters (`volume`, `rate`, `muted`, ...) no longer change the player when the value does not convert.
 
 ## [0.5.1] - 2026-11-13
 

@@ -1,6 +1,7 @@
 /* Video: load, play, pause, seek, rate, loop and end through the public API
  * (BK_video_*), drawn on a canvas like an app would; nothing decoded while
- * off screen; malformed files; no allocation per frame once playing; every
+ * off screen; malformed files; no allocation per frame once playing; sound
+ * (clip_audio.mp4: the frames follow it, off screen too); every
  * MEM block back after BK_video_free + BK_image_exit. Exits 77 (skipped)
  * when the build or the machine has no video backend that reads the clip.
  *
@@ -21,6 +22,8 @@
 
 #include "BUI_kit.h"
 #include "GPU_raster.h"
+#include "../audio/audio.h" /* the pure parts of the conversion (kit/intern/audio) */
+#include "image.h"          /* imb_play_heard_for (kit/intern/image) */
 #include "MEM_guardedalloc.h"
 
 static int g_fail = 0;
@@ -142,7 +145,7 @@ static void test_playback(const char *clip)
   BuiRaster *r = BUI_raster_create(W, H);
   const uint32_t *px = BUI_raster_pixels(r);
 
-  /* loads when first drawn, then plays (muted autoplay) */
+  /* loads when first drawn, then plays (autoplay; this clip has no sound) */
   BKVideo *v = BK_video_new(clip);
   BK_video_set_listener(v, listener, NULL);
   show(canvas, v);
@@ -156,6 +159,7 @@ static void test_playback(const char *clip)
   CHECK(BK_video_size(v, &w, &h) && w == 96 && h == 54);
   CHECK(fabs(BK_video_duration(v) - 2.0) < 0.15);
   CHECK(g_events[BK_VIDEO_PLAYING] == 1);
+  CHECK(!BK_video_has_audio(v) || getenv("BUI_TEST_CLIP")); /* no audio track: no sound */
 
   /* it plays: the picture moves and the time goes on */
   uint64_t last = box_hash(px);
@@ -256,6 +260,97 @@ static void test_playback(const char *clip)
   BUI_raster_free(r);
 }
 
+static int sounding(void *v)
+{
+  return BK_video_has_audio((BKVideo *)v);
+}
+
+/* Sound: the audio track plays on the default output and the frames follow
+ * it (muted here: the clock follows a muted track too); pause holds it; it
+ * plays on off screen and the picture catches up when it shows again.
+ * Skipped where the machine has no output device. */
+static void test_sound(const char *clip)
+{
+  BKNode *canvas = BK_node_new("canvas");
+  BKContext *ctx = BK_context_new(canvas);
+  BKHost host = {0};
+  host.request = host_request;
+  host.schedule = host_schedule;
+  BK_context_set_host(ctx, &host);
+  BuiRaster *r = BUI_raster_create(W, H);
+
+  BKVideo *v = BK_video_new(clip);
+  CHECK(BK_video_volume(v) == 1.0 && !BK_video_muted(v)); /* sound by default */
+  BK_video_set_volume(v, 2.0);
+  CHECK(BK_video_volume(v) == 1.0);
+  BK_video_set_volume(v, 0.25);
+  CHECK(fabs(BK_video_volume(v) - 0.25) < 1e-6);
+  BK_video_set_muted(v, 1);
+  CHECK(BK_video_muted(v));
+  CHECK(!BK_video_audio_effects(v)); /* the system's effects are off by default */
+  BK_video_set_audio_effects(v, 1);
+  CHECK(BK_video_audio_effects(v));
+  BK_video_set_audio_effects(v, 0);
+  CHECK(!BK_video_audio_effects(v));
+  BK_video_set_loop(v, 1); /* an output can take seconds to wake (Bluetooth): it plays on meanwhile */
+  show(canvas, v);
+  BK_render(ctx, r, W, H, 1);
+  run(ctx, r, 5.0, loaded, v);
+  run(ctx, r, 6.0, sounding, v);
+  if (!BK_video_has_audio(v)) {
+    printf("sound: no audio output here, skipped\n");
+  }
+  else {
+    /* in time with the sound: a second of playing moves the video a second */
+    BK_video_seek(v, 0.0);
+    run(ctx, r, 0.3, NULL, NULL);
+    const double t0 = BK_video_time(v), w0 = now_s();
+    run(ctx, r, 1.0, NULL, NULL);
+    const double moved = BK_video_time(v) - t0, wall = now_s() - w0;
+    printf("sound: %.2f s of video in %.2f s\n", moved, wall);
+    CHECK(fabs(moved - wall) < 0.25);
+
+    /* the effects on while it plays: the output opens again, and the sound is back in time */
+    BK_video_set_audio_effects(v, 1);
+    CHECK(BK_video_audio_effects(v) && !BK_video_has_audio(v)); /* closed until it plays again */
+    run(ctx, r, 6.0, sounding, v);
+    CHECK(BK_video_has_audio(v));
+    const double e0 = BK_video_time(v), ew0 = now_s();
+    run(ctx, r, 1.0, NULL, NULL);
+    const double e_moved = fmod(BK_video_time(v) - e0 + 2.0, 2.0), e_wall = now_s() - ew0;
+    printf("sound with the effects: %.2f s of video in %.2f s\n", e_moved, e_wall);
+    CHECK(fabs(e_moved - e_wall) < 0.3);
+    BK_video_set_audio_effects(v, 0);
+    run(ctx, r, 6.0, sounding, v);
+
+    /* paused: the sound and the frames hold */
+    BK_video_pause(v);
+    run(ctx, r, 0.15, NULL, NULL);
+    const double held = BK_video_time(v);
+    run(ctx, r, 0.3, NULL, NULL);
+    CHECK(BK_video_time(v) == held);
+
+    /* off screen the sound plays on; shown again, the picture is where it is */
+    BK_video_seek(v, 0.0);
+    BK_video_play(v);
+    run(ctx, r, 0.3, NULL, NULL);
+    BK_canvas_delete(canvas, -1);
+    BK_render(ctx, r, W, H, 1);
+    const double hidden = BK_video_time(v);
+    run(ctx, r, 0.7, NULL, NULL);
+    show(canvas, v);
+    BK_render(ctx, r, W, H, 1);
+    run(ctx, r, 0.3, NULL, NULL);
+    printf("sound: hidden at %.2f s for 0.7 s, shown again at %.2f s\n", hidden, BK_video_time(v));
+    CHECK(BK_video_time(v) - hidden > 0.6);
+  }
+  BK_canvas_delete(canvas, -1);
+  BK_video_free(v); /* with its sound playing */
+  BK_context_free(ctx);
+  BK_node_free(canvas);
+  BUI_raster_free(r);
+}
+
 /* Truncated and bit-flipped copies: an error state or frames, never a crash. */
 static void test_malformed(const char *clip)
 {
@@ -323,9 +418,142 @@ static void test_malformed(const char *clip)
   BUI_raster_free(r);
 }
 
+/* The sound held against a looping frame (duration 60): near the boundary the neighbouring loop,
+ * elsewhere the sound as it is (far ahead stays ahead: the picture seeks to it). */
+static void heard_for_test(void)
+{
+  const double D = 60.0;
+  CHECK(fabs(imb_play_heard_for(0, D, 40.0, 1.04) - 40.0) < 1e-9);   /* far ahead: not -20 */
+  CHECK(fabs(imb_play_heard_for(0, D, 10.0, 30.0) - 10.0) < 1e-9);   /* behind, mid-movie */
+  CHECK(fabs(imb_play_heard_for(0, D, 0.2, 59.9) - 60.2) < 1e-9);    /* sound wrapped: a small lag */
+  CHECK(fabs(imb_play_heard_for(0, D, 59.9, 0.1) - -0.1) < 1e-9);    /* frame wrapped first */
+  CHECK(imb_play_heard_for(1, D, 40.0, 1.04) == 40.0);               /* not looping: as is */
+}
+
+/* More of the loop wrap: the window around the boundary, on a short clip too. */
+static void loop_wrap_test(void)
+{
+  const double D = 2.0; /* a very short clip: the window shrinks to half of it */
+  CHECK(fabs(imb_play_heard_for(0, D, 0.05, 1.95) - 2.05) < 1e-9); /* sound wrapped, frame at the end */
+  CHECK(fabs(imb_play_heard_for(0, D, 1.95, 0.05) - -0.05) < 1e-9);
+  CHECK(imb_play_heard_for(0, 0.0, 5.0, 1.0) == 5.0); /* no duration: as is */
+}
+
+/* The conversion's pure parts: volume, channel mapping, resampling ratio. */
+static void pure_audio_test(void)
+{
+  CHECK(bk_audio_clamp_gain(0.5f) == 0.5f && bk_audio_clamp_gain(2.0f) == 1.0f);
+  CHECK(bk_audio_clamp_gain(-1.0f) == 0.0f && bk_audio_clamp_gain(NAN) == 0.0f);
+  CHECK(bk_audio_clamp_gain(INFINITY) == 1.0f && bk_audio_clamp_gain(-INFINITY) == 0.0f);
+  float out[8];
+  const float mono[1] = {0.5f};
+  bk_audio_map_channels(mono, 1, out, 2); /* mono: both sides */
+  CHECK(out[0] == 0.5f && out[1] == 0.5f);
+  const float five1[6] = {1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; /* FL only */
+  bk_audio_map_channels(five1, 6, out, 2);
+  CHECK(fabsf(out[0] - 1.0f / (1.0f + 2.0f * 0.7071f)) < 1e-5f && out[1] == 0.0f);
+  const float stereo[2] = {0.25f, 0.75f};
+  bk_audio_map_channels(stereo, 2, out, 2); /* as is */
+  CHECK(out[0] == 0.25f && out[1] == 0.75f);
+  bk_audio_map_channels(stereo, 2, out, 1); /* to mono: the mean */
+  CHECK(out[0] == 0.5f);
+  CHECK(fabs(bk_audio_resample_step(44100, 48000) - 0.91875) < 1e-9); /* stretched */
+  CHECK(fabs(bk_audio_resample_step(96000, 48000) - 2.0) < 1e-9);     /* skipped */
+  CHECK(bk_audio_resample_step(48000, 48000) == 1.0);
+}
+
+/* The controls on a clip without sound (they work with no audio device): no track, volume and
+ * mute, a seek past the end, rate away from 1 and back, pause and resume, a very short clip
+ * ending. */
+static void test_controls(const char *clip)
+{
+  BKNode *canvas = BK_node_new("canvas");
+  BKContext *ctx = BK_context_new(canvas);
+  BKHost host = {0};
+  host.request = host_request;
+  host.schedule = host_schedule;
+  BK_context_set_host(ctx, &host);
+  BuiRaster *r = BUI_raster_create(W, H);
+  BKVideo *v = BK_video_new(clip);
+  show(canvas, v);
+  BK_render(ctx, r, W, H, 1);
+  run(ctx, r, 5.0, loaded, v);
+  run(ctx, r, 0.5, NULL, NULL);
+  CHECK(!BK_video_has_audio(v)); /* no audio track */
+
+  BK_video_set_volume(v, 0.25);
+  BK_video_set_volume(v, NAN); /* rejected at the setter */
+  BK_video_set_volume(v, INFINITY);
+  CHECK(fabs(BK_video_volume(v) - 0.25) < 1e-6);
+  BK_video_set_muted(v, 1); /* muted: the gain is 0, the volume is kept */
+  CHECK(BK_video_muted(v) && fabs(BK_video_volume(v) - 0.25) < 1e-6);
+  BK_video_set_muted(v, 0);
+
+  BK_video_set_loop(v, 1);
+  const double dur = BK_video_duration(v);
+  BK_video_seek(v, 1e9); /* past the end: clamped */
+  CHECK(BK_video_time(v) <= dur + 1e-6 && BK_video_time(v) >= 0.0);
+  BK_video_seek(v, 0.0);
+  BK_video_set_rate(v, 2.0);
+  BK_video_set_rate(v, NAN); /* ignored */
+  run(ctx, r, 0.2, NULL, NULL);
+  BK_video_set_rate(v, 1.0);
+  CHECK(BK_video_state(v) == BK_VIDEO_PLAYING);
+
+  BK_video_pause(v);
+  run(ctx, r, 0.15, NULL, NULL);
+  const double held = BK_video_time(v);
+  run(ctx, r, 0.25, NULL, NULL);
+  CHECK(BK_video_time(v) == held && BK_video_state(v) == BK_VIDEO_PAUSED);
+  BK_video_play(v);
+  CHECK(BK_video_state(v) == BK_VIDEO_PLAYING);
+
+  BK_video_set_loop(v, 0); /* a very short clip ends */
+  BK_video_seek(v, dur > 0.2 ? dur - 0.1 : 0.0);
+  run(ctx, r, 5.0, ended, v);
+  CHECK(BK_video_state(v) == BK_VIDEO_ENDED);
+  BK_canvas_delete(canvas, -1);
+  BK_video_free(v);
+  BK_context_free(ctx);
+  BK_node_free(canvas);
+  BUI_raster_free(r);
+}
+
+/* Freeing a video whose sound is still opening (the output takes up to seconds) doesn't wait for
+ * it. */
+static void test_free_fast(const char *clip)
+{
+  BKNode *canvas = BK_node_new("canvas");
+  BKContext *ctx = BK_context_new(canvas);
+  BKHost host = {0};
+  host.request = host_request;
+  host.schedule = host_schedule;
+  BK_context_set_host(ctx, &host);
+  BuiRaster *r = BUI_raster_create(W, H);
+  double worst = 0.0;
+  for (int i = 0; i < 4; i++) {
+    BKVideo *v = BK_video_new(clip);
+    show(canvas, v);
+    BK_render(ctx, r, W, H, 1);
+    run(ctx, r, 5.0, loaded, v); /* the sound starts opening now */
+    const double t0 = now_s();
+    BK_canvas_delete(canvas, -1);
+    BK_video_free(v);
+    worst = fmax(worst, now_s() - t0);
+  }
+  printf("BK_video_free with the sound opening: worst %.3f s\n", worst);
+  CHECK(worst < 0.5);
+  BK_context_free(ctx);
+  BK_node_free(canvas);
+  BUI_raster_free(r);
+}
+
 int main(void)
 {
   setvbuf(stdout, NULL, _IONBF, 0);
+  heard_for_test();
+  loop_wrap_test();
+  pure_audio_test();
   if (!BK_video_backends()[0]) {
     printf("video_test: no video backend in this build, skipped\n");
     return 77;
@@ -361,7 +589,11 @@ int main(void)
   }
   memset(g_events, 0, sizeof(g_events));
   test_playback(clip);
+  test_controls(clip);
   test_malformed(clip);
+  snprintf(clip, sizeof(clip), "%s/clip_audio.mp4", BUI_TEST_VIDEOS);
+  test_free_fast(clip);
+  test_sound(clip);
   BK_image_exit();
   printf("memory: %u blocks, %zu bytes before; %u blocks, %zu bytes after\n", blocks0, bytes0,
          MEM_get_memory_blocks_in_use(), MEM_get_memory_in_use());

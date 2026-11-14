@@ -14,7 +14,21 @@
 
 #include <string.h>
 
+#include "MEM_guardedalloc.h"
+
 #include "image.h"
+
+float *imb_audio_block_reserve(float **buf, size_t *cap, size_t floats)
+{
+  if (floats > *cap) {
+    if (*buf) {
+      MEM_freeN(*buf);
+    }
+    *buf = (float *)MEM_mallocN(sizeof(float) * floats, "audio block");
+    *cap = floats;
+  }
+  return *buf;
+}
 
 bool imb_is_a_movie(const uint8_t *m, size_t n)
 {
