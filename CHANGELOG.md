@@ -41,6 +41,10 @@ All notable changes to **blenderui** (BUI). The format follows
   `ResizeBuffers` and texture re-creation per size) and the software frame buffers are reused. A 200-step drag on the
   chat-list app went from 513 to 208 renders and 5.3 to 0.6 ms average per render (GPU), 603 to 206 renders (software).
   `BUI_PROFILE=1` also prints a size/render summary at exit.
+- **Windows smooth resize:** while the user drags a window edge, each size renders and presents from its `WM_SIZE`, so the frame
+  DWM composes for the new window size is already at that size (before, it came up to a refresh later: a stale-sized frame cropped
+  or with black bars, and text that snapped late). With a real mouse drag of the corner of the chat-list app, the frame seen right
+  after a step differed from the settled frame in 19 of 24 steps on the GPU before and 2 of 24 after (software: 1, then 0).
 - **Python components:** `NodeEditor` follows `add`, `insert`, `remove`, `replace` and `clear` (its `nodes` and `links` went stale when
   children were edited that way, and a link now keeps naming the same nodes when an earlier one is inserted or removed);
   `replace(old, new)` puts an earlier sibling in `old`'s place, not the slot after it; `FileBrowser.directory = same_folder` no longer

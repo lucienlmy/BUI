@@ -651,11 +651,57 @@ static void do_render(BKWindow *win)
   }
 }
 
-/* A size change renders once, when a refresh has passed since the last render: WM_SIZE only records
- * (the render reads the latest client size), so a drag that sends sizes faster than the display
- * costs one layout, raster and present per refresh (and none for the sizes in between). */
+/* One render: the new size reaches the app before anything is drawn (its rebuild, the frame
+ * below, then draws once at this size, not a stale tree and then the rebuilt one), the app's frame
+ * runs, the window renders and presents. */
+static void render_message(BKWindow *win)
+{
+  if (!IsIconic(win->hwnd)) {
+    int w, h;
+    client_size(win, &w, &h);
+    if (BK_configure(win->ctx, w, h)) {
+      fire_due_timers(win);
+      if (!win->hwnd) {
+        return;
+      }
+    }
+  }
+  if (win->want_frame && win->cb.on_frame) {
+    /* render_pending is still set: edits made here join this frame */
+    win->want_frame = 0;
+    QueryPerformanceCounter(&win->frame_start);
+    win->cb.on_frame(win->cb.data, win);
+    if (!win->hwnd) { /* the frame callback can close the window (as on X11, Wayland and Cocoa) */
+      return;
+    }
+  }
+  win->render_pending = 0;
+  do_render(win);
+  if (win->want_frame) { /* the host asked for the next frame */
+    bk_frame_ms = frame_ms(win);
+    bk_frame_budget_ms = win->frame_vsync ? refresh_ms() : 0.0;
+    if (win->frame_vsync && bk_frame_ms < refresh_ms() - 1.5) {
+      vsync(); /* early: wait for the next refresh; late: start right away */
+    }
+    host_request(win);
+  }
+  else {
+    bk_frame_ms = 0.0; /* the animation ended */
+  }
+}
+
+/* A size change while the user drags renders at once, from the WM_SIZE (the modal loop sends it, no
+ * app callback is running), so the frame DWM composes for the new window size is already at that
+ * size, never an older frame or its stretched or cropped copy. Other size changes (the app's own
+ * SetWindowPos can come from inside its callbacks) render at most once per refresh, from the
+ * render message or, when one just ran, a timer (the render reads the latest client size). */
 static void size_request(BKWindow *win)
 {
+  if (win->user_sizing) {
+    win->render_pending = 1; /* edits made by the render join it */
+    render_message(win);
+    return;
+  }
   LARGE_INTEGER now;
   QueryPerformanceCounter(&now);
   const double wait = refresh_ms() - qpc_ms(win->last_render, now);
@@ -734,40 +780,7 @@ static LRESULT CALLBACK wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
   BKContext *ctx = win->ctx;
   switch (msg) {
     case WM_BK_RENDER:
-      if (!IsIconic(hwnd)) {
-        /* the new size reaches the app before anything is drawn: its rebuild (the frame below)
-         * then draws once at this size, not a stale tree and then the rebuilt one */
-        int w, h;
-        client_size(win, &w, &h);
-        if (BK_configure(ctx, w, h)) {
-          fire_due_timers(win);
-          if (!win->hwnd) {
-            return 0;
-          }
-        }
-      }
-      if (win->want_frame && win->cb.on_frame) {
-        /* render_pending is still set: edits made here join this frame */
-        win->want_frame = 0;
-        QueryPerformanceCounter(&win->frame_start);
-        win->cb.on_frame(win->cb.data, win);
-        if (!win->hwnd) { /* the frame callback can close the window (as on X11, Wayland and Cocoa) */
-          return 0;
-        }
-      }
-      win->render_pending = 0;
-      do_render(win);
-      if (win->want_frame) { /* the host asked for the next frame */
-        bk_frame_ms = frame_ms(win);
-        bk_frame_budget_ms = win->frame_vsync ? refresh_ms() : 0.0;
-        if (win->frame_vsync && bk_frame_ms < refresh_ms() - 1.5) {
-          vsync(); /* early: wait for the next refresh; late: start right away */
-        }
-        host_request(win);
-      }
-      else {
-        bk_frame_ms = 0.0; /* the animation ended */
-      }
+      render_message(win);
       return 0;
     case WM_PAINT: {
       /* An exposed region has no content in the compositor's surface (it was off screen or
