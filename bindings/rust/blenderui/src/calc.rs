@@ -97,6 +97,22 @@ impl Calc {
         }
     }
 
+    /// Whether the expression is a plain number (no length or percentage
+    /// leaf): `calc(1.25 / 0.875)`, which `line-height` takes as a factor.
+    pub fn is_number(&self) -> bool {
+        use Calc::*;
+        match self {
+            Num(_) => true,
+            Px(_) | Pct(_) | Em(_) | Rem(_) | Vw(_) | Vh(_) | Vmin(_) | Vmax(_) => false,
+            Add(a, b) | Sub(a, b) | Mul(a, b) | Div(a, b) | Mod(a, b) | Rem2(a, b) | Pow(a, b)
+            | Atan2(a, b) | Round(_, a, b) => a.is_number() && b.is_number(),
+            Min(v) | Max(v) | Hypot(v) => v.iter().all(Calc::is_number),
+            Clamp(a, b, c) => a.is_number() && b.is_number() && c.is_number(),
+            Fn1(_, a) => a.is_number(),
+            Log(a, b) => a.is_number() && b.as_ref().is_none_or(|b| b.is_number()),
+        }
+    }
+
     /// The value in px, percentages taken of `basis`.
     pub fn eval_units(&self, u: &Units, basis: f32) -> f32 {
         use Calc::*;

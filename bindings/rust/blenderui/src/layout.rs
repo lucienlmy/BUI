@@ -1429,6 +1429,8 @@ impl<'a> Builder<'a> {
                     }
                     self.element(d, Some(i), key, (k, count));
                 }
+                // an empty text run renders nothing (`None` as a child)
+                AnyElement::Text(t) if t.is_empty() => {}
                 AnyElement::Text(t) => {
                     let style = self.nodes[i].style;
                     self.push(Some(i), Content::Text(t.into_owned()), Some(i), style,
@@ -1917,8 +1919,9 @@ impl<'a> Builder<'a> {
             && c.vertical_align == VAlign::Baseline
             && !c.small_caps
             && matches!(c.white_space, WhiteSpace::Normal | WhiteSpace::NoWrap)
-            && s.overflow.x == Overflow::Visible
-            && s.overflow.y == Overflow::Visible)
+            // a scroll container moves its content: only clipping ones fold
+            && s.overflow.x != Overflow::Scroll
+            && s.overflow.y != Overflow::Scroll)
             .then_some(k)
     }
 
@@ -2411,6 +2414,8 @@ impl Walk<'_> {
             }
             if let Some(k) = nodes[i].fold {
                 place_folded_text(nodes, i, k, rect(x, y, w, h), &l, self.styles, self.text);
+                // the text is clipped by its container's `overflow`
+                nodes[k].clip = child_clip;
             }
         }
         let inner = (x - sx, y - sy);
@@ -2447,7 +2452,9 @@ fn place_folded_text(nodes: &mut [BoxNode], i: usize, k: usize, b: Bounds<f32>, 
         let w = lines.iter().map(|s| tc.width(s, c.font_size, flags)).fold(0.0, f32::max);
         (w.ceil(), line * lines.len().max(1) as f32)
     };
-    let tw = if c.white_space == WhiteSpace::NoWrap { tw } else { tw.min(cb.size.width) };
+    // nowrap text overflows its container, unless that container ellipsizes
+    // it: then the text is cut to the content box (paint adds the `…`)
+    let tw = if c.white_space == WhiteSpace::NoWrap && !c.ellipsizes() { tw } else { tw.min(cb.size.width) };
     let s = &c.layout;
     // offset of a box of `size` in `room` for a start / center / end choice
     let at = |room: f32, size: f32, pos: u8| match pos {
@@ -2493,7 +2500,7 @@ fn finish(nodes: &mut [BoxNode], styles: &StyleStore, acc: &mut Vec<Option<Bound
         let own = matches!(nodes[i].content, Content::Element | Content::Widget(_) | Content::Replaced(_));
         nodes[i].opacity = if own { po * st.opacity } else { po };
         nodes[i].visible = pv && st.visible;
-        if nodes[i].taffy.is_none() {
+        if nodes[i].taffy.is_none() && !nodes[i].folded {
             nodes[i].clip = pc;
         }
     }

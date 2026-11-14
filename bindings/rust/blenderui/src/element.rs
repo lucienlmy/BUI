@@ -140,6 +140,15 @@ impl IntoElement for Cow<'static, str> {
     }
 }
 
+/// `None` renders nothing, `Some(x)` renders `x`: conditionals are one-liners
+/// (`{ cond.then(|| div()) }`, `{ maybe_title }`). `None` is an empty text
+/// run, which layout skips (like an empty DOM text node), so siblings stay put.
+impl<T: IntoElement> IntoElement for Option<T> {
+    fn into_any_element(self) -> AnyElement {
+        self.map_or(AnyElement::Text(Cow::Borrowed("")), IntoElement::into_any_element)
+    }
+}
+
 impl Div {
     /// An element with any tag name (custom elements: `Div::new("my-widget")`).
     pub fn new(tag: &'static str) -> Div {

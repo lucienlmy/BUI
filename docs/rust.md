@@ -240,7 +240,10 @@ Every element has `.child(..)`, `.children(..)`, `.id(..)`, `.class(..)`,
 `live` attribute (`<input live>`) reports every keystroke to `on_input` and
 `on_change`, not only on Enter or blur. `FluentBuilder` adds
 `.when(cond, |el| ..)`, `.when_some(opt, |el, v| ..)` and `.map(..)`.
-Text children are `&'static str`, `String` or `SharedString`.
+Text children are `&'static str`, `String` or `SharedString`. An `Option<T>`
+of any of these is a child too: `None` renders nothing and leaves its siblings
+in place, so `.child(cond.then(|| div()))` and, in `rsx!`,
+`{ cond.then(|| rsx! { <p>"hi"</p> }) }` or `{ maybe_title }` are one-liners.
 
 > `main()` (the `<main>` element) has the same name as your program's
 > `fn main`. Inside `fn main` call it as `blenderui::html::main()`.
@@ -365,7 +368,11 @@ Layout is computed with [taffy](https://github.com/DioxusLabs/taffy):
   inline-blocks and widgets sit on the line. `white-space` (`normal`,
   `nowrap`, `pre`, `pre-wrap`, `pre-line`), `text-align`, `text-indent`,
   `letter-spacing`, `word-spacing`, `vertical-align: sub | super`,
-  `text-transform` and `text-overflow: ellipsis` apply.
+  `text-transform` and `text-overflow: ellipsis` apply. `text-overflow`
+  works as in CSS: on a block whose `overflow-x` is not `visible` (usually with
+  `white-space: nowrap`, Tailwind's `truncate`), a line wider than the content
+  box is cut to it and ends with `…` (`clip` just cuts it); with `overflow:
+  visible` it does nothing.
 - **Flexbox** and **grid**: every property of both modules, including
   `grid-template-areas`, named lines, `repeat()`, `minmax()`, `fr`,
   `auto-fill` / `auto-fit`, spans and line placement.

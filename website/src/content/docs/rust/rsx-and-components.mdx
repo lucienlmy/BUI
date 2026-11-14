@@ -159,6 +159,22 @@ rsx! {
 - **`if`** without an `else` renders nothing when the condition is false.
 - **`match`** arms can be markup, a `{ block }` that ends in markup, or any expression.
 
+## Optional children
+
+An `Option<T>` is an element: `None` renders nothing and leaves its siblings in place, `Some(x)` renders `x`. So a conditional is one expression, in `rsx!` and in the builder API.
+
+```rust
+rsx! {
+    <div class="flex items-center gap-2">
+        {maybe_title}                                   // Option<&str>, Option<String>, Option<Div> ...
+        {pinned.then(|| rsx! { <span>"pinned"</span> })}
+        {unread.then(|| div().w_2().h_2().rounded_full().bg_emerald_500())}
+    </div>
+}
+
+div().child(unread.then(|| div().id("dot")))   // the same in the builder API
+```
+
 ## Fragments
 
 `<>...</>` groups children without adding a box. It's an element with `display: contents`, so its children lay out as if they belonged to the parent. When `rsx!` contains more than one top-level node, it wraps them in a fragment for you.
