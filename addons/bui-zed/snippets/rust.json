@@ -1,0 +1,80 @@
+{
+  "BUI rsx! block": {
+    "prefix": "rsx",
+    "body": ["rsx! {", "\t<div class=\"${1:flex p-4}\">", "\t\t$0", "\t</div>", "}"],
+    "description": "BUI rsx! markup"
+  },
+  "BUI rsx! with bare Tailwind attributes": {
+    "prefix": "rsxt",
+    "body": ["rsx! {", "\t<div ${1:flex flex-col gap-2 p-4}>", "\t\t$0", "\t</div>", "}"],
+    "description": "rsx! using bare Tailwind attributes"
+  },
+  "BUI component": {
+    "prefix": "bcomp",
+    "body": [
+      "#[component]",
+      "fn ${1:name}(${2:label: &str}) {",
+      "\trsx! {",
+      "\t\t<div ${3:flex items-center gap-2}>",
+      "\t\t\t$0",
+      "\t\t</div>",
+      "\t}",
+      "}"
+    ],
+    "description": "Lowercase #[component] function returning rsx!"
+  },
+  "BUI component with children": {
+    "prefix": "bcompc",
+    "body": [
+      "#[component]",
+      "fn ${1:Card}(${2:title: &str}, children: Children) {",
+      "\trsx! {",
+      "\t\t<section ${3:p-2}>",
+      "\t\t\t{...children}",
+      "\t\t</section>",
+      "\t}",
+      "}"
+    ],
+    "description": "#[component] that takes children"
+  },
+  "BUI stateful component": {
+    "prefix": "bstate",
+    "body": [
+      "#[component]",
+      "fn ${1:counter}(${2:label: &str}) {",
+      "\tlet (${3:count}, set_${3:count}) = use_state(${4:0});",
+      "\trsx! {",
+      "\t\t<div onClick={move || set_${3:count}(${3:count}() + 1)}>",
+      "\t\t\t{${3:count}().to_string()}",
+      "\t\t</div>",
+      "\t}",
+      "}"
+    ],
+    "description": "Component with use_state"
+  },
+  "BUI for loop in rsx": {
+    "prefix": "rfor",
+    "body": ["{for ${1:item} in ${2:items} { <li>{${1:item}}</li> }}"],
+    "description": "rsx! for loop"
+  },
+  "BUI if in rsx": {
+    "prefix": "rif",
+    "body": ["{if ${1:cond} { $0 }}"],
+    "description": "rsx! conditional"
+  },
+  "BUI match in rsx": {
+    "prefix": "rmatch",
+    "body": ["{match ${1:value} {", "\t${2:Pattern} => <${3:span}>$0</${3:span}>,", "}}"],
+    "description": "rsx! match"
+  },
+  "BUI hover variant attribute": {
+    "prefix": "rhover",
+    "body": ["hover:class=\"${1:bg-sky-600}\""],
+    "description": "Variant-prefixed class attribute"
+  },
+  "BUI click handler": {
+    "prefix": "ronclick",
+    "body": ["onClick={${1:move || $0}}"],
+    "description": "onClick attribute (parameters may be omitted)"
+  }
+}

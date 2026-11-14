@@ -1,0 +1,58 @@
+{
+  "rsx! block": {
+    "prefix": "rsx",
+    "body": ["rsx! {", "\t<${1:div} class=\"${2}\">", "\t\t$0", "\t</${1:div}>", "}"],
+    "description": "BUI rsx! markup block"
+  },
+  "#[component] skeleton": {
+    "prefix": "component",
+    "body": [
+      "#[component]",
+      "pub fn ${1:name}(${2:title: &str}) {",
+      "\trsx! {",
+      "\t\t<div class=\"${3:flex p-4}\">",
+      "\t\t\t$0",
+      "\t\t</div>",
+      "\t}",
+      "}"
+    ],
+    "description": "BUI function component"
+  },
+  "Component with children": {
+    "prefix": "componentchildren",
+    "body": [
+      "#[component]",
+      "pub fn ${1:Card}(${2:title: &str}, children: Children) {",
+      "\trsx! {",
+      "\t\t<section class=\"${3:p-2}\">",
+      "\t\t\t{...children}",
+      "\t\t</section>",
+      "\t}",
+      "}"
+    ],
+    "description": "Component taking Children"
+  },
+  "div": { "prefix": "<div", "body": ["<div class=\"${1}\">$0</div>"], "description": "div element" },
+  "span": { "prefix": "<span", "body": ["<span class=\"${1}\">$0</span>"], "description": "span element" },
+  "button": {
+    "prefix": "<button",
+    "body": ["<button class=\"${1}\" onClick={${2:|| $3}}>\"${4:Label}\"</button>"],
+    "description": "button with onClick"
+  },
+  "input": { "prefix": "<input", "body": ["<input class=\"${1}\" onChange={|e: &ChangeEvent| $0} />"], "description": "input with onChange" },
+  "for loop": { "prefix": "rsxfor", "body": ["{for ${1:it} in ${2:items} { <${3:li}>{${1:it}}</${3:li}> }}"], "description": "rsx for loop" },
+  "if": { "prefix": "rsxif", "body": ["{if ${1:cond} { $0 }}"], "description": "rsx conditional" },
+  "if else": { "prefix": "rsxife", "body": ["{if ${1:cond} { $2 } else { $0 }}"], "description": "rsx conditional with else" },
+  "match": {
+    "prefix": "rsxmatch",
+    "body": ["{match ${1:value} {", "\t${2:Pattern} => $3,", "\t_ => $0,", "}}"],
+    "description": "rsx match"
+  },
+  "fragment": { "prefix": "<>", "body": ["<>", "\t$0", "</>"], "description": "rsx fragment" },
+  "use_state": {
+    "prefix": "usestate",
+    "body": ["let (${1:value}, ${2:set_value}) = use_state(${3:0});"],
+    "description": "BUI use_state hook"
+  },
+  "tw!": { "prefix": "tw", "body": ["tw!(\"${1}\")"], "description": "compile-checked Tailwind classes" }
+}

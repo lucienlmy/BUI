@@ -1,0 +1,31 @@
+---
+title: Editor support
+description: VS Code and Zed extensions for BUI's rsx! markup, with Tailwind-aware highlighting, snippets and class completion, and what each editor can and can't do.
+section: Rust
+order: 95
+languages: ["rust"]
+sources: ["addons/bui-vscode/README.md", "addons/bui-zed/README.md"]
+---
+
+BUI ships two editor extensions in `addons/`. Both are GPL-3.0-or-later, like BUI.
+
+## VS Code (`addons/bui-vscode`)
+
+A TextMate injection grammar on `source.rust`, so it works next to rust-analyzer and any Rust theme. Inside `rsx! { ... }` (and the `view!` alias) it highlights:
+
+- tags, components, fragments and closing tags;
+- attribute names, including `on*` handlers and variant prefixes such as `md:dark:hover:`;
+- `class="..."` strings, with every Tailwind token and variant scoped separately, and bare Tailwind attributes (`<div p-4 bg-[#4772b3]>`);
+- `{expr}` embeds as Rust, string text children and comments.
+
+It also adds snippets (`rsx`, `component`, `rsxfor`, `rsxif`, `rsxmatch`, `usestate` and more) and Tailwind class completion inside `class="..."`. Rust outside these macros is untouched. Install it from a `.vsix` built with `npx @vscode/vsce package` in `addons/bui-vscode`.
+
+## Zed (`addons/bui-zed`)
+
+Zed extensions can't extend the built-in Rust injections, which hardcode macro names, so `rsx!` bodies in `.rs` files stay Rust-highlighted. The extension instead gives you:
+
+- a **BUI RSX** language for `.rsx` files (a tree-sitter grammar that understands bare Tailwind attributes, with Rust highlighted inside `{...}`);
+- Rust and `.rsx` snippets;
+- partial `view!` highlighting if you also install Zed's Leptos RSTML extension (its grammar errors on bare Tailwind attributes, so the highlighting degrades around them).
+
+Install it with `zed: install dev extension` and pick `addons/bui-zed`.

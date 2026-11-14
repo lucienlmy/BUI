@@ -1,0 +1,34 @@
+{
+  "name": "bui-rsx",
+  "displayName": "BUI rsx!",
+  "description": "Syntax highlighting, snippets and Tailwind class completion for BUI's rsx! markup in Rust.",
+  "version": "0.1.0",
+  "publisher": "ppmpreetham",
+  "license": "GPL-3.0-or-later",
+  "engines": { "vscode": "^1.75.0" },
+  "categories": ["Programming Languages", "Snippets"],
+  "keywords": ["rust", "rsx", "bui", "blenderui", "tailwind"],
+  "repository": { "type": "git", "url": "https://github.com/ppmpreetham/BUI" },
+  "main": "./src/extension.js",
+  "activationEvents": ["onLanguage:rust"],
+  "contributes": {
+    "grammars": [
+      {
+        "scopeName": "bui-rsx.injection",
+        "path": "./syntaxes/rsx.injection.tmLanguage.json",
+        "injectTo": ["source.rust"],
+        "embeddedLanguages": {
+          "meta.embedded.expression.rsx": "rust"
+        },
+        "tokenTypes": {
+          "string.quoted.double.rsx": "string",
+          "string.quoted.double.class.rsx": "string",
+          "string.quoted.double.text.rsx": "string"
+        }
+      }
+    ],
+    "snippets": [
+      { "language": "rust", "path": "./snippets/rust.json" }
+    ]
+  }
+}

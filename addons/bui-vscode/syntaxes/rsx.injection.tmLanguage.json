@@ -1,0 +1,218 @@
+{
+  "scopeName": "bui-rsx.injection",
+  "injectionSelector": "L:source.rust -comment -string",
+  "patterns": [
+    { "include": "#rsx-macro" },
+    { "include": "#tw-macro" }
+  ],
+  "repository": {
+    "rsx-macro": {
+      "patterns": [
+        {
+          "name": "meta.macro.rsx",
+          "begin": "\\b((?:rsx|view))(!)\\s*(\\{)",
+          "end": "\\}",
+          "beginCaptures": {
+            "1": { "name": "entity.name.function.macro.rsx" },
+            "2": { "name": "entity.name.function.macro.rsx" },
+            "3": { "name": "punctuation.section.macro.begin.rsx" }
+          },
+          "endCaptures": { "0": { "name": "punctuation.section.macro.end.rsx" } },
+          "patterns": [{ "include": "#markup" }]
+        },
+        {
+          "name": "meta.macro.rsx",
+          "begin": "\\b((?:rsx|view))(!)\\s*(\\()",
+          "end": "\\)",
+          "beginCaptures": {
+            "1": { "name": "entity.name.function.macro.rsx" },
+            "2": { "name": "entity.name.function.macro.rsx" },
+            "3": { "name": "punctuation.section.macro.begin.rsx" }
+          },
+          "endCaptures": { "0": { "name": "punctuation.section.macro.end.rsx" } },
+          "patterns": [{ "include": "#markup" }]
+        },
+        {
+          "name": "meta.macro.rsx",
+          "begin": "\\b((?:rsx|view))(!)\\s*(\\[)",
+          "end": "\\]",
+          "beginCaptures": {
+            "1": { "name": "entity.name.function.macro.rsx" },
+            "2": { "name": "entity.name.function.macro.rsx" },
+            "3": { "name": "punctuation.section.macro.begin.rsx" }
+          },
+          "endCaptures": { "0": { "name": "punctuation.section.macro.end.rsx" } },
+          "patterns": [{ "include": "#markup" }]
+        }
+      ]
+    },
+    "tw-macro": {
+      "name": "meta.macro.tw.rsx",
+      "begin": "\\b(tw)(!)\\s*(\\()",
+      "end": "\\)",
+      "beginCaptures": {
+        "1": { "name": "entity.name.function.macro.rsx" },
+        "2": { "name": "entity.name.function.macro.rsx" },
+        "3": { "name": "punctuation.section.macro.begin.rsx" }
+      },
+      "endCaptures": { "0": { "name": "punctuation.section.macro.end.rsx" } },
+      "patterns": [{ "include": "#class-string" }]
+    },
+    "markup": {
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#fragment" },
+        { "include": "#close-tag" },
+        { "include": "#open-tag" },
+        { "include": "#text-string" },
+        { "include": "#embed" }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.rsx", "match": "//.*$" },
+        { "name": "comment.block.rsx", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "fragment": {
+      "name": "meta.tag.fragment.rsx",
+      "match": "(</?)(>)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.begin.rsx" },
+        "2": { "name": "punctuation.definition.tag.end.rsx" }
+      }
+    },
+    "tag-name": {
+      "patterns": [
+        { "match": "(?<![\\w.-])[A-Z][\\w.-]*", "name": "entity.name.type.component.rsx" },
+        { "match": ".+", "name": "entity.name.tag.rsx" }
+      ]
+    },
+    "close-tag": {
+      "name": "meta.tag.close.rsx",
+      "match": "(</)([A-Za-z_][\\w.-]*)\\s*(>)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.begin.rsx" },
+        "2": { "patterns": [{ "include": "#tag-name" }] },
+        "3": { "name": "punctuation.definition.tag.end.rsx" }
+      }
+    },
+    "open-tag": {
+      "name": "meta.tag.open.rsx",
+      "begin": "(?<![\\w)\\]&:])(<)([A-Za-z_][\\w.-]*)(?=[\\s/>])",
+      "end": "(/?)(>)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.begin.rsx" },
+        "2": { "patterns": [{ "include": "#tag-name" }] }
+      },
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.end.rsx" },
+        "2": { "name": "punctuation.definition.tag.end.rsx" }
+      },
+      "patterns": [
+        { "include": "#comments" },
+        { "include": "#class-attr" },
+        { "include": "#attr-with-value" },
+        { "include": "#attr-string" },
+        { "include": "#embed" },
+        { "include": "#bool-attr" },
+        { "include": "#bare-attr" }
+      ]
+    },
+    "class-attr": {
+      "begin": "((?:(?:\\[[^\\]\\s]*\\]|[^\\s:=>{}\"/\\[])+:)*)(class|className)\\s*(=)\\s*(\")",
+      "end": "\"",
+      "beginCaptures": {
+        "1": { "name": "keyword.other.variant.rsx" },
+        "2": { "name": "entity.other.attribute-name.class.rsx" },
+        "3": { "name": "punctuation.separator.key-value.rsx" },
+        "4": { "name": "punctuation.definition.string.begin.rsx" }
+      },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.rsx" } },
+      "contentName": "string.quoted.double.class.rsx",
+      "patterns": [{ "include": "#class-tokens" }]
+    },
+    "class-string": {
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.rsx" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.rsx" } },
+      "contentName": "string.quoted.double.class.rsx",
+      "patterns": [{ "include": "#class-tokens" }]
+    },
+    "class-tokens": {
+      "match": "(?<=[\"\\s])((?:(?:\\[[^\\]\\s\"]*\\]|[^\\s\":\\[])+:)*)([^\\s\"]+)",
+      "captures": {
+        "1": { "name": "keyword.other.variant.rsx" },
+        "2": { "name": "support.constant.tailwind.rsx" }
+      }
+    },
+    "attr-with-value": {
+      "match": "((?:(?:\\[[^\\]\\s]*\\]|[^\\s:=>{}\"/\\[])+:)*)((?:\\[[^\\]\\s]*\\]|[^\\s=>{}\"/:\\[]|/(?!>)|\\[)+)\\s*(=)",
+      "captures": {
+        "1": { "name": "keyword.other.variant.rsx" },
+        "2": {
+          "patterns": [
+            { "match": "(?<![\\w])on[A-Z]\\w*", "name": "entity.other.attribute-name.event.rsx" },
+            { "match": ".+", "name": "entity.other.attribute-name.rsx" }
+          ]
+        },
+        "3": { "name": "punctuation.separator.key-value.rsx" }
+      }
+    },
+    "attr-string": {
+      "name": "string.quoted.double.rsx",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.rsx" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.rsx" } },
+      "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.rsx" }]
+    },
+    "text-string": {
+      "name": "string.quoted.double.text.rsx",
+      "begin": "\"",
+      "end": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.rsx" } },
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.rsx" } },
+      "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.rsx" }]
+    },
+    "bool-attr": {
+      "match": "(?<![\\w-])(?:disabled|checked|hidden|open|selected|readonly|required|multiple|autofocus|autoplay|controls|loop|muted|novalidate|reversed|async|defer|draggable|contenteditable|spellcheck|inert|playsinline)(?![\\w:/\\[-])",
+      "name": "entity.other.attribute-name.rsx"
+    },
+    "bare-attr": {
+      "match": "((?:(?:\\[[^\\]\\s]*\\]|[^\\s:=>{}\"/\\[])+:)*)((?:\\[[^\\]\\s]*\\]|[^\\s=>{}\"/:\\[]|/(?!>)|\\[)+)",
+      "captures": {
+        "1": { "name": "keyword.other.variant.rsx" },
+        "2": {
+          "patterns": [
+            { "match": "(?<![\\w-])(?:data|aria)-[^\\s]*", "name": "entity.other.attribute-name.rsx" },
+            { "match": ".+", "name": "support.constant.tailwind.rsx" }
+          ]
+        }
+      }
+    },
+    "embed": {
+      "name": "meta.embedded.expression.rsx",
+      "begin": "\\{",
+      "end": "\\}",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.rsx" } },
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.rsx" } },
+      "patterns": [{ "include": "#embed-inner" }]
+    },
+    "embed-inner": {
+      "patterns": [
+        { "include": "#fragment" },
+        { "include": "#close-tag" },
+        { "include": "#open-tag" },
+        { "include": "#nested-braces" },
+        { "include": "source.rust" }
+      ]
+    },
+    "nested-braces": {
+      "begin": "\\{",
+      "end": "\\}",
+      "patterns": [{ "include": "#embed-inner" }]
+    }
+  }
+}

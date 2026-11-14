@@ -1,0 +1,7 @@
+{
+  "name": "tree-sitter-bui-rsx",
+  "version": "0.1.0",
+  "description": "tree-sitter grammar for BUI rsx! markup",
+  "license": "GPL-3.0-or-later",
+  "tree-sitter": [{ "scope": "source.bui_rsx", "file-types": ["rsx"] }]
+}

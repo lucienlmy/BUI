@@ -1588,6 +1588,7 @@ All 26 run headless (`bui-lua --headless app.lua`) for CI and documentation scre
 | [C API](docs/c-api.md)                             | The C kit (`BUI_kit.h`)                                                                                                              |
 | [Lua](bindings/lua/README.md)                      | Standalone `bui-lua` or loadable module; every widget, tree view, file browser, node editor                                          |
 | [D](bindings/d/README.md)                          | DUB package: raw kit declarations, D wrappers, HTML/CSS/RSX, ownership, examples and the integration suite                                         |
+| [Editor support](addons/bui-vscode/README.md)      | VS Code (`addons/bui-vscode`) and Zed (`addons/bui-zed`) extensions for `rsx!`: Tailwind-aware highlighting, snippets, class completion |
 | [Integration](INTEGRATION.md)                      | Embedding BUI drawing in C, C++, Qt or PySide hosts                                                                                  |
 | [Architecture](ARCHITECTURE.md)                    | Modules and what was taken from Blender                                                                                              |
 | [Syntax coverage](SYNTAX_COVERAGE.md)              | The Qt and tkinter surface, exactly                                                                                                  |

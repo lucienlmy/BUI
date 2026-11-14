@@ -1,0 +1,37 @@
+{
+  "div": {
+    "prefix": "div",
+    "body": ["<div ${1:flex p-4}>", "\t$0", "</div>"],
+    "description": "div with bare Tailwind attributes"
+  },
+  "Self-closing component": {
+    "prefix": "comp",
+    "body": ["<${1:counter} ${2:label}=\"${3:text}\" />"],
+    "description": "Component tag"
+  },
+  "Fragment": {
+    "prefix": "frag",
+    "body": ["<>", "\t$0", "</>"],
+    "description": "Fragment (display: contents)"
+  },
+  "for loop": {
+    "prefix": "for",
+    "body": ["{for ${1:item} in ${2:items} { <li>{${1:item}}</li> }}"],
+    "description": "rsx! for loop"
+  },
+  "if": {
+    "prefix": "if",
+    "body": ["{if ${1:cond} { $0 }}"],
+    "description": "rsx! conditional"
+  },
+  "hover class": {
+    "prefix": "hover",
+    "body": ["hover:class=\"${1:bg-sky-600}\""],
+    "description": "Variant-prefixed class attribute"
+  },
+  "onClick": {
+    "prefix": "onclick",
+    "body": ["onClick={${1:move || $0}}"],
+    "description": "Click handler"
+  }
+}

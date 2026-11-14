@@ -1,0 +1,15 @@
+id = "bui-rsx"
+name = "BUI RSX"
+version = "0.1.0"
+schema_version = 1
+authors = ["Preetham Pemmasani"]
+description = "Syntax highlighting and snippets for BUI's rsx! markup (Tailwind attributes included)"
+repository = "https://github.com/ppmpreetham/BUI"
+snippets = ["./snippets/rust.json", "./snippets/bui rsx.json"]
+
+# The grammar is built from this repository's addons/bui-zed/grammar folder.
+# `rev` is a commit that contains grammar/src (regenerate with `tree-sitter generate`).
+[grammars.bui_rsx]
+repository = "https://github.com/ppmpreetham/BUI"
+rev = "REV"
+path = "addons/bui-zed/grammar"

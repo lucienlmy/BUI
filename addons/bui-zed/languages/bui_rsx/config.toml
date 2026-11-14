@@ -1,0 +1,26 @@
+name = "BUI RSX"
+grammar = "bui_rsx"
+path_suffixes = ["rsx"]
+line_comments = ["// "]
+autoclose_before = ">})]"
+tab_size = 4
+brackets = [
+    { start = "{", end = "}", close = true, newline = true },
+    { start = "[", end = "]", close = true, newline = true },
+    { start = "(", end = ")", close = true, newline = true },
+    { start = "\"", end = "\"", close = true, newline = false, not_in = [
+        "comment",
+        "string",
+    ] },
+    { start = "<", end = ">", close = false, newline = true, not_in = [
+        "comment",
+        "string",
+    ] },
+]
+completion_query_characters = ["-", ":", "/", "["]
+
+[jsx_tag_auto_close]
+open_tag_node_name = "open_tag"
+close_tag_node_name = "close_tag"
+jsx_element_node_name = "element"
+tag_name_node_name = "tag_name"
