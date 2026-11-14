@@ -92,6 +92,8 @@ pub(crate) struct Rare {
     pub source: Option<ReplacedSource>,
     /// Runs before layout with the window and app (see [`Div::defer`]).
     pub deferred: Option<Deferred>,
+    /// Motion's props (`initial`, `animate`, `whileHover` ...).
+    pub motion: crate::motion::Spec,
 }
 
 /// Styles for interaction states (`.hover(|s| ...)` ...).
@@ -164,8 +166,13 @@ impl Div {
         }
     }
 
-    fn rare_mut(&mut self) -> &mut Rare {
+    pub(crate) fn rare_mut(&mut self) -> &mut Rare {
         self.rare.get_or_insert_with(Box::default)
+    }
+
+    /// Motion's props, when it has any.
+    pub(crate) fn motion(&self) -> Option<&crate::motion::Spec> {
+        self.rare.as_ref().map(|r| &r.motion).filter(|m| !m.is_empty())
     }
 
     /// Set what this replaced element shows (the last source given wins).

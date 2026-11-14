@@ -313,6 +313,10 @@ pub(crate) struct WidgetNode {
     pub node: *mut sys::BKNode,
     pub spec: WidgetSpec,
     seen: bool,
+    /// the canvas it is on (see `Painter`)
+    seg: u32,
+    /// the part of it that shows (device pixels), when something clips it
+    clip: Option<[i32; 4]>,
 }
 
 /// The kit widgets of one window, keyed by element key.
@@ -344,7 +348,7 @@ impl Widgets {
                 sys::BK_node_add(parent, node, -1);
                 sys::BK_geom_set_manager(node, sys::BK_GEOM_PLACE);
             }
-            let w = WidgetNode { node, spec: spec.clone(), seen: true };
+            let w = WidgetNode { node, spec: spec.clone(), seen: true, seg: 0, clip: None };
             sync(node, None, spec);
             w
         });
@@ -362,9 +366,17 @@ impl Widgets {
         ((nat[0] as f32 / scale).max(mw), (nat[1] as f32 / scale).max(mh))
     }
 
+    /// A frame without layout (a redraw of Motion's values) keeps the widgets
+    /// of the last one: none was asked for again, none is gone.
+    pub(crate) fn keep(&mut self) {
+        for w in self.nodes.values_mut() {
+            w.seen = true;
+        }
+    }
+
     /// Place every widget at its laid-out bounds; free those not rendered.
-    pub(crate) fn place(&mut self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool)>,
-                        scale: f32) {
+    pub(crate) fn place(&mut self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool, u32, u32)>,
+                        canvases: &[*mut sys::BKNode], scale: f32) {
         self.nodes.retain(|key, w| {
             if !w.seen || !at.contains_key(key) {
                 // SAFETY: frees our node (detaching it from the canvas).
@@ -372,11 +384,40 @@ impl Widgets {
                 return false;
             }
             w.seen = false;
-            let (b, clip, visible) = at[key];
+            let (b, clip, visible, seg, _) = at[key];
+            // on the canvas its paint order puts it on (above what comes before, below what overlaps it)
+            let seg = seg.min(canvases.len() as u32 - 1);
+            if w.seg != seg {
+                // SAFETY: our node, moved to another of the window's canvases.
+                unsafe { sys::BK_node_add(canvases[seg as usize], w.node, -1) };
+                w.seg = seg;
+            }
             let shown = visible && clip.is_none_or(|c| {
                 let i = c.intersect(&b);
                 i.size.width > 0.0 && i.size.height > 0.0
             });
+            // cut where an ancestor's `overflow` clips it (nothing set when all of it shows)
+            let cut = clip.filter(|c| c.intersect(&b) != b).map(|c| {
+                let c = c.intersect(&b);
+                let (x0, y0) = ((c.origin.x * scale).floor(), (c.origin.y * scale).floor());
+                let (x1, y1) = (((c.origin.x + c.size.width) * scale).ceil(), ((c.origin.y + c.size.height) * scale).ceil());
+                [x0 as i32, y0 as i32, (x1 - x0) as i32, (y1 - y0) as i32]
+            });
+            if cut != w.clip {
+                w.clip = cut;
+                // SAFETY: our live node; plain numbers.
+                unsafe {
+                    match cut {
+                        Some(c) => {
+                            sys::BK_geom_set(w.node, c"clipx".as_ptr(), f64::from(c[0]));
+                            sys::BK_geom_set(w.node, c"clipy".as_ptr(), f64::from(c[1]));
+                            sys::BK_geom_set(w.node, c"clipw".as_ptr(), f64::from(c[2]));
+                            sys::BK_geom_set(w.node, c"cliph".as_ptr(), f64::from(c[3]));
+                        }
+                        None => sys::BK_geom_set(w.node, c"noclip".as_ptr(), 1.0),
+                    }
+                }
+            }
             unsafe {
                 sys::BK_geom_set(w.node, c"x".as_ptr(), (b.origin.x * scale).round() as f64);
                 sys::BK_geom_set(w.node, c"y".as_ptr(), (b.origin.y * scale).round() as f64);
@@ -386,6 +427,29 @@ impl Widgets {
             }
             true
         });
+        self.order(at, canvases);
+    }
+
+    /// The kit draws a canvas's widgets in the order they are its children, and the topmost child gets
+    /// the pointer: each canvas's widgets are put in paint order (`z-index` among widgets, later
+    /// siblings over earlier ones), not in the order they were made.
+    fn order(&self, at: &HashMap<Key, (Bounds<f32>, Option<Bounds<f32>>, bool, u32, u32)>,
+             canvases: &[*mut sys::BKNode]) {
+        let mut want: Vec<(u32, *mut sys::BKNode)> = Vec::new();
+        for (k, &canvas) in canvases.iter().enumerate() {
+            want.clear();
+            want.extend(self.nodes.iter().filter(|(_, w)| w.seg as usize == k)
+                .map(|(key, w)| (at[key].4, w.node)));
+            want.sort_unstable_by_key(|&(rank, _)| rank);
+            for (i, &(_, node)) in want.iter().enumerate() {
+                // SAFETY: our canvas and widget nodes; moving a node within its parent
+                unsafe {
+                    if sys::BK_node_child(canvas, i as i32) != node {
+                        sys::BK_node_add(canvas, node, i as i32);
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn key_of(&self, node: *mut sys::BKNode) -> Option<Key> {

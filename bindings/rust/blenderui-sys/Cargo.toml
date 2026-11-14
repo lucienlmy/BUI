@@ -23,7 +23,7 @@ gdi-text = []
 # GPU text drawn with Slug (glyph outlines in the pixel shader) by default;
 # without it, the per-glyph atlas. Switchable at runtime either way.
 slug = []
-default = ["slug", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "svg", "video", "gpu", "freetype", "filebrowser"]
+default = ["slug", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "svg", "video", "gpu", "freetype", "filebrowser", "anim"]
 # The optional parts of the C kit: features.json (the one table CMake and
 # `bui build` read too; build.rs maps each to its CMake option and checks this
 # list has them all). Off, a part costs no binary size; its API stays.
@@ -41,6 +41,7 @@ video = [] # <video> through the OS decoders
 gpu = [] # GPU renderers: Direct3D 11 (Windows), OpenGL 3.3 (Linux)
 freetype = [] # Text through the vendored FreeType like Blender's BLF
 filebrowser = [] # Blender's File Browser
+anim = [] # animation: GSAP and Motion (kit/intern/anim)
 # The Lua host (bindings/lua: bui-lua, bui.so). features.json lists it, so it is here too; the
 # crate's C sources (vendored for crates.io) leave bindings/lua out, so turning it on builds
 # nothing more for Rust.

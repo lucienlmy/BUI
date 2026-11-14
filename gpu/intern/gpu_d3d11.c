@@ -194,6 +194,10 @@ struct BuiGpu {
 
   RECT dmg[16];
   int n_dmg, dmg_full;
+  /* the last present's damage (whole: the whole frame): with two flip buffers, the buffer being
+   * drawn is two frames old, so it needs this frame's damage and that one's, not everything */
+  RECT prev[16];
+  int n_prev, prev_whole;
 };
 
 static int atlas_create(BuiGpu *g, Atlas *a, int size, int bpp)
@@ -1626,24 +1630,48 @@ int bui_gpu_present(BuiGpu *g, int full)
   if (FAILED(IDXGISwapChain1_GetBuffer(g->swap, 0, &k_IID_ID3D11Texture2D, (void **)&back))) {
     return 0;
   }
-  /* a flip-model buffer is older than the last frame: copy the whole frame */
-  ID3D11DeviceContext_CopyResource(g->ctx, (ID3D11Resource *)back, (ID3D11Resource *)g->target);
-  REL(back);
-  DXGI_PRESENT_PARAMETERS pp = {0};
-  if (!(full || g->dmg_full || g->swap_fresh) && g->n_dmg > 0) {
-    for (int i = 0; i < g->n_dmg; i++) { /* clamp: DXGI rejects rects outside the buffer */
-      RECT *r = &g->dmg[i];
-      r->left = r->left < 0 ? 0 : r->left;
-      r->top = r->top < 0 ? 0 : r->top;
-      r->right = r->right > g->w ? g->w : r->right;
-      r->bottom = r->bottom > g->h ? g->h : r->bottom;
-      if (r->right <= r->left || r->bottom <= r->top) {
-        *r = g->dmg[--g->n_dmg];
-        i--;
+  for (int i = 0; i < g->n_dmg; i++) { /* clamp: DXGI rejects rects outside the buffer */
+    RECT *r = &g->dmg[i];
+    r->left = r->left < 0 ? 0 : r->left;
+    r->top = r->top < 0 ? 0 : r->top;
+    r->right = r->right > g->w ? g->w : r->right;
+    r->bottom = r->bottom > g->h ? g->h : r->bottom;
+    if (r->right <= r->left || r->bottom <= r->top) {
+      *r = g->dmg[--g->n_dmg];
+      i--;
+    }
+  }
+  const int whole = full || g->dmg_full || g->swap_fresh || g->n_dmg == 0 || g->alpha;
+  /* copying rects adding up to half the frame or more: one copy of it all is cheaper */
+  long area = 0;
+  for (int k = 0; k < 2 && !whole && !g->prev_whole; k++) {
+    const RECT *rs = k ? g->prev : g->dmg;
+    for (int i = 0, n = k ? g->n_prev : g->n_dmg; i < n; i++) {
+      area += (long)(rs[i].right - rs[i].left) * (rs[i].bottom - rs[i].top);
+    }
+  }
+  if (whole || g->prev_whole || area * 2 >= (long)g->w * g->h) {
+    /* the buffer is two frames old (or of the bitblt model): the whole frame */
+    ID3D11DeviceContext_CopyResource(g->ctx, (ID3D11Resource *)back, (ID3D11Resource *)g->target);
+  }
+  else { /* what changed this frame and the last one: the rest is already there */
+    for (int k = 0; k < 2; k++) {
+      const RECT *rs = k ? g->prev : g->dmg;
+      for (int i = 0, n = k ? g->n_prev : g->n_dmg; i < n; i++) {
+        const D3D11_BOX b = {(UINT)rs[i].left, (UINT)rs[i].top, 0, (UINT)rs[i].right, (UINT)rs[i].bottom, 1};
+        ID3D11DeviceContext_CopySubresourceRegion(g->ctx, (ID3D11Resource *)back, 0, b.left, b.top, 0,
+                                                  (ID3D11Resource *)g->target, 0, &b);
       }
     }
+  }
+  REL(back);
+  g->prev_whole = whole;
+  g->n_prev = whole ? 0 : g->n_dmg;
+  memcpy(g->prev, g->dmg, sizeof(RECT) * (size_t)g->n_prev);
+  DXGI_PRESENT_PARAMETERS pp = {0};
+  if (!(full || g->dmg_full || g->swap_fresh) && g->n_dmg > 0) {
     pp.DirtyRectsCount = (UINT)g->n_dmg;
-    pp.pDirtyRects = g->n_dmg ? g->dmg : NULL;
+    pp.pDirtyRects = g->dmg;
   }
   const HRESULT hr = IDXGISwapChain1_Present1(g->swap, 0, 0, &pp);
   g->swap_fresh = 0;

@@ -17,12 +17,18 @@
       "types": "./jsx-dev-runtime.d.ts",
       "default": "./jsx-dev-runtime.js"
     },
+    "./motion": {
+      "types": "./motion.d.ts",
+      "default": "./motion.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
     "hooks.js",
+    "motion.js",
     "index.d.ts",
+    "motion.d.ts",
     "jsx-runtime.js",
     "jsx-runtime.d.ts",
     "jsx-dev-runtime.js",

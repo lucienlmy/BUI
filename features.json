@@ -14,13 +14,14 @@
     {"name": "video", "option": "BUI_VIDEO", "default": true, "group": "video", "ext": ["mp4", "m4v", "mov", "webm", "mkv", "avi", "wmv", "ogv"], "tags": ["video"], "doc": "<video> through the OS decoders (Media Foundation, AVFoundation, GStreamer), loaded at run time"},
     {"name": "gpu", "option": "BUI_GPU", "default": true, "group": "rendering", "doc": "GPU renderers: Direct3D 11 (Windows), OpenGL 3.3 (Linux); without it, the software raster only"},
     {"name": "freetype", "option": "BUI_TEXT_FREETYPE", "default": true, "group": "rendering", "always": true, "doc": "Text through the vendored FreeType like Blender's BLF (else stb_truetype); every bui build runtime has it, so text looks the same"},
+    {"name": "anim", "option": "BUI_ANIM", "default": true, "group": "ui", "markers": ["animate", "timeline", "fromTo", "quickTo", "stagger", "whileHover", "whileTap", "whileInView", "useSpring", "useMotionValue"], "doc": "Animation: GSAP-style and Motion-style tweens, timelines, springs and every easing (kit/intern/anim)"},
     {"name": "filebrowser", "option": "BUI_FILEBROWSER", "default": true, "group": "ui", "tags": ["filebrowser"], "markers": ["fileDialog", "file_dialog", "filebrowser"], "doc": "Blender's File Browser (the filebrowser node and BK_file_dialog)"},
     {"name": "imgui", "option": "BUI_BUILD_IMGUI", "default": true, "cargo_default": false, "group": "ui", "doc": "Dear ImGui on BUI (C++; the blenderui-imgui crate and Python's blenderui.imgui turn it on)"},
     {"name": "lua", "option": "BUI_BUILD_LUA_BINDINGS", "default": false, "group": "ui", "doc": "Lua 5.4 host (bui-lua executable and bui.so/bui.dll loadable module)"}
   ],
   "runtimes": [
-    {"name": "base", "features": ["svg", "freetype"], "doc": "UI and text, SVG images"},
-    {"name": "media", "features": ["svg", "freetype", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "video"], "doc": "base + every image format + video"},
-    {"name": "full", "features": ["svg", "freetype", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "video", "gpu", "filebrowser"], "doc": "everything a JavaScript app can use"}
+    {"name": "base", "features": ["svg", "freetype", "anim"], "doc": "UI and text, SVG images"},
+    {"name": "media", "features": ["svg", "freetype", "anim", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "video"], "doc": "base + every image format + video"},
+    {"name": "full", "features": ["svg", "freetype", "anim", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "video", "gpu", "filebrowser"], "doc": "everything a JavaScript app can use"}
   ]
 }

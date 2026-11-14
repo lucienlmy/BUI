@@ -24,7 +24,7 @@ class ListView(ValueComponent):
     def __init__(self, items: Sequence[str] = (), value: int = 0, *, rows: int = 5,
                  on_rename: Optional[Callable[[int, str], None]] = None, icons=None, **kw):
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         self.on_change = kw.get("on_change")
         self.on_rename = on_rename
         self.set("rows", rows)
@@ -116,7 +116,7 @@ class TreeView(ValueComponent):
                  on_toggle: Optional[Callable[[TreeItem, str, bool], None]] = None,
                  on_rename: Optional[Callable[[TreeItem, str], None]] = None, **kw):
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         self.on_change = kw.get("on_change")
         self.on_toggle, self.on_rename = on_toggle, on_rename
         self.columns = list(columns)
@@ -180,7 +180,7 @@ class GridView(ValueComponent):
                  rows: float = 2.0, on_activate: Optional[Callable[[int], None]] = None,
                  **kw):
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         self.on_change = kw.get("on_change")
         self.on_activate = on_activate
         self.set("tile", tile)

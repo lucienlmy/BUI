@@ -1,0 +1,132 @@
+---
+title: Animation with gsap and motion
+sidebarLabel: Animation
+description: bui.gsap and bui.motion animate widgets and plain objects with real springs, GSAP's timelines and every ease by name, run by the C engine. Qt's QPropertyAnimation uses the same engine.
+section: Python
+order: 35
+languages: ["python"]
+sources: ["docs/animation-api.md", "bindings/python/bui/gsap.py", "bindings/python/bui/motion.py", "bindings/python/bui/qtanim.py", "bindings/python/bui/components/core.py", "bindings/python/src/buipy_anim.c", "bindings/python/tests/test_anim.py", "kit/include/BUI_anim.h"]
+---
+
+A slider that eases to 80, a progress bar that fills with a spring, a row of widgets that appear one after another: **call `gsap.to(widget, value=80)` and the widget moves.** The animation runs in BUI's C engine, so a frame costs no Python. Python runs only for callbacks you give it, and for plain objects you animate.
+
+`bui.gsap` follows GSAP's API with Python's keyword arguments and snake_case names, and `bui.motion` follows Motion's.
+
+## Animate a widget
+
+```python
+from blenderui import gsap, motion
+from blenderui.components import NumberSlider, ProgressBar
+
+volume = NumberSlider("Volume", 10, min=0, max=100)
+bar = ProgressBar(0.0)
+
+gsap.to(volume, value=80, duration=0.4, ease="power2.out")
+motion.animate(bar, {"factor": 1}, type="spring", stiffness=300, damping=20)
+```
+
+A widget animates what BUI draws for it: `value`, colors (`color`, `background_color`), and the numbers it has, such as `factor`, `min` and `max`. The raster has no transforms or opacity for widgets, so `x`, `scale`, `rotate` or `opacity` on a widget raise `ValueError`.
+
+A component also takes Motion's `initial`, `animate` and `transition` when you make it:
+
+```python
+NumberSlider("Volume", initial={"value": 0}, animate={"value": 0.8})
+```
+
+## GSAP
+
+```python
+from types import SimpleNamespace
+
+from blenderui import gsap
+
+gsap.from_(rows, value=0, stagger=0.05)          # `from` is a Python keyword, so `from_`
+gsap.from_to(swatch, {"color": "#000"}, {"color": "#f80", "duration": 1})
+gsap.set(label_state, count=0)
+
+tl = gsap.timeline(repeat=1, yoyo=True, defaults={"duration": 0.5})
+tl.to(a, value=1).to(b, value=1, position="<").add_label("mid") \
+  .call(print, "halfway", position="mid")
+
+state = SimpleNamespace(x=0)                      # any object: its attributes are tweened
+t = gsap.to(state, x=100, on_update=lambda: print(state.x))
+t.pause(); t.progress(0.5); t.time_scale(2); t.reverse(); t.kill()
+```
+
+- **Targets:** a widget, a list of them, or any Python object (its attributes).
+- **Values:** numbers, strings (`"50%"`, `"+=10"`, `"#f80"`, `"rgb(...)"`), tuples for colors, and lists for keyframes, where `None` means "where it is now".
+- **Options:** `duration`, `delay`, `ease`, `repeat`, `repeat_delay`, `yoyo`, `time_scale`, `paused`, `reversed`, `immediate_render`, `overwrite`, `stagger` (seconds, or a dict with `each`, `amount`, `from`, `grid`, `axis` and `ease`), and the callbacks `on_start`, `on_update`, `on_complete`, `on_repeat`, `on_reverse_complete` and `on_interrupt`.
+- **Also:** `gsap.delayed_call`, `gsap.quick_to`, `gsap.kill_tweens_of`, `gsap.register_ease`, `gsap.parse_ease`, `gsap.global_time_scale` and `gsap.lag_smoothing`.
+
+## Motion
+
+```python
+from blenderui import motion
+
+motion.animate(items, {"value": 1}, duration=1, ease="linear",
+               delay=motion.stagger(0.25, from_="last"))
+motion.animate(widget, {"value": [0, 100, 40]}, duration=1)         # keyframes
+motion.animate(widget, {"value": 75}, type="spring", bounce=0.25, visual_duration=0.5)
+
+# a sequence: each segment after the last; "at" places it
+motion.animate([
+    (a, {"value": 1}, {"duration": 0.5}),
+    (b, {"value": 1}, {"duration": 0.5, "at": "<"}),   # with the last one
+])
+```
+
+## Springs and eases
+
+`type="spring"` is a real spring. The engine solves the damped spring equation in closed form, for the underdamped, critically damped and overdamped cases, so a frame reads the value at its time and the frame rate doesn't change the result. Interrupt a spring and the next motion starts from its position and velocity. Give `stiffness`, `damping` and `mass`, or `bounce` with `visual_duration`. `type="inertia"` decays from a velocity.
+
+Every ease of GSAP, Motion, CSS and Blender works by name (`"none"`, `"power2.out"`, `"elastic.out(1, 0.3)"`, `"back.out(1.7)"`, `"steps(4)"`, `"easeInOut"`, `"cubic-bezier(...)"`), or give `[x1, y1, x2, y2]`. `gsap.register_ease(name, ease)` names your own.
+
+Mistakes fail where you make them: an unknown ease, option or property raises at the call, and a typo such as `durration=1` is an error, not a property.
+
+## Qt syntax
+
+`QPropertyAnimation`, `QVariantAnimation`, the animation groups and `QEasingCurve` from [Qt syntax](../qt-syntax/) run on the same engine: starting one makes an engine tween, and a group is a timeline.
+
+## Testing animations
+
+The engine's clock is yours in a test. Turn on the host clock, then move time by hand:
+
+```python
+import buipy
+
+buipy.motion_set_host_clock(True)
+buipy.motion_set_lag_smoothing(0)
+now = 100.0
+
+def step(seconds):
+    global now
+    now += seconds
+    buipy.motion_tick(now)
+
+step(0)
+t = gsap.to(volume, value=90, duration=1, ease="none")
+step(0.5)
+assert abs(volume.value - 50) < 1e-3
+```
+
+## Examples
+
+`examples/animation_demo.py` animates widgets with `gsap` and `motion`: `python examples/animation_demo.py`.
+
+## Limits
+
+- **Widgets** have no draw transform or opacity (see above).
+- **Numbers:** a NaN or infinite time raises, a negative duration or delay is 0, and `repeat=-1` is forever (more than 1,000,000 is clamped); see [Numbers and positions](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#numbers-and-positions).
+- **Cost:** a frame that only animates skips rendering, the cascade and layout and repaints only what changed, and runs no Python unless you gave a callback. It is not allocation-free: a callback costs an event per call.
+- **Callbacks** are held for exactly as long as their motion and released when it ends. A tween whose handle you drop still plays to the end.
+
+## Next steps
+
+<CardGrid>
+  <Card title="Blender components" href="docs/python/components/" icon="sliders" kicker="Python">
+    The widgets you animate.
+  </Card>
+  <Card title="Qt syntax" href="docs/python/qt-syntax/" icon="rows" kicker="Python">
+    QPropertyAnimation and the groups.
+  </Card>
+</CardGrid>

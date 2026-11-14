@@ -120,6 +120,12 @@ impl std::ops::Index<StyleId> for StyleStore {
 }
 
 impl StyleStore {
+    /// A style one element owns (an animated one's private copy, never in
+    /// the cache), to change in place.
+    pub(crate) fn private_mut(&mut self, id: StyleId) -> &mut Computed {
+        &mut self.styles[id.0 as usize]
+    }
+
     /// Before building a frame: drop everything when the store has grown
     /// large (ids from the previous frame are not used after this).
     fn begin_frame(&mut self) {
@@ -887,10 +893,14 @@ impl<'a> Builder<'a> {
     /// Never cached, so the shared styles stay what the cascade made them.
     fn animate(&mut self, i: usize, div: &Div, parent: StyleId, style: StyleId) -> StyleId {
         let key = self.nodes[i].key;
-        if !self.anim.wants(key, &self.styles[style]) {
+        if !self.anim.wants(key, &self.styles[style]) && div.motion().is_none() && !crate::motion::pending() {
             return style;
         }
-        let important: smallvec::SmallVec<[Prop; 8]> = {
+        // `!important` holds against CSS animations only (not Motion's values,
+        // nor transitions): looked up only for elements that have some
+        let important: smallvec::SmallVec<[Prop; 8]> = if self.styles[style].anim.is_none() {
+            smallvec::SmallVec::new()
+        } else {
             let (ua, au) = self.matched_rules(i);
             self.declared(i, div, &ua, &au).iter().filter(|d| d.important).map(|d| d.prop).collect()
         };
@@ -902,6 +912,14 @@ impl<'a> Builder<'a> {
             sheet: self.author,
             media: &self.au_media,
             important: &important,
+            el: self.els.last().expect("the element being laid out"),
+            node: i,
+            motion: div.motion(),
+            gestures: crate::motion::Gestures {
+                hover: self.state.hovered.contains(&key),
+                tap: self.state.active.contains(&key),
+                focus: self.state.focused == Some(key),
+            },
         };
         match self.anim.apply(key, base, &env) {
             Some(c) => self.styles.add(c),
@@ -2369,8 +2387,13 @@ impl Walk<'_> {
         if let Some(i) = self.box_of.get(slot(id)).filter(|&&b| b != NONE).map(|&b| b as usize) {
             let st = &self.styles[nodes[i].style];
             let u = Units { font_size: st.font_size, viewport: self.vp };
-            x += st.translate.0.resolve(&u, w);
-            y += st.translate.1.resolve(&u, h);
+            // a word carries its owner's style: the owner's translate already moved the line it is in,
+            // unless the owner is an inline element (no box of its own to carry it)
+            let own_translate = !matches!(nodes[i].content, Content::Word { .. }) || nodes[nodes[i].owner].taffy.is_none();
+            if own_translate {
+                x += st.translate.0.resolve(&u, w);
+                y += st.translate.1.resolve(&u, h);
+            }
             if matches!(nodes[i].content, Content::Word { .. }) {
                 y += match st.vertical_align {
                     VAlign::Sub => st.font_size * 0.25,
@@ -2489,21 +2512,31 @@ fn place_folded_text(nodes: &mut [BoxNode], i: usize, k: usize, b: Bounds<f32>, 
     nodes[k].bounds = tb;
 }
 
-/// Inherited opacity / visibility (parents precede children in the arena),
-/// and bounds of boxes without a layout node (inline elements): the union of
-/// their pieces (children follow parents, so a reverse pass sees them first).
-fn finish(nodes: &mut [BoxNode], styles: &StyleStore, acc: &mut Vec<Option<Bounds<f32>>>) {
-    for i in 0..nodes.len() {
-        let (po, pv, pc) = match nodes[i].parent {
-            Some(p) => (nodes[p].opacity, nodes[p].visible, nodes[p].clip),
-            None => (1.0, true, None),
-        };
+/// Opacity and visibility as boxes inherit them (parents precede children in
+/// the arena): after layout, and on redraws that change them.
+pub(crate) fn inherit(nodes: &mut [BoxNode], styles: &StyleStore) {
+    inherit_at(nodes, styles, 0..nodes.len());
+}
+
+/// [`inherit`] for the boxes `at` (ascending: parents first).
+pub(crate) fn inherit_at(nodes: &mut [BoxNode], styles: &StyleStore, at: impl Iterator<Item = usize>) {
+    for i in at {
+        let (po, pv) = nodes[i].parent.map_or((1.0, true), |p| (nodes[p].opacity, nodes[p].visible));
         let st = &styles[nodes[i].style];
         let own = matches!(nodes[i].content, Content::Element | Content::Widget(_) | Content::Replaced(_));
         nodes[i].opacity = if own { po * st.opacity } else { po };
         nodes[i].visible = pv && st.visible;
+    }
+}
+
+/// Inherited opacity / visibility (parents precede children in the arena),
+/// and bounds of boxes without a layout node (inline elements): the union of
+/// their pieces (children follow parents, so a reverse pass sees them first).
+fn finish(nodes: &mut [BoxNode], styles: &StyleStore, acc: &mut Vec<Option<Bounds<f32>>>) {
+    inherit(nodes, styles);
+    for i in 0..nodes.len() {
         if nodes[i].taffy.is_none() && !nodes[i].folded {
-            nodes[i].clip = pc;
+            nodes[i].clip = nodes[i].parent.and_then(|p| nodes[p].clip);
         }
     }
     acc.clear();

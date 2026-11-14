@@ -33,7 +33,7 @@ gdi-text = ["blenderui-sys/gdi-text"]
 # GPU text with Slug by default (else the per-glyph atlas); see
 # `Application::slug` / `blenderui::set_slug` to switch at runtime.
 slug = ["blenderui-sys/slug"]
-default = ["slug", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "svg", "video", "gpu", "freetype", "filebrowser"]
+default = ["slug", "png", "gif", "bmp", "tga", "qoi", "jpeg", "webp", "hdr", "pnm", "svg", "video", "gpu", "freetype", "filebrowser", "anim"]
 # The C kit's optional parts (features.json; see blenderui-sys): each costs
 # binary size only when on. tests/features.rs checks this list has them all.
 png = ["blenderui-sys/png"]
@@ -50,6 +50,7 @@ video = ["blenderui-sys/video"]
 gpu = ["blenderui-sys/gpu"]
 freetype = ["blenderui-sys/freetype"]
 filebrowser = ["blenderui-sys/filebrowser"]
+anim = ["blenderui-sys/anim"]
 # the Lua host builds from the repository (bindings/lua), not through cargo
 lua = ["blenderui-sys/lua"]
 # Deprecated no-op: the portable engine is the default everywhere.

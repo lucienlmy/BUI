@@ -4,8 +4,9 @@ Every QWidget is a kit node; QBoxLayout / QGridLayout / QFormLayout run on
 the kit's C geometry managers, ``paintEvent`` + QPainter record into a kit
 canvas, and top-level windows are native (Win32, X11, Cocoa) or Tk
 (:mod:`bui.host`).
-Signals, timers and animations are plain Python (as in PySide's Python
-layer)::
+Signals and timers are plain Python (as in PySide's Python layer);
+QPropertyAnimation, the animation groups and QEasingCurve run on BUI's
+animation engine (:mod:`bui.qtanim`)::
 
     from bui.qtsyntax import QApplication, QWidget, QPushButton, QVBoxLayout
 
@@ -685,92 +686,11 @@ class QTimer:
         self.timeout.emit()
 
 
-class QEasingCurve:
-    Linear, InOutQuad, OutCubic, InQuad, OutQuad = range(5)
-
-    def __init__(self, kind=0):
-        self._kind = kind
-
-    def valueForProgress(self, t):  # noqa: N802
-        k = self._kind
-        if k == QEasingCurve.InOutQuad:
-            return 2 * t * t if t < 0.5 else 1 - (-2 * t + 2) ** 2 / 2
-        if k == QEasingCurve.OutCubic:
-            return 1 - (1 - t) ** 3
-        if k == QEasingCurve.InQuad:
-            return t * t
-        if k == QEasingCurve.OutQuad:
-            return 1 - (1 - t) ** 2
-        return t
-
-
-class QPropertyAnimation:
-    finished = Signal()
-    valueChanged = Signal(object)
-
-    def __init__(self, target=None, prop=b"", parent=None):
-        self._target = target
-        self._prop = prop.decode() if isinstance(prop, bytes) else prop
-        self._start = self._end = 0
-        self._duration = 250
-        self._easing = QEasingCurve()
-        self._running = False
-        self._timer = QTimer()
-        self._timer.setInterval(8)  # 120 Hz
-        self._timer.timeout.connect(self._tick)
-
-    def setTargetObject(self, o):  # noqa: N802
-        self._target = o
-
-    def setPropertyName(self, name):  # noqa: N802
-        self._prop = name.decode() if isinstance(name, bytes) else name
-
-    def setStartValue(self, v):  # noqa: N802
-        self._start = v
-
-    def setEndValue(self, v):  # noqa: N802
-        self._end = v
-
-    def setDuration(self, ms):  # noqa: N802
-        self._duration = max(1, int(ms))
-
-    def setEasingCurve(self, e):  # noqa: N802
-        self._easing = e if isinstance(e, QEasingCurve) else QEasingCurve(e)
-
-    def start(self):
-        self._t0 = time.perf_counter()
-        self._running = True
-        self._apply(self._start)
-        self._timer.start()
-
-    def stop(self):
-        self._running = False
-        self._timer.stop()
-
-    def state(self):
-        return 2 if self._running else 0
-
-    def _apply(self, v):
-        setter = getattr(self._target, "set" + self._prop[:1].upper() + self._prop[1:], None)
-        if callable(setter):
-            setter(v)
-        else:
-            setattr(self._target, self._prop, v)
-        self.valueChanged.emit(v)
-
-    def _tick(self):
-        t = min(1.0, (time.perf_counter() - self._t0) * 1000 / self._duration)
-        k = self._easing.valueForProgress(t)
-        if isinstance(self._start, (int, float)):
-            v = self._start + (self._end - self._start) * k
-            if isinstance(self._start, int) and isinstance(self._end, int):
-                v = round(v)
-        else:
-            v = self._end if t >= 1 else self._start
-        self._apply(v)
-        if t >= 1.0:
-            self.stop()
-            self.finished.emit()
+# Qt's animation framework runs on BUI's animation engine (bui/qtanim.py: the classes need the
+# value types and Signal above).
+from bui.qtanim import (QAbstractAnimation, QAnimationGroup, QEasingCurve,  # noqa: E402,F401
+                        QParallelAnimationGroup, QPauseAnimation, QPropertyAnimation,
+                        QSequentialAnimationGroup, QVariantAnimation)
 
 
 # ==========================================================================

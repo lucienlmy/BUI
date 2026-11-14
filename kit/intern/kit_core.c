@@ -20,6 +20,7 @@
 #  include <windows.h>
 #endif
 
+#include "BUI_anim.h"
 #include "BUI_blender_c.h"
 #include "blender/bk_blender.h"
 #include "kit_intern.h"
@@ -235,6 +236,7 @@ void BK_node_free(BKNode *n)
   if (!n) {
     return;
   }
+  BK_anim_kill_target(n, -1); /* its motions stop: nothing writes to it any more */
   if (n->parent) {
     node_detach(n);
   }
@@ -449,11 +451,25 @@ void bk_arrange(BKNode *n, int x, int y, int w, int h)
   }
 }
 
+static void draw_tree_in(BKNode *n);
+
 void bk_draw_tree(BKNode *n)
 {
   if (!NODE_VISIBLE(n)) {
     return;
   }
+  const BKGeom *g = n->geom;
+  if (g && g->has_clip) { /* a host that clips what it places (a widget under `overflow: hidden`) */
+    bk_clip_push(g->clip[0], g->clip[1], g->clip[2], g->clip[3]);
+    draw_tree_in(n);
+    bk_clip_pop();
+    return;
+  }
+  draw_tree_in(n);
+}
+
+static void draw_tree_in(BKNode *n)
+{
   if (n->cls->draw_tree) {
     n->cls->draw_tree(n);
     return;
@@ -492,6 +508,12 @@ bool bk_contains(const BKNode *n, int x, int y)
 BKNode *bk_hit(BKNode *n, int x, int y)
 {
   if (!NODE_VISIBLE(n) || !bk_contains(n, x, y)) {
+    return NULL;
+  }
+  const BKGeom *g = n->geom;
+  if (g && g->has_clip &&
+      (x < g->clip[0] || y < g->clip[1] || x >= g->clip[0] + g->clip[2] || y >= g->clip[1] + g->clip[3]))
+  {
     return NULL;
   }
   if (n->cls->hit) {
@@ -1327,7 +1349,7 @@ int BK_set_color(BKNode *n, const char *key, const float c[4])
 
 int BK_get_color(BKNode *n, const char *key, float r[4])
 {
-  if (strcmp(key, "color") == 0 || strcmp(key, "value") == 0) {
+  if (strcmp(key, "color") == 0 || strcmp(key, "value") == 0 || strcmp(key, "bg") == 0) {
     memcpy(r, n->color, sizeof(float[4]));
     return 1;
   }
@@ -1404,6 +1426,15 @@ const char *BK_strs_get(BKNode *n, const char *key, int i)
 /** \name Context: damage, popups, services
  * \{ */
 
+/* a motion started: every context draws frames until the motions end (BK_animating) */
+static void anim_wake(void *data)
+{
+  (void)data;
+  for (BKContext *c = g_contexts; c; c = c->next_ctx) {
+    bk_ctx_request(c);
+  }
+}
+
 BKContext *BK_context_new(BKNode *root)
 {
   BKContext *ctx = (BKContext *)calloc(1, sizeof(BKContext));
@@ -1417,6 +1448,8 @@ BKContext *BK_context_new(BKNode *root)
   bk_theme_env_init();
   ctx->next_ctx = g_contexts;
   g_contexts = ctx;
+  BK_anim_set_wake(anim_wake, NULL);
+  BK_anim_set_clock(bk_time); /* frames stop when idle: motions start on the kit's clock */
   return ctx;
 }
 
@@ -2219,6 +2252,9 @@ int BK_render(BKContext *ctx, BuiRaster *r, int w, int h, int full)
   bk_image_tick(); /* animated images whose next frame is due */
   bk_draw.r = r;
   ctx->raster = r;
+  if (!BK_anim_host_clock()) {
+    BK_anim_tick(bk_time()); /* motions write their values (nodes damage themselves) */
+  }
   anim_step(ctx);
   if (w != ctx->win_w || h != ctx->win_h || BUI_raster_width(r) != w ||
       BUI_raster_height(r) != h)
@@ -3662,6 +3698,7 @@ static int g_animations = 1;
 void BK_set_animations(int enabled)
 {
   g_animations = enabled != 0;
+  BK_anim_set_reduced_motion(!g_animations);
 }
 
 bool bk_animations_enabled(void)
@@ -3671,7 +3708,8 @@ bool bk_animations_enabled(void)
 
 int BK_animating(BKContext *ctx)
 {
-  return ctx->nanim > 0 || bk_custom_animating(ctx);
+  /* motions need frames from the kit only when it runs their clock (else the host draws them) */
+  return ctx->nanim > 0 || bk_custom_animating(ctx) || (!BK_anim_host_clock() && BK_anim_active());
 }
 
 void bk_anim_start(BKNode *n)

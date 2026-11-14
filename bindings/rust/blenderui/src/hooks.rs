@@ -144,6 +144,15 @@ pub(crate) fn end() {
     }
 }
 
+/// Every window draws again (an animation started outside a render).
+pub(crate) fn wake_all() {
+    with(|s| {
+        if !s.dirty.contains(&usize::MAX) {
+            s.dirty.push(usize::MAX);
+        }
+    });
+}
+
 /// Windows whose signals were written since the last call.
 pub(crate) fn take_dirty() -> Vec<usize> {
     with(|s| std::mem::take(&mut s.dirty))
@@ -304,6 +313,15 @@ pub fn use_signal<T: 'static>(init: T) -> Signal<T> {
     let site = Location::caller();
     let mut init = Some(init);
     let (i, generation) = with(|s| s.hook_slot(site, || Box::new(init.take().expect("init"))));
+    Signal { i, generation, _t: PhantomData }
+}
+
+/// [`use_signal`] whose first value is made only on the first render (state
+/// with a cost to make, or that must not be made and dropped every render).
+#[track_caller]
+pub(crate) fn use_signal_with<T: 'static>(init: impl FnOnce() -> T) -> Signal<T> {
+    let site = Location::caller();
+    let (i, generation) = with(|s| s.hook_slot(site, || Box::new(init())));
     Signal { i, generation, _t: PhantomData }
 }
 

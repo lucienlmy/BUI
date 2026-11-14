@@ -8,7 +8,7 @@ use taffy::prelude::*;
 
 use crate::color::Rgba;
 use crate::geometry::{rect, Bounds, Length, Units};
-use crate::layout::{BoxNode, Content, Frame, Replaced, StyleStore};
+use crate::layout::{BoxNode, Content, Frame, Key, Replaced, StyleStore};
 use crate::style::{key_hasher, BorderStyle, BoxEdge, Computed, DecoStyle, DisplayKind, TextAlign, WhiteSpace};
 use crate::text::{self, TextCache};
 use blenderui_sys as sys;
@@ -275,6 +275,8 @@ struct Item {
     coords: Coords,
     fill: Rgba,
     clip: Option<Bounds<f32>>,
+    /// Its element has `pointer-events: none`: the pointer goes through it.
+    through: bool,
 }
 
 /// Draws into a canvas display list, in logical pixels.
@@ -291,12 +293,33 @@ pub struct Painter {
     /// Every text item's bytes, NUL-terminated, back to back.
     text: Vec<u8>,
     clip: Option<Bounds<f32>>,
+    /// The box being painted has `pointer-events: none`.
+    through: bool,
     opacity: f32,
+    /// Retained painting (frames where only moving values changed): each
+    /// box's items (start, end; u32::MAX when it painted none), each item's
+    /// index in the canvas (-1: none), the text size after the full paint,
+    /// and the items repainted since (only they go to the canvas).
+    ranges: Vec<(u32, u32)>,
+    slots: Vec<i32>,
+    text_full: usize,
+    changed: Vec<u32>,
+    retained: bool,
+    partial: bool,
+    /// Layers over widgets: widgets are kit nodes drawn after the canvas
+    /// they sit on, so an item that overlaps a widget painted before it
+    /// starts a new segment (its own canvas, drawn over that widget).
+    /// `segments`: where each segment after the first starts in `items`;
+    /// `widgets`: each painted widget's segment and area; `over`: the areas
+    /// of the widgets in the segment being painted.
+    segments: Vec<u32>,
+    widgets: Vec<(Key, u32, Bounds<f32>)>,
+    over: Vec<Bounds<f32>>,
 }
 
 impl Painter {
     pub(crate) fn new() -> Painter {
-        Painter { items: Vec::new(), text: Vec::new(), clip: None, opacity: 1.0 }
+        Painter { opacity: 1.0, ..Painter::default() }
     }
 
     /// Empty for the next frame, keeping the buffers.
@@ -305,9 +328,103 @@ impl Painter {
         self.text.clear();
         self.clip = None;
         self.opacity = 1.0;
+        self.ranges.clear();
+        self.retained = false;
+        self.partial = false;
+        self.segments.clear();
+        self.widgets.clear();
+        self.over.clear();
+    }
+
+    /// How many canvases the items need (1 unless something overlaps a widget).
+    pub(crate) fn segment_count(&self) -> usize {
+        self.segments.len() + 1
+    }
+
+    /// Each painted widget's segment and its place in paint order.
+    pub(crate) fn widget_order(&self) -> HashMap<Key, (u32, u32)> {
+        self.widgets.iter().enumerate().map(|(rank, &(k, seg, _))| (k, (seg, rank as u32))).collect()
+    }
+
+    /// A widget is painted here (in paint order): it draws on top of its
+    /// segment's items, and what overlaps it from now on goes in a later one.
+    pub(crate) fn note_widget(&mut self, key: Key, area: Bounds<f32>) {
+        self.widgets.push((key, self.segments.len() as u32, area));
+        self.over.push(area);
+    }
+
+    /// Where an item is, generously (text: a full em per byte): `None` when it has no place.
+    fn item_area(&self, kind: &Kind, coords: &Coords) -> Option<[f32; 4]> {
+        let c = coords.as_slice();
+        if c.len() < 2 {
+            return None;
+        }
+        if let Kind::Text { start, size, .. } = kind {
+            let len = self.text[*start as usize..].iter().position(|&b| b == 0).unwrap_or(0);
+            return Some([c[0], c[1], c[0] + len as f32 * size, c[1] + size * 1.5]);
+        }
+        let (mut x0, mut y0, mut x1, mut y1) = (c[0], c[1], c[0], c[1]);
+        for xy in c.chunks_exact(2) {
+            x0 = x0.min(xy[0]);
+            x1 = x1.max(xy[0]);
+            y0 = y0.min(xy[1]);
+            y1 = y1.max(xy[1]);
+        }
+        Some([x0 - 2.0, y0 - 2.0, x1 + 2.0, y1 + 2.0]) // edges, antialiasing
+    }
+
+    /// Whether an item overlaps a widget painted before it in this segment.
+    fn overlaps_widget(&self, kind: &Kind, coords: &Coords) -> bool {
+        !self.over.is_empty()
+            && self.item_area(kind, coords).is_some_and(|[x0, y0, x1, y1]| {
+                self.over.iter().any(|w| {
+                    x0 < w.origin.x + w.size.width && w.origin.x < x1 && y0 < w.origin.y + w.size.height
+                        && w.origin.y < y1
+                })
+            })
+    }
+
+    /// Paint again only the boxes marked in `dirty` (with what they paint
+    /// over: nothing, their items stay in place). False when that can't be
+    /// done (the last paint had layers, a box paints a different number of
+    /// items now, the text grew too much): paint the frame in full instead.
+    pub(crate) fn repaint(&mut self, frame: &Frame, styles: &StyleStore, tc: &mut TextCache, dirty: &[bool],
+                          vp: (f32, f32), app: &crate::window::App) -> bool {
+        if !self.retained || self.ranges.len() != frame.nodes.len() || self.text.len() > 2 * self.text_full + 4096 {
+            return false;
+        }
+        self.changed.clear();
+        for (i, _) in dirty.iter().enumerate().filter(|(_, d)| **d) {
+            let (start, end) = self.ranges[i];
+            let n = &frame.nodes[i];
+            let at = self.items.len();
+            if n.visible && n.opacity > 0.0 {
+                self.opacity = n.opacity;
+                self.clip = n.clip;
+                paint_node(frame, styles, tc, i, self, vp, app);
+            }
+            let painted = (self.items.len() - at) as u32;
+            let had = if start == u32::MAX { 0 } else { end - start };
+            if painted != had {
+                return false;
+            }
+            for k in 0..painted {
+                self.items.swap((start + k) as usize, at + k as usize);
+                self.changed.push(start + k);
+            }
+            self.items.truncate(at);
+        }
+        self.opacity = 1.0;
+        self.clip = None;
+        self.partial = true;
+        true
     }
 
     fn push(&mut self, kind: Kind, coords: Coords, fill: Rgba) {
+        if self.overlaps_widget(&kind, &coords) {
+            self.segments.push(self.items.len() as u32); // drawn over that widget: a canvas above it
+            self.over.clear();
+        }
         let fill = fill.opacity(self.opacity);
         let kind = match kind {
             Kind::Rect { radius, outline, width } => {
@@ -316,7 +433,7 @@ impl Painter {
             Kind::Oval { outline, width } => Kind::Oval { outline: outline.opacity(self.opacity), width },
             k => k,
         };
-        self.items.push(Item { kind, coords, fill, clip: self.clip });
+        self.items.push(Item { kind, coords, fill, clip: self.clip, through: self.through });
     }
 
     fn corners(b: Bounds<f32>) -> Coords {
@@ -446,7 +563,7 @@ impl Painter {
                   -> Option<sys::BKCanvasItem> {
         coords.clear();
         coords.extend(it.coords.as_slice().iter().map(|v| v * scale));
-        let mut ci = sys::BKCanvasItem { fill: it.fill.to_array(), ..Default::default() };
+        let mut ci = sys::BKCanvasItem { fill: it.fill.to_array(), no_hit: i32::from(it.through), ..Default::default() };
         match &it.kind {
             Kind::Rect { radius, outline, width } => {
                 ci.type_ = if *radius > 0.0 { sys::BK_ITEM_ROUNDRECT } else { sys::BK_ITEM_RECT };
@@ -513,20 +630,50 @@ impl Painter {
         Some(ci)
     }
 
-    /// Replace the canvas display list with these items, scaled to device pixels.
-    pub(crate) fn flush(&self, canvas: *mut sys::BKNode, scale: f32) {
+    /// Replace the canvas display list with these items, scaled to device
+    /// pixels (after a [`repaint`](Self::repaint): only the items it changed).
+    pub(crate) fn flush(&mut self, canvases: &[*mut sys::BKNode], scale: f32) {
+        let canvas = canvases[0];
         let mut coords: Vec<f32> = Vec::new();
-        let mut count: i32 = 0;
-        for it in &self.items {
-            let Some(mut ci) = self.build_item(it, scale, &mut coords, None) else { continue };
-            ci.coords = coords.as_ptr();
-            // SAFETY: every pointer in `ci` outlives the call; the kit copies
-            // them into the slot's existing buffers.
-            unsafe { sys::BK_canvas_put_item(canvas, count, &ci) };
-            count += 1;
+        if std::mem::take(&mut self.partial) {
+            let partial_ok = self.changed.iter().all(|&k| {
+                let slot = self.slots[k as usize];
+                let Some(mut ci) = self.build_item(&self.items[k as usize], scale, &mut coords, None) else {
+                    return slot < 0;
+                };
+                if slot < 0 {
+                    return false; // it shows now: indices shift, send everything
+                }
+                ci.coords = coords.as_ptr();
+                // SAFETY: as below
+                unsafe { sys::BK_canvas_put_item(canvas, slot, &ci) };
+                true
+            });
+            if partial_ok {
+                return;
+            }
         }
-        // SAFETY: `canvas` is a live kit canvas node owned by the window.
-        unsafe { sys::BK_canvas_truncate(canvas, count) };
+        self.slots.clear();
+        // segment k is items[lo..hi] on canvas k (canvases past the last one empty)
+        for (k, &canvas) in canvases.iter().enumerate() {
+            let lo = if k == 0 { 0 } else { self.segments.get(k - 1).map_or(self.items.len(), |&s| s as usize) };
+            let hi = self.segments.get(k).map_or(self.items.len(), |&s| s as usize);
+            let mut count: i32 = 0;
+            for it in &self.items[lo..hi.max(lo)] {
+                let Some(mut ci) = self.build_item(it, scale, &mut coords, None) else {
+                    self.slots.push(-1);
+                    continue;
+                };
+                ci.coords = coords.as_ptr();
+                // SAFETY: every pointer in `ci` outlives the call; the kit copies
+                // them into the slot's existing buffers.
+                unsafe { sys::BK_canvas_put_item(canvas, count, &ci) };
+                self.slots.push(count);
+                count += 1;
+            }
+            // SAFETY: `canvas` is a live kit canvas node owned by the window.
+            unsafe { sys::BK_canvas_truncate(canvas, count) };
+        }
     }
 
     /// Draw the items offscreen into a `w` x `h` device-pixel region whose
@@ -626,6 +773,9 @@ pub(crate) fn paint_frame(frame: &Frame, styles: &StyleStore, tc: &mut TextCache
     }
     let has_effects = frame.nodes.iter().any(|n| styles[n.style].effects.is_some());
     if !has_effects {
+        // each box's items, for redraws that paint only what moved
+        p.ranges.clear();
+        p.ranges.resize(frame.nodes.len(), (u32::MAX, 0));
         for i in order {
             let n = &frame.nodes[i];
             if !n.visible || n.opacity <= 0.0 {
@@ -633,8 +783,16 @@ pub(crate) fn paint_frame(frame: &Frame, styles: &StyleStore, tc: &mut TextCache
             }
             p.opacity = n.opacity;
             p.clip = n.clip;
+            if matches!(n.content, Content::Widget(_)) {
+                p.note_widget(n.key, n.clip.map_or(n.bounds, |c| c.intersect(&n.bounds)));
+            }
+            let start = p.items.len() as u32;
             paint_node(frame, styles, tc, i, p, vp, app);
+            p.ranges[i] = (start, p.items.len() as u32);
         }
+        // redraws that paint only what moved: one canvas only (items map to canvas slots)
+        p.retained = p.segments.is_empty();
+        p.text_full = p.text.len();
     } else {
         let mut cx = LayerCx { frame, styles, tc, vp, scale, app, done: vec![false; frame.nodes.len()] };
         paint_list(&mut cx, &order, p, None, 1.0);
@@ -722,6 +880,9 @@ fn paint_list(cx: &mut LayerCx, list: &[usize], p: &mut Painter, root: Option<us
         cx.done[i] = true;
         p.opacity = (n.opacity / base.max(1e-6)).min(1.0);
         p.clip = n.clip;
+        if matches!(n.content, Content::Widget(_)) {
+            p.note_widget(n.key, n.clip.map_or(n.bounds, |c| c.intersect(&n.bounds)));
+        }
         let (frame, styles, vp) = (cx.frame, cx.styles, cx.vp);
         paint_node(frame, styles, cx.tc, i, p, vp, cx.app);
     }
@@ -766,6 +927,16 @@ fn device_rect(b: Bounds<f32>, scale: f32) -> (f32, f32, usize, usize) {
 
 /// Paint element `root` and its subtree `list` through its effects.
 fn paint_layer(cx: &mut LayerCx, root: usize, list: &[usize], p: &mut Painter, base: f32) {
+    let mut inside = Vec::new();
+    paint_layer_inner(cx, root, list, p, base, &mut inside);
+    // widgets in a layer are kit nodes (no effects): on top of the layer's image
+    for (key, _, area) in inside {
+        p.note_widget(key, area);
+    }
+}
+
+fn paint_layer_inner(cx: &mut LayerCx, root: usize, list: &[usize], p: &mut Painter, base: f32,
+                     inside: &mut Vec<(Key, u32, Bounds<f32>)>) {
     use crate::effects as fx;
     use std::hash::{Hash, Hasher};
     let n = &cx.frame.nodes[root];
@@ -775,6 +946,7 @@ fn paint_layer(cx: &mut LayerCx, root: usize, list: &[usize], p: &mut Painter, b
     // the content, painted at full opacity relative to the root
     let mut sub = Painter::new();
     paint_list(cx, list, &mut sub, Some(root), n.opacity);
+    inside.append(&mut sub.widgets);
     let n = &cx.frame.nodes[root];
     let c = &cx.styles[n.style];
     let screen = rect(-cx.vp.0, -cx.vp.1, cx.vp.0 * 3.0, cx.vp.1 * 3.0);
@@ -999,6 +1171,7 @@ fn paint_node(frame: &Frame, styles: &StyleStore, tc: &mut TextCache, i: usize, 
               vp: (f32, f32), app: &crate::window::App) {
     let n = &frame.nodes[i];
     let c = &styles[n.style];
+    p.through = !c.pointer_events;
     let b = n.bounds;
     match &n.content {
         Content::Word { .. } => {

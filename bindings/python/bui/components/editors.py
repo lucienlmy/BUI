@@ -188,7 +188,7 @@ class NormalBall(ValueComponent):
 
     def __init__(self, label: str = "", value=(0.0, 0.0, 1.0), *, size: float = 4.0, **kw):
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         self.on_change = kw.get("on_change")
         self.set("height", size)
         self._store(value, False)

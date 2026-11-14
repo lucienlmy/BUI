@@ -63,6 +63,7 @@ name = "blenderui-jsview"
 version = "0.5.1"
 dependencies = [
  "blenderui",
+ "smallvec",
 ]
 
 [[package]]

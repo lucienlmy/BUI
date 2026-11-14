@@ -394,6 +394,44 @@ static int video_frames(void)
   return ok;
 }
 
+/* Text under 40 px comes from the glyph atlas by default, which has upright bitmaps only: synthetic
+ * italic (the default font has no italic) must stay on Slug, or it renders upright. The mode is the
+ * default here (nothing chose one yet): the GPU's italic must match the CPU's slant, not the
+ * upright text. */
+static int italic_default(void)
+{
+  enum { IW = 220, IH = 40 };
+  static uint32_t px[3][IW * IH];
+  const float white[4] = {1, 1, 1, 1};
+  for (int k = 0; k < 3; k++) { /* 0: CPU italic, 1: GPU italic, 2: CPU upright */
+    BuiRaster *r = BUI_raster_create(IW, IH);
+    if (k == 1 && !BUI_raster_gpu_attach(r, NULL, 1)) {
+      printf("gpu parity: no GPU device, italic skipped\n");
+      BUI_raster_free(r);
+      return 1;
+    }
+    BUI_raster_begin_frame(r, IW, IH);
+    const float bg[4] = {0, 0, 0, 1};
+    BUI_raster_fill_rect(r, 0, 0, IW, IH, bg);
+    BUI_raster_set_font(r, "", k == 2 ? 0 : BUI_FONT_ITALIC);
+    BUI_raster_text(r, 8, 26, "Italic WAVE fjord", 16, 16, white);
+    BUI_raster_end_frame(r);
+    memcpy(px[k], BUI_raster_pixels(r), sizeof(px[k]));
+    BUI_raster_free(r);
+  }
+  int ink = 0, gpu_off = 0, upright_off = 0;
+  for (int i = 0; i < IW * IH; i++) {
+    const int c = (int)(px[0][i] & 255), g = (int)(px[1][i] & 255), u = (int)(px[2][i] & 255);
+    ink += c > 64;
+    gpu_off += abs(c - g) > 96;
+    upright_off += abs(c - u) > 96;
+  }
+  const int ok = ink > 100 && upright_off > ink / 4 && gpu_off * 3 < upright_off;
+  printf("italic text (default mode): %d ink pixels; the GPU differs from the CPU's italic in %d, upright "
+         "would in %d: %s\n", ink, gpu_off, upright_off, ok ? "ok" : "FAILED");
+  return ok;
+}
+
 int main(void)
 {
   BuiRaster *cpu = BUI_raster_create(W, H);
@@ -403,6 +441,7 @@ int main(void)
     ppm(getenv("BUI_PARITY_PPM"), "parity_cpu", a);
   }
   int ok = mesh_bands();
+  ok &= italic_default(); /* before anything chooses a text mode */
   /* text from glyph bitmaps (exact), then from glyph outlines (Slug) */
   for (int slug = 0; slug < 2; slug++) {
     set_slug(slug);

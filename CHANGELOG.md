@@ -43,6 +43,34 @@ All notable changes to **blenderui** (BUI). The format follows
   `muted=` and `volume=`) and Lua; the Blender-style controls get a mute button. Videos autoplay with sound now
   (they were silent): mute one with `muted`. Tested on Windows; the macOS and Linux outputs are written against
   their documented APIs and untried.
+- **Animation: GSAP and Motion on one engine** (feature `anim`, on by default; `BUI_ANIM` in CMake). One C engine
+  in the kit (`kit/intern/anim`, `BUI_anim.h`) runs every animation, so Rust, JavaScript, Python, Lua and C animate
+  the same way and none carries its own. Eases: every name of GSAP, Motion, CSS and Blender, `cubic-bezier()`,
+  `steps()`, `linear()`, SVG paths and registered curves (bezier curves are a 256-point table; the powers and
+  `cos` are polynomials). Springs (stiffness, damping, mass, or `duration` and `bounce`) and inertia are solved in
+  closed form, so a frame reads the value at its time and the result doesn't depend on the frame rate; an
+  interrupted motion hands its position and velocity to the next. Tweens and timelines take GSAP's position strings
+  (`"<"`, `"+=1"`, labels, `"50%"`), stagger, repeat, yoyo, time scale, overwrite and callbacks, and the engine keeps
+  them in one dense array with a per-target index (killing a target's motions touches only those). Reduced motion
+  makes every motion jump to its end.
+  - **Rust:** `<motion.div>` in `rsx!` with `initial`, `animate`, `exit`, `transition`, `variants`, `whileHover`,
+    `whileTap`, `whileFocus`, `whileInView`, `whileDrag`, `drag` (with `dragConstraints`, `dragElastic`,
+    `dragMomentum`) and `layout`; `presence` (AnimatePresence); motion values (`use_motion_value`, `use_spring`,
+    `use_transform`, `use_velocity`, `use_scroll`); `gsap::to / from / from_to / set / timeline` and
+    `motion::animate`. `{{ }}` (and `vars!{}` outside `rsx!`) is an object of values; one made of literals is a
+    `static` read once per call site. A frame that only animates skips the view render, the cascade and layout
+    and repaints only the elements that changed; it is not allocation-free yet (see "What a frame costs" in
+    `docs/animation-api.md`; the Rust side is being tightened). `examples/site_motion.rs`.
+  - **JavaScript and React:** `@blender-ui/native/gsap` and `@blender-ui/native/motion` (`animate`, `motionValue`,
+    `stagger`), Motion's props on every element (`el.setMotion`), `@blender-ui/react/motion` (`motion.div`,
+    `useMotionValue`, `useSpring`, `useTransform`), and `el.animate()` (Web Animations) now runs for real.
+    `app.advanceClock(ms)` steps animations frame-exactly in tests. An element removed while it has an `exit` animates out before it goes (`AnimatePresence`); no `layoutId` yet.
+  - **Python:** `bui.gsap` and `bui.motion`; `QPropertyAnimation`, `QVariantAnimation`, the animation groups and
+    `QEasingCurve` of Qt syntax run on the engine too. Components take `initial`, `animate` and `transition`.
+  - **Lua:** `bui.gsap` and `bui.motion`. **C:** `BK_tween`, `BK_timeline`, `BK_spring_*`, `BK_ease_*`, and
+    `BK_anim_node` for kit widgets.
+  - Docs: the website's Motion and GSAP pages for Rust, JavaScript, Python and Lua (with Svelte transitions in the JavaScript page); `docs/animation-api.md` (status of every entry point, the numbers contract, what a frame costs).
+  - Examples: `examples/animation/` (a hero intro, a card grid, magnetic buttons, a marquee with drag and an equalizer).
 
 ### Changed
 - **Breaking default: videos play with sound.** A `<video>` / `BK_video` autoplays with its audio track now (it
@@ -67,6 +95,49 @@ All notable changes to **blenderui** (BUI). The format follows
 - **Qt syntax:** `QSpinBox` was a `QAbstractSlider`; it is a `QAbstractSpinBox` now. Spin box `suffix()`, `decimals()` and `placeholderText()` read back empty.
 - **tkinter:** a vertical `ttk.Separator` drew a horizontal line in a tall box.
 - **Video sound:** in a looping video whose sound was far ahead of the picture (a long pause, a slow decode), the picture froze until the sound came round; it now seeks to the sound. Two `<video>` elements of one file with different `loop`, `muted`, `poster` or `audioeffects` (Rust) no longer undo each other every render (each has its own player). Python's `Video.player` setters (`volume`, `rate`, `muted`, ...) no longer change the player when the value does not convert.
+- **Rust Motion: gap audit.** Letting go of a drag after a pause no longer throws the element (only the last 100 ms of pointer movement count, over at least 8 ms); a `layout` element under a parent that moves (a drag, an animated `x`) or scrolls no longer animates against it (its box is measured relative to the parent); `use_transform`, `use_velocity` and a `use_spring` of a motion value follow their source without a render (they are read through it, and springs retarget each frame); a selector with combinators or pseudo-classes (`"ul > li"`, `"a:hover"`) is an error from `Targets::selector` instead of silently matching wrongly, and one that matches nothing is counted by `motion::unmatched_selectors()` (and logged in debug builds); a NaN duration or delay is refused and a negative one is zero; made-up property and variant names are bounded (4096) instead of leaking for ever. A redraw of moving values walks only the animated elements and what is under them, not every box of the page.
+- **Animation engine: robustness** (PR #36 audit). A callback that kills a sibling or its own timeline (`onComplete`,
+  `onUpdate`) or starts a motion no longer leaves the render walking freed memory; a killed motion stays killed
+  (`play`, `resume`, `reverse`, `seek` and `add` do nothing to it, and `BK_anim_exit` can't hang on one). One contract
+  for numbers, in C, for every binding: a negative duration, delay or repeat delay is 0 (Python used to raise), NaN and
+  infinity are errors in the binding's idiom (`ValueError`, a Lua error), `repeat` of any size is at most
+  `BK_MOTION_MAX_REPEAT` (1,000,000; `-1` and `math.huge` are for ever; Python's `2**32` is no longer 0), totals don't
+  overflow, and a repeat for ever of a zero-length motion ends instead of keeping the host drawing. Timeline positions
+  are exactly GSAP's grammar (a number, `+=n`, `-=n`, `<`, `>`, `<n`, `>n`, labels with `+=n`, `n%`): anything else, or
+  a label that doesn't exist, is an error instead of a label made at the end. Ease tables are shared by content,
+  capped at 65,535 (a full pool refuses the ease instead of wrapping its id), checked after `BK_anim_exit`, and
+  `expoScale` from 0 or NaN/inf eases are safe. `BK_tween` refuses tracks without values or keys, and non-finite values.
+  Motion's default duration and ease live in one C function (`BK_motion_vars_motion_defaults`) that Rust, Python and
+  Lua call. A spring's settle time is a closed form instead of up to 2,400 `exp`/`sin`/`cos` steps per property (it is
+  the last time outside the rest thresholds: up to about 1.2x later than the old stepping's early stop for slowly
+  oscillating springs); killing a timeline measures it once.
+- **Animation: review fixes.** Adding a timeline to itself or to one of its own children is refused instead of recursing forever; a nested `exiting_scope` restores the outer scope; a canvas item's clip and a line's thickness count in `hititems` hit testing; the JS view frees removed nodes once nothing is leaving; a Motion prop nested too deeply is skipped in the QuickJS host without dropping its commit.
+- **Rust: form widgets and overlays** (issue #35). An element painted after a `<TextArea>`, `<Button>` or other form widget
+  (a dialog with `z-index`, a later sibling) now draws over it and takes the pointer there: widgets sit on the canvas
+  their paint order puts them on, above what comes before and below what overlaps them. A widget partly cut by an
+  ancestor's `overflow: hidden` or a scroller is cut there too (a clip rectangle on the kit node, `clipx` / `clipy` /
+  `clipw` / `cliph` in `BK_geom_set`), and an overlay with `pointer-events: none` lets the pointer through to the widget
+  below it (`BKCanvasItem.no_hit`).
+- **Rust: `whileInView`** counts what a scroller clips as out of view, so a row below a scroller's edge animates when
+  it is scrolled in, not at mount.
+- **Rust: widgets and Motion.** A frame of moving values (no layout) freed every form widget; it keeps them now.
+- **Windows: a window that animates for ever ignored the mouse, the keyboard and its title bar.** The frames of an animation are
+  posted messages (`WM_BK_RENDER`, one after another), and Windows hands a thread its posted messages before hardware input and
+  timers, so with an endless animation (a loop, a spinner, a marquee) none of them got through: no hover, no drag, no maximize,
+  no alt-tab, and the busy cursor over the window. Between two frames the host now takes the input, paint and timer messages
+  that are waiting.
+- **Windows (and every native window): ghosts of moved things after `getBoundingClientRect()` and `screenshot()`.** Both
+  rendered the window into its own raster without presenting it, so the kit's record of what is on the screen moved on while the
+  screen didn't: whatever had changed since the last present (a dragged square's old place) stayed painted for good. `bounds`
+  now only brings the layout up to date (`App::layout`), and `draw` on a native window renders into a raster of its own and
+  asks the window to repaint everything.
+- **`repeat: -1` in a timeline** (and so on every element or selector, which GSAP-style calls run through a timeline): a
+  child that repeats for ever counted as zero long, so its timeline ended at once and it never moved. The timeline now plays
+  until it is killed.
+- **Text in a translated box moved twice** when it was a `white-space: pre` (or otherwise line-boxed) run: the words carried
+  their owner's `translate` as well as the box that held them. Animated `x` / `y` and CSS `translate` on such text are right now.
+- **QuickJS (`bui run`, `bui build`):** the runtime rejected `commit` calls that passed `undefined` for the motion props, so
+  every app drew nothing.
 
 ## [0.5.1] - 2026-11-13
 

@@ -12,11 +12,30 @@ use std::time::{Duration, Instant};
 
 pub static FRAMES: AtomicU64 = AtomicU64::new(0);
 
+/// Where the frame count comes from: `frame()` calls (one per render), or a
+/// framework's own counter (frames it draws without rendering the view).
+static FRAME_SOURCE: std::sync::OnceLock<fn() -> u64> = std::sync::OnceLock::new();
+
+pub fn set_frame_source(f: fn() -> u64) {
+    let _ = FRAME_SOURCE.set(f);
+}
+
+fn frames() -> u64 {
+    FRAME_SOURCE.get().map_or_else(|| FRAMES.load(Ordering::Relaxed), |f| f())
+}
+
 pub struct Config {
     pub cells: usize,
     pub animate: bool,
     /// `--mode one`: every frame re-renders, but only cell 0 changes.
     pub one: bool,
+    /// `--mode motion`: every cell's colour and opacity loop forever through
+    /// the framework's own animation system (gpui's `with_animation`,
+    /// blenderui's `<motion.div>`): no frame-by-frame code in the app.
+    pub motion: bool,
+    /// `--mode spin`: the same loop on one cell, the rest still (a spinner in
+    /// a big UI: what a frame costs when little moves).
+    pub spin: bool,
     pub warmup: f64,
     pub seconds: f64,
     pub width: f32,
@@ -34,6 +53,8 @@ impl Config {
             cells: get("--cells", "100").parse().unwrap(),
             animate: matches!(get("--mode", "anim").as_str(), "anim" | "one"),
             one: get("--mode", "anim") == "one",
+            motion: get("--mode", "anim") == "motion",
+            spin: get("--mode", "anim") == "spin",
             warmup: get("--warmup", "3").parse().unwrap(),
             seconds: get("--seconds", "10").parse().unwrap(),
             width: 1000.0,
@@ -234,15 +255,31 @@ mod platform {
     }
 }
 
+/// `--mode motion`: the two colours each cell loops between, and the loop.
+pub const MOTION_FROM: u32 = 0x4772b3;
+pub const MOTION_TO: u32 = 0xe06c75;
+pub const MOTION_SECONDS: f32 = 1.0;
+/// Whether cell `i` animates through the framework (`motion`: all; `spin`: the first).
+impl Config {
+    pub fn animates(&self, i: usize) -> bool {
+        self.motion || (self.spin && i == 0)
+    }
+}
+
+/// A cell's start offset in the loop (so the cells aren't in step).
+pub fn motion_offset(i: usize) -> f32 {
+    (i % 17) as f32 / 17.0
+}
+
 /// Start the measuring thread. `name` labels the JSON line.
 pub fn start(name: &'static str, cfg: &Config) {
     let (warmup, secs, cells, animate) = (cfg.warmup, cfg.seconds, cfg.cells, cfg.animate);
-    let mode = if cfg.one { "one" } else if animate { "anim" } else { "idle" };
+    let mode = if cfg.spin { "spin" } else if cfg.motion { "motion" } else if cfg.one { "one" } else if animate { "anim" } else { "idle" };
     let launched = Instant::now();
     std::thread::spawn(move || {
         // time to first frame
         let first = loop {
-            if FRAMES.load(Ordering::Relaxed) > 0 {
+            if frames() > 0 {
                 break launched.elapsed();
             }
             if launched.elapsed() > Duration::from_secs(30) {
@@ -251,7 +288,7 @@ pub fn start(name: &'static str, cfg: &Config) {
             std::thread::sleep(Duration::from_millis(1));
         };
         let hz = tsc_hz(Duration::from_secs_f64(warmup));
-        let (w0, c0, f0) = (Instant::now(), cpu_cycles(), FRAMES.load(Ordering::Relaxed));
+        let (w0, c0, f0) = (Instant::now(), cpu_cycles(), frames());
         let t0 = cpu_time();
         let mut peak_ws = 0usize;
         let mut ws_sum = 0f64;
@@ -263,7 +300,7 @@ pub fn start(name: &'static str, cfg: &Config) {
             ws_sum += m.working_set as f64;
             samples += 1;
         }
-        let (wall, frames) = (w0.elapsed(), FRAMES.load(Ordering::Relaxed) - f0);
+        let (wall, frames) = (w0.elapsed(), frames() - f0);
         let cpu = Duration::from_secs_f64((cpu_cycles() - c0) as f64 / hz);
         let _tick_based = cpu_time() - t0; // GetProcessTimes, kept for comparison when debugging
         let m = memory();

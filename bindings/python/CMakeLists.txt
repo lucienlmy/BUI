@@ -10,7 +10,8 @@ endif()
 
 message(STATUS "BUI: building buipy Python bindings for Python ${Python3_VERSION}")
 
-Python3_add_library(buipy MODULE WITH_SOABI src/buipy_module.c src/buipy_kit.c src/buipy_video.c)
+Python3_add_library(buipy MODULE WITH_SOABI src/buipy_module.c src/buipy_kit.c src/buipy_video.c
+                   src/buipy_anim.c)
 target_link_libraries(buipy PRIVATE bui_api bui_gpu bui_kit)
 
 # ($<0:> keeps multi-config generators from adding a Release/ subdirectory.)
@@ -145,6 +146,12 @@ if(BUI_BUILD_TESTS)
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_tk_input.py
   )
   set_tests_properties(buipy_tk_input PROPERTIES ENVIRONMENT "PYTHONPATH=${BUIPY_TEST_PYTHONPATH}")
+  # animation: bui.gsap, bui.motion, Qt's animations on the kit's engine (a stepped clock)
+  add_test(
+    NAME buipy_anim
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_anim.py
+  )
+  set_tests_properties(buipy_anim PROPERTIES ENVIRONMENT "PYTHONPATH=${BUIPY_TEST_PYTHONPATH}")
   add_test(
     NAME buipy_filebrowser
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_filebrowser.py

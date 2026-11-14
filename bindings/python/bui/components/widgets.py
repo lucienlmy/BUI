@@ -296,7 +296,7 @@ class NumberField(ValueComponent):
             integer = isinstance(value, int) and not isinstance(value, bool)
         self._integer = integer
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         if integer:
             self.set("integer", True)
         if min is not None:
@@ -308,7 +308,7 @@ class NumberField(ValueComponent):
         if suffix:
             self.set("suffix", suffix)
         rest = {k: v for k, v in kw.items()
-                if k not in ("description", "enabled", "visible", "weight", "fill")}
+                if k not in Component.KWARGS}
         self.on_change = rest.pop("on_change", None)
         default = rest.pop("default", None)
         if label:
@@ -351,7 +351,7 @@ class TextField(ValueComponent):
     def __init__(self, label: str = "", value: str = "", *, placeholder: str = "",
                  icon: str = None, live: bool = False, **kw):
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         self.on_change = kw.get("on_change")
         if label:
             self.set("label", label)
@@ -446,7 +446,7 @@ class _Choice(ValueComponent):
     def __init__(self, label: str = "", items: Sequence[str] = (), value=None, *,
                  icons=None, **kw):
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         self.on_change = kw.get("on_change")
         if label:
             self.set("label", label)
@@ -528,7 +528,7 @@ class ColorSwatch(ValueComponent):
     def __init__(self, label: str = "", value=(1.0, 1.0, 1.0, 1.0), *,
                  picker: str = "circle", alpha: bool = True, **kw):
         Component.__init__(self, **{k: v for k, v in kw.items()
-                                    if k in ("description", "enabled", "visible", "weight", "fill")})
+                                    if k in Component.KWARGS})
         self.on_change = kw.get("on_change")
         if label:
             self.set("label", label)

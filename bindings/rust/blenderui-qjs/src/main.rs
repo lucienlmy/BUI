@@ -24,7 +24,9 @@ use std::time::{Duration, Instant};
 
 use blenderui::prelude::*;
 use blenderui_jsview as view;
-use rquickjs::{Context, Ctx, Function, Object, Runtime, TypedArray, Value};
+use blenderui::motion::Any;
+use rquickjs::function::Opt;
+use rquickjs::{Array, Context, Ctx, Exception, Function, Object, Runtime, Type, TypedArray, Value};
 
 /// The end of an app executable: `MAGIC`, then the bundle's length (u64 LE).
 const MAGIC: &[u8; 8] = b"BUIAPP01";
@@ -37,7 +39,7 @@ const PRELUDE: &str = include_str!("prelude.js");
 /// What JavaScript asked for, applied by the pump with `&mut App`.
 enum Command {
     Open(u32, view::WindowConfig),
-    Commit(u32, Vec<i32>, Vec<String>, bool),
+    Commit(u32, Vec<i32>, Vec<String>, bool, Vec<Option<view::motion::MotionProp>>),
     Frame(u32),
     Close(u32),
     Slug(bool),
@@ -257,7 +259,7 @@ fn run_jobs(js: &Js) {
 fn apply(cx: &mut App, c: Command) {
     match c {
         Command::Open(id, config) => view::open_window(cx, id, config, sink()),
-        Command::Commit(w, ops, strings, animated) => view::commit(cx, w, &ops, &strings, animated),
+        Command::Commit(w, ops, strings, animated, props) => view::commit(cx, w, &ops, &strings, props, animated),
         Command::Frame(w) => view::request_frame(cx, w),
         Command::Close(w) => view::close_window(cx, w),
         Command::Slug(on) => {
@@ -357,6 +359,72 @@ fn describe(v: &Value<'_>) -> String {
 // Host functions (`host` in prelude.js)
 
 /// The window options object of `index.d.ts`.
+/// How deep a Motion prop's value may nest.
+const MOTION_DEPTH: u32 = 12;
+
+/// A Motion prop's value (`{ x: 100, ease: 'linear', onComplete () {} }`, a motion value by its
+/// handle ...) as the engine's `Any`: read once, here.
+fn motion_any(v: &Value<'_>, depth: u32) -> rquickjs::Result<Any> {
+    if depth == 0 {
+        return Err(rquickjs::Error::new_from_js_message("value", "Motion prop", "nested too deeply"));
+    }
+    Ok(match v.type_of() {
+        Type::Bool => Any::Bool(v.as_bool().unwrap_or(false)),
+        Type::Int | Type::Float => Any::Num(v.as_number().unwrap_or(0.0)),
+        Type::String => Any::Str(v.as_string().map(|s| s.to_string()).transpose()?.unwrap_or_default()),
+        Type::Function | Type::Constructor => Any::Func,
+        Type::Array => {
+            let mut list = Vec::new();
+            if let Some(a) = v.as_array() {
+                for item in a.iter::<Value>() {
+                    list.push(motion_any(&item?, depth - 1)?);
+                }
+            }
+            Any::List(list)
+        }
+        Type::Object => {
+            let Some(o) = v.as_object() else { return Ok(Any::Null) };
+            // a motion value: its handle (what the Node addon finds the same way)
+            if let Some(id) = o.get::<_, Option<u32>>("__buiMotionValue")? {
+                return Ok(Any::Motion(id));
+            }
+            let mut map = Vec::new();
+            for kv in o.props::<String, Value>() {
+                let (k, x) = kv?;
+                map.push((k, motion_any(&x, depth - 1)?));
+            }
+            Any::Map(map)
+        }
+        _ => Any::Null,
+    })
+}
+
+/// Commit's Motion props `[which, value, which, value ...]`, and the first error among them. A
+/// prop that can't be read becomes the removal of that prop: the batch refers to the list by
+/// position, and is applied either way (the error is reported after it).
+fn motion_props(list: Option<Array<'_>>) -> rquickjs::Result<(Vec<Option<view::motion::MotionProp>>, Option<String>)> {
+    let Some(list) = list else { return Ok((Vec::new(), None)) };
+    let items: Vec<Value> = list.iter::<Value>().collect::<rquickjs::Result<_>>()?;
+    let mut out = Vec::with_capacity(items.len() / 2);
+    let mut first = None;
+    for pair in items.chunks_exact(2) {
+        let which = pair[0].as_number().map_or(-1, |n| n as i32);
+        // a value that can't be read (nested too deeply ...) skips that prop, not the batch
+        let parsed = match motion_any(&pair[1], MOTION_DEPTH) {
+            Ok(value) => view::motion::MotionProp::parse(which, &value),
+            Err(e) => Err(e.to_string().into()),
+        };
+        out.push(Some(match parsed {
+            Ok(p) => p,
+            Err(e) => {
+                first.get_or_insert(e);
+                view::motion::MotionProp::Clear(which)
+            }
+        }));
+    }
+    Ok((out, first))
+}
+
 fn window_config(c: &Object<'_>) -> rquickjs::Result<view::WindowConfig> {
     let layer_shell = c
         .get::<_, Option<Object>>("layerShell")?
@@ -427,10 +495,15 @@ fn host_object<'js>(ctx: &Ctx<'js>, argv: Vec<String>) -> rquickjs::Result<Objec
         command(Command::Open(id, window_config(&c)?));
         Ok(())
     });
-    f!("commit", |w: u32, ops: TypedArray<'js, i32>, strings: Vec<String>, animated: bool| {
+    f!("commit", |ctx: Ctx<'js>, w: u32, ops: TypedArray<'js, i32>, strings: Vec<String>, animated: bool,
+                  motion: Opt<Option<Array<'js>>>| -> rquickjs::Result<()> {
         // SAFETY: copied right away, before JavaScript can detach or resize the buffer
         let ops = unsafe { ops.as_slice() }.to_vec();
-        command(Command::Commit(w, ops, strings, animated));
+        // absent, `undefined` and `null` all mean no motion props
+        let (props, bad) = motion_props(motion.0.flatten())?;
+        command(Command::Commit(w, ops, strings, animated, props));
+        // the batch is applied; the prop that couldn't be read is reported
+        bad.map_or(Ok(()), |e| Err(Exception::throw_message(&ctx, &e)))
     });
     f!("requestFrame", |w: u32| command(Command::Frame(w)));
     f!("closeWindow", |w: u32| command(Command::Close(w)));
@@ -600,4 +673,50 @@ fn exit(code: i32) -> ! {
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
     std::process::exit(code)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Motion props as the JavaScript runtime hands them to `commit`: `[which, value, ...]`.
+    fn props_of(js: &str) -> (usize, Option<String>, Vec<String>) {
+        let rt = Runtime::new().expect("runtime");
+        let cx = Context::full(&rt).expect("context");
+        cx.with(|ctx| {
+            let list: Array = ctx.eval(js).expect("a list");
+            let (props, bad) = motion_props(Some(list)).expect("read");
+            let kinds = props.iter().flatten().map(|p| format!("{p:?}").split('(').next().unwrap_or("").to_owned()).collect();
+            (props.len(), bad, kinds)
+        })
+    }
+
+    #[test]
+    fn motion_props_are_forwarded() {
+        // drag "x", constraints, a whileHover target with a value and a motion value by handle
+        let (n, bad, kinds) = props_of("[12, 'x', 13, { left: 0, right: 100 }, 3, { width: 80, ease: 'linear' }, 7, { x: { __buiMotionValue: 4 } }]");
+        assert_eq!((n, bad), (4, None));
+        assert_eq!(kinds, ["Drag", "DragConstraints", "Target", "Style"]);
+    }
+
+    /// `commit` is called with `undefined` for no motion props (the prelude always passes the argument).
+    #[test]
+    fn commit_takes_undefined_for_no_motion_props() {
+        let rt = Runtime::new().expect("runtime");
+        let cx = Context::full(&rt).expect("context");
+        cx.with(|ctx| {
+            let f = Function::new(ctx.clone(), |motion: Opt<Option<Array<'_>>>| motion.0.flatten().is_some()).expect("fn");
+            ctx.globals().set("f", f).expect("global");
+            let got: Vec<bool> = ctx.eval("[f(), f(undefined), f(null), f([])]").expect("calls");
+            assert_eq!(got, [false, false, false, true]);
+        });
+    }
+
+    #[test]
+    fn a_prop_that_cannot_be_read_still_applies_the_rest() {
+        let (n, bad, kinds) = props_of("[12, 'diagonal', 14, 0.5]");
+        assert_eq!(n, 2, "positions are kept: the batch refers to them");
+        assert!(bad.is_some_and(|e| e.contains("drag")), "the first error is reported");
+        assert_eq!(kinds, ["Clear", "DragElastic"], "the bad one becomes a removal; the other is kept");
+    }
 }

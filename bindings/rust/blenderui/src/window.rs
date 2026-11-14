@@ -415,6 +415,7 @@ unsafe extern "C" fn on_wake() {
 
 impl App {
     fn create(headless: bool) -> App {
+        crate::motion::start_clock(!headless);
         App { windows: Vec::new(), entities: Vec::new(), headless, globals: HashMap::new(), propagate: true,
               remote: None, close_hooks: Vec::new(),
               activation_hooks: Vec::new(), notified: 0 }
@@ -608,7 +609,7 @@ impl App {
         }
         for id in 0..self.windows.len() {
             let Some(w) = self.windows[id].as_deref_mut() else { continue };
-            if !w.dirty {
+            if !w.dirty && !w.motion_frame {
                 continue;
             }
             match w.native {
@@ -625,7 +626,7 @@ impl App {
                 }
                 Some(_) => {}
                 None => {
-                    self.with_window(id, |w, app| w.rebuild(app));
+                    self.with_window(id, |w, app| w.update(app));
                 }
             }
         }
@@ -649,13 +650,18 @@ impl App {
             return (0, 0, Vec::new());
         };
         let (pw, ph) = w.phys;
+        // A native window's raster is what it presents next, and the pixels the kit compares frames with
+        // belong to it: drawing into it here would take the damage of frames nobody presented, and
+        // leave their old pixels on the screen. It gets its own raster, and the window repaints all.
+        let own = w.native.is_some();
         // SAFETY: the raster is sized to the window; pixels are copied out.
         let px = unsafe {
-            if w.raster.is_null() {
+            if !own && w.raster.is_null() {
                 w.raster = sys::BUI_raster_create(pw, ph);
             }
+            let target = if own { sys::BUI_raster_create(pw, ph) } else { w.raster };
             let _s = span(Phase::Widgets);
-            sys::BK_render(w.ctx, w.raster, pw, ph, 1);
+            sys::BK_render(w.ctx, target, pw, ph, 1);
             // decodes this frame asked for: wait, then draw what arrived
             let mut st = sys::BKImageStats::default();
             sys::BK_image_stats(&raw mut st);
@@ -667,23 +673,78 @@ impl App {
                 sys::BK_image_stats(&raw mut st);
             }
             if sys::BK_image_poll() > 0 {
-                sys::BK_render(w.ctx, w.raster, pw, ph, 0);
+                sys::BK_render(w.ctx, target, pw, ph, 0);
             }
-            let p = sys::BUI_raster_pixels(w.raster);
-            std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec()
+            let p = sys::BUI_raster_pixels(target);
+            let px = std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec();
+            if own {
+                sys::BUI_raster_free(target);
+                sys::BK_node_relayout(w.root); // the window's own next render covers everything again
+            }
+            px
         };
         self.flush(); // configure events from the render
         (pw as usize, ph as usize, px)
+    }
+
+    /// A frame the way a native window draws it, and the same frame in full: what the kit repaints
+    /// where something changed (on the pixels of the last frame), and a fresh render of everything.
+    /// They must be equal; a difference is a damaged region that was lost. (Tests: draw once first.)
+    #[doc(hidden)]
+    pub fn draw_partial_and_full(&mut self, id: WindowId) -> (usize, usize, Vec<u32>, Vec<u32>, Vec<[i32; 4]>) {
+        self.flush();
+        let Some(w) = self.windows.get_mut(id.0).and_then(|w| w.as_deref_mut()) else {
+            return (0, 0, Vec::new(), Vec::new(), Vec::new());
+        };
+        let (pw, ph) = w.phys;
+        // SAFETY: the rasters are sized to the window; pixels are copied out.
+        let (partial, full, damage) = unsafe {
+            if w.raster.is_null() {
+                w.raster = sys::BUI_raster_create(pw, ph);
+            }
+            sys::BK_render(w.ctx, w.raster, pw, ph, 0);
+            let p = sys::BUI_raster_pixels(w.raster);
+            let partial = std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec();
+            // what a window's present would copy to the screen
+            let mut rects: *const [c_int; 4] = std::ptr::null();
+            let n = sys::BUI_raster_damage(w.raster, &raw mut rects);
+            let damage = if rects.is_null() { Vec::new() } else { std::slice::from_raw_parts(rects, n as usize).to_vec() };
+            let fresh = sys::BUI_raster_create(pw, ph);
+            sys::BK_render(w.ctx, fresh, pw, ph, 1);
+            let p = sys::BUI_raster_pixels(fresh);
+            let full = std::slice::from_raw_parts(p, (pw * ph) as usize).to_vec();
+            sys::BUI_raster_free(fresh);
+            (partial, full, damage)
+        };
+        self.flush();
+        (pw as usize, ph as usize, partial, full, damage)
+    }
+
+    /// Bring a window's layout up to date (what `element_bounds` reads) without drawing it: a native
+    /// window draws itself on its next frame, and [`draw`](Self::draw) would be a second, unpresented one.
+    ///
+    /// An off-screen window has no loop of its own: it is drawn, which is also what lays the kit out.
+    pub fn layout(&mut self, id: WindowId) {
+        let native = self.windows.get(id.0).and_then(|w| w.as_deref()).is_some_and(|w| w.native.is_some());
+        if native {
+            self.flush();
+            self.with_window(id.0, |w, app| w.update(app));
+        } else {
+            self.draw(id);
+        }
     }
 
     /// Move every window's CSS animation clock forward by `d`. Headless
     /// windows' clocks stand still otherwise, so tests step animations and
     /// transitions deterministically; native windows add `d` to real time.
     pub fn advance_clock(&mut self, d: std::time::Duration) {
+        crate::motion::advance(d.as_secs_f64());
         for w in self.windows.iter_mut().flatten() {
             w.clock.advance(d);
             if w.caches.anim.any() {
                 w.dirty = true;
+            } else if crate::motion::active() {
+                w.request_motion_frame();
             }
         }
         self.flush();
@@ -735,6 +796,21 @@ impl App {
         });
         self.input(window, |ctx, s| unsafe {
             sys::BK_release(ctx, (x * s) as c_int, (y * s) as c_int, sys::BK_BUTTON1 | mods);
+        });
+    }
+
+    /// Press the left button at (x, y) (and hold it: see [`simulate_release`](Self::simulate_release)).
+    pub fn simulate_press(&mut self, window: WindowId, x: f32, y: f32) {
+        self.simulate_mouse_move(window, x, y);
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_press(ctx, (x * s) as c_int, (y * s) as c_int, 0);
+        });
+    }
+
+    /// Let go of the left button at (x, y).
+    pub fn simulate_release(&mut self, window: WindowId, x: f32, y: f32) {
+        self.input(window, |ctx, s| unsafe {
+            sys::BK_release(ctx, (x * s) as c_int, (y * s) as c_int, sys::BK_BUTTON1);
         });
     }
 
@@ -797,15 +873,22 @@ unsafe extern "C" fn on_emit(data: *mut c_void, node: *mut sys::BKNode, kind: c_
     with_running_app(|app| app.flush());
 }
 
+static FRAMES_PRESENTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Frames drawn by every window so far (full renders and redraws of moving
+/// values alike): a frame counter for benchmarks and overlays, readable from
+/// any thread.
+pub fn frames_presented() -> u64 {
+    FRAMES_PRESENTED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 unsafe extern "C" fn on_timer(data: *mut c_void, _win: *mut sys::BKWindow, _id: c_int) {
     let id = data as usize;
     let ran = with_running_app(|app| {
         app.drain();
         app.with_window(id, |w, app| {
             w.timer_pending = false;
-            if w.dirty {
-                w.rebuild(app);
-            }
+            w.update(app);
         });
         app.flush();
     });
@@ -829,9 +912,7 @@ unsafe extern "C" fn on_frame(data: *mut c_void, _win: *mut sys::BKWindow) {
         app.drain();
         app.with_window(id, |w, app| {
             w.frame_pending = false;
-            if w.dirty {
-                w.rebuild(app);
-            }
+            w.update(app);
         });
         app.flush();
     });
@@ -891,6 +972,11 @@ pub struct Window {
     id: usize,
     ctx: *mut sys::BKContext,
     canvas: *mut sys::BKNode,
+    /// The canvases over the first one (see `Painter`: items that overlap a
+    /// widget are drawn on a canvas above it), made as needed.
+    overlays: Vec<*mut sys::BKNode>,
+    /// `canvas`, then `overlays`: what `Painter::flush` fills.
+    canvases: Vec<*mut sys::BKNode>,
     root: *mut sys::BKNode,
     opaque: bool,
     native: Option<*mut sys::BKWindow>,
@@ -910,6 +996,8 @@ pub struct Window {
     timer_pending: bool,
     frame_pending: bool,
     animation_frame: bool,
+    /// The next frame is Motion's values alone: a redraw (no render or layout).
+    motion_frame: bool,
     /// CSS animation time (virtual in headless windows).
     clock: crate::anim::Clock,
     vsync: bool,
@@ -951,6 +1039,8 @@ impl Window {
                 id,
                 ctx,
                 canvas,
+                overlays: Vec::new(),
+                canvases: vec![canvas],
                 root,
                 opaque: false,
                 native: None,
@@ -967,6 +1057,7 @@ impl Window {
                 timer_pending: false,
                 frame_pending: false,
                 animation_frame: false,
+                motion_frame: false,
                 clock: crate::anim::Clock::new(!headless),
                 vsync: true,
                 closed: false,
@@ -1163,31 +1254,104 @@ impl Window {
         let widgets = &mut self.widgets;
         let recycle = self.frame.take().unwrap_or_default();
         self.caches.anim.begin(self.clock.now());
-        let frame = layout(root, vp, &self.state, &mut self.caches, recycle,
+        let mut frame = layout(root, vp, &self.state, &mut self.caches, recycle,
                            &mut |key, spec| widgets.ensure(canvas, key, spec, scale));
-        // CSS animations / transitions still moving: render again next frame
-        // (nothing running: no frames, so an idle window costs no CPU)
-        let animating = self.caches.anim.end();
-        // `@container`: sizes changed under a query: render once more
-        let container_changed = self.caches.after_layout(&frame);
-        let p = &mut self.painter;
-        p.reset();
+        // CSS animations / transitions still moving: render again next frame;
+        // Motion's values alone: redraw (nothing running: no frames, so an
+        // idle window costs no CPU)
+        let (css, motion) = self.caches.anim.end();
+        // `@container`: sizes changed under a query, or an element came into
+        // view (`whileInView`): render once more
+        let (in_view, flipped) = self.caches.anim.after_layout(&frame, &self.caches.styles, vp);
+        // useScroll: the values follow the scroll; what they move draws again
+        let scrolled = crate::motion::update_scroll(&frame);
+        if flipped {
+            // a layout animation starts where the element was seen: this frame too
+            self.caches.anim.redraw_motion(&mut frame, &mut self.caches.styles, vp);
+        }
+        let container_changed = self.caches.after_layout(&frame) | in_view;
+        self.present(app, frame, None);
+        // state of components that didn't render is freed; effects run now
+        crate::hooks::end();
+        if container_changed {
+            self.dirty = true;
+        }
+        if css {
+            self.request_animation_frame();
+        } else if motion || scrolled {
+            self.request_motion_frame();
+        }
+    }
+
+    /// A frame of Motion's values alone: the last frame's elements, with
+    /// their values set again and painted (no render, cascade or layout).
+    fn redraw(&mut self, app: &mut App) {
+        self.motion_frame = false;
+        let Some(mut frame) = self.frame.take() else { return };
+        let vp = self.viewport();
+        if !self.caches.anim.redraw_motion(&mut frame, &mut self.caches.styles, vp) {
+            self.frame = Some(frame);
+            self.dirty = true;
+            return self.rebuild(app);
+        }
+        // no layout ran: the widgets are the last frame's
+        self.widgets.keep();
+        // the boxes the values changed: only they are painted again
+        let dirty = self.caches.anim.take_redrawn();
+        self.present(app, frame, Some(&dirty));
+        self.caches.anim.give_redrawn(dirty);
+        if crate::motion::active() {
+            self.request_motion_frame();
+        }
+    }
+
+    /// Draw again on the next display refresh, for Motion's values alone.
+    fn request_motion_frame(&mut self) {
+        self.motion_frame = true;
+        self.animation_frame = true;
+    }
+
+    /// Render the window when it needs it: in full, or a redraw.
+    fn update(&mut self, app: &mut App) {
+        if self.dirty {
+            self.rebuild(app);
+        } else if self.motion_frame {
+            self.redraw(app);
+        }
+    }
+
+    /// Paint `frame` and show it (the widgets placed, the hover updated).
+    /// `dirty`: a redraw's boxes to paint again (the rest kept), when it can.
+    fn present(&mut self, app: &mut App, frame: Frame, dirty: Option<&[bool]>) {
+        FRAMES_PRESENTED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let vp = self.viewport();
+        let scale = self.scale;
         {
             let _s = span(Phase::Paint);
-            paint_frame(&frame, &self.caches.styles, &mut self.caches.text, p, vp, self.scale, app);
+            let p = &mut self.painter;
+            let kept = dirty.is_some_and(|d| p.repaint(&frame, &self.caches.styles, &mut self.caches.text, d, vp, app));
+            if !kept {
+                p.reset();
+                paint_frame(&frame, &self.caches.styles, &mut self.caches.text, p, vp, self.scale, app);
+            }
         }
         {
             let _s = span(Phase::Flush);
-            p.flush(canvas, scale);
+            self.grow_canvases(self.painter.segment_count());
+            self.painter.flush(&self.canvases, scale);
         }
         let _rest = span(Phase::Widgets);
         let mut at = HashMap::new(); // empty (no allocation) without form widgets
-        for n in &frame.nodes {
-            if matches!(n.content, Content::Widget(_)) {
-                at.insert(n.key, (n.bounds, n.clip, n.visible));
+        if frame.nodes.iter().any(|n| matches!(n.content, Content::Widget(_))) {
+            let order = self.painter.widget_order();
+            for n in &frame.nodes {
+                if matches!(n.content, Content::Widget(_)) {
+                    let (seg, rank) = order.get(&n.key).copied().unwrap_or((0, u32::MAX));
+                    at.insert(n.key, (n.bounds, n.clip, n.visible, seg, rank));
+                }
             }
         }
-        self.widgets.place(&at, scale);
+        self.widgets.place(&at, &self.canvases, scale);
         // an opaque <html> background covers the window: the kit can skip its clear
         let styles = &self.caches.styles;
         let opaque = frame.nodes.first()
@@ -1203,17 +1367,30 @@ impl Window {
         self.update_hover(app, false);
         drop(_rest);
         prof::frame_done();
-        // state of components that didn't render is freed; effects run now
-        crate::hooks::end();
-        if container_changed {
-            self.dirty = true;
-        }
-        if animating {
-            self.request_animation_frame();
-        }
     }
 
     // -- events ------------------------------------------------------------------------------
+
+    /// At least `n` canvases (the ones over the first are made here, above
+    /// the rest, and take the pointer only where they have items).
+    fn grow_canvases(&mut self, n: usize) {
+        while self.canvases.len() < n {
+            // SAFETY: a fresh canvas added to our root, like the first one.
+            let c = unsafe {
+                let c = sys::BK_node_new(c"canvas".as_ptr());
+                sys::BK_node_add(self.root, c, -1);
+                sys::BK_geom_set_manager(c, sys::BK_GEOM_PLACE);
+                sys::BK_geom_set(c, c"relwidth".as_ptr(), 1.0);
+                sys::BK_geom_set(c, c"relheight".as_ptr(), 1.0);
+                sys::BK_set_num(c, c"events".as_ptr(), 1.0);
+                sys::BK_set_num(c, c"hititems".as_ptr(), 1.0);
+                sys::BK_set_num(c, c"cursor".as_ptr(), f64::from(self.cursor));
+                c
+            };
+            self.overlays.push(c);
+            self.canvases.push(c);
+        }
+    }
 
     /// Element keys from the root to the deepest element under the pointer.
     fn path_at(&self, x: f32, y: f32) -> Vec<Key> {
@@ -1264,7 +1441,9 @@ impl Window {
                 .find_map(|k| f.by_key().get(k).and_then(|&i| self.caches.styles[f.nodes[i].style].cursor)).unwrap_or(0);
             if cursor != self.cursor {
                 self.cursor = cursor;
-                unsafe { sys::BK_set_num(self.canvas, c"cursor".as_ptr(), cursor as f64) };
+                for &c in &self.canvases {
+                    unsafe { sys::BK_set_num(c, c"cursor".as_ptr(), cursor as f64) };
+                }
             }
         }
         if fire {
@@ -1311,7 +1490,7 @@ impl Window {
     }
 
     fn dispatch(&mut self, ev: RawEvent, app: &mut App) {
-        if ev.node != self.canvas {
+        if !self.canvases.contains(&ev.node) {
             self.widget_event(ev, app);
             return;
         }
@@ -1326,6 +1505,9 @@ impl Window {
             }
             sys::BK_EV_MOTION | sys::BK_EV_ENTER => {
                 self.pointer = (x, y);
+                if self.caches.anim.pointer_move(x, y) {
+                    self.request_motion_frame(); // a drag: a redraw, no render
+                }
                 self.update_hover(app, true);
                 let (modifiers, _) = self.pointer_event(&ev.text);
                 let pressed = (!self.pressed.is_empty()).then_some(self.press_button);
@@ -1347,6 +1529,7 @@ impl Window {
                 self.set_focus(&path);
                 self.pressed = path.clone();
                 self.dirty = true;
+                self.caches.anim.pointer_down(&path, x, y);
                 let e = MouseDownEvent { button, position: point(px(x), px(y)), modifiers,
                                          click_count: if ev.kind == sys::BK_EV_DOUBLE { 2 } else { 1 } };
                 if let Some(&deepest) = path.last() {
@@ -1368,6 +1551,7 @@ impl Window {
                 self.pressed.clear();
                 self.state.active.clear();
                 self.dirty = true;
+                self.caches.anim.pointer_up();
                 if let (Some(target), MouseButton::Left) = (common, button) {
                     self.toggle_details(target);
                     let down = MouseDownEvent { button, position: point(px(x), px(y)), modifiers, click_count: 1 };

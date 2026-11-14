@@ -7,6 +7,9 @@
 
 use std::os::raw::{c_char, c_double, c_float, c_int, c_uchar, c_void};
 
+mod anim;
+pub use anim::*;
+
 /// A kit node (widget, frame, canvas ...).
 #[repr(C)]
 pub struct BKNode {
@@ -116,6 +119,8 @@ pub struct BKCanvasItem {
     pub frame: c_int,
     /// Images: a video's current frame (borrowed, as `imbuf`).
     pub video: *mut BKVideo,
+    /// A canvas with `hititems` lets the pointer through this item.
+    pub no_hit: c_int,
 }
 
 /// A `<video>` (`BKVideo`): the kit's player (OS decoders; frames in one GPU
@@ -245,8 +250,11 @@ unsafe extern "C" {
 
     // nodes
     pub fn BK_node_new(type_: *const c_char) -> *mut BKNode;
+    /// Size or structure changed: lay out and redraw everything on the next render.
+    pub fn BK_node_relayout(node: *mut BKNode);
     pub fn BK_node_free(node: *mut BKNode);
     pub fn BK_node_add(parent: *mut BKNode, child: *mut BKNode, index: c_int) -> c_int;
+    pub fn BK_node_child(node: *const BKNode, i: c_int) -> *mut BKNode;
     pub fn BK_node_remove(parent: *mut BKNode, child: *mut BKNode);
     pub fn BK_node_rect(node: *const BKNode, r_rect: *mut c_int);
     pub fn BK_node_natural(node: *mut BKNode, r_size: *mut c_int);
@@ -404,6 +412,8 @@ unsafe extern "C" {
     // raster + text (gpu/)
     pub fn BUI_raster_create(width: c_int, height: c_int) -> *mut BuiRaster;
     pub fn BUI_raster_free(r: *mut BuiRaster);
+    /// The rectangles (x, y, w, h) the last frame changed: what a present copies.
+    pub fn BUI_raster_damage(r: *const BuiRaster, r_rects: *mut *const [c_int; 4]) -> c_int;
     pub fn BUI_raster_width(r: *const BuiRaster) -> c_int;
     pub fn BUI_raster_height(r: *const BuiRaster) -> c_int;
     pub fn BUI_raster_pixels(r: *const BuiRaster) -> *const u32;

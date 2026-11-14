@@ -1,0 +1,151 @@
+---
+title: Animation with GSAP and Motion
+sidebarLabel: Animation
+description: gsap and motion on BUI's engine, motion props on every element and in React, springs solved in closed form, and frame-exact tests with advanceClock.
+section: JavaScript & React
+order: 35
+languages: ["javascript"]
+sources: ["examples/animation/README.md", "examples/animation/hero.js", "docs/animation-api.md", "bindings/node/README.md", "bindings/node/gsap.d.ts", "bindings/node/motion.d.ts", "bindings/node/anim.js", "bindings/node/validate.js", "bindings/node/waapi.js", "bindings/svelte/test/svelte.test.js", "bindings/node/dom.js", "bindings/node/test/anim.test.js", "bindings/react/README.md", "bindings/react/motion.js", "bindings/react/motion.d.ts", "kit/include/BUI_anim.h"]
+---
+
+A box that slides in with an elastic ease, a timeline of three steps, a card that springs when you hover it: **GSAP's and Motion's APIs, run by BUI.** You import `gsap` or `motion`, call them as you would anywhere, and the animation runs in BUI's engine. JavaScript hands over each call's values once, and hears from the engine only for the callbacks you ask for.
+
+## GSAP
+
+```js
+import { gsap } from '@blender-ui/native/gsap'
+
+gsap.to('.box', { x: 200, duration: 1, ease: 'elastic.out(1, 0.3)', stagger: 0.1 })
+gsap.from('#title', { opacity: 0, y: 20 })
+gsap.fromTo(el, { scale: 0.8 }, { scale: 1, ease: 'back.out(2)' })
+
+const tl = gsap.timeline({ repeat: 1, yoyo: true, defaults: { duration: 0.5 } })
+tl.to('#a', { width: 100 })
+  .to('#b', { width: 100 }, '<0.2')      // GSAP's position strings
+  .addLabel('mid')
+  .to('#c', { opacity: 0.2 }, 'mid+=0.25')
+
+const t = gsap.to(el, { x: 100, onComplete () { console.log('done') } })
+t.pause(); t.seek(0.5); t.reverse(); t.progress(0.25)
+await t // resolves when it ends
+```
+
+- **Targets:** selectors (`'#id'`, `.class`, `tag`, `[attr=v]`), elements, motion values, or one plain object, whose numbers are tweened and written back each frame.
+- **Properties:** `x`, `y`, `scale`, `rotate`, `opacity`, and any CSS property that interpolates.
+- **Options:** `duration`, `delay`, `ease`, `repeat`, `repeatDelay`, `yoyo`, `stagger`, `paused`, `reversed`, `overwrite`, `immediateRender`, `timeScale`, and the callbacks `onStart`, `onUpdate`, `onComplete`, `onRepeat`, `onReverseComplete`, `onInterrupt`.
+- **Overwrite:** a new tween on a property takes over from the old one and keeps its velocity.
+
+## Motion
+
+```js
+import { animate, motionValue, stagger } from '@blender-ui/native/motion'
+
+animate('.card', { opacity: 1, y: 0 }, { duration: 0.4, delay: stagger(0.05) })
+animate(el, { x: 100 }, { type: 'spring', stiffness: 300, damping: 20 })
+
+const x = motionValue(0)
+animate(x, 100, { type: 'spring', bounce: 0.25, duration: 0.5 })
+animate(0, 100, { onUpdate: v => console.log(v) })
+```
+
+Any element takes Motion's props with `setMotion`:
+
+```js
+el.setMotion('initial', { opacity: 0, y: 20 })
+el.setMotion('animate', { opacity: 1, y: 0 })
+el.setMotion('whileHover', { scale: 1.05 })
+el.setMotion('transition', { type: 'spring', stiffness: 400, damping: 30 })
+el.setMotion('drag', 'x')
+el.setMotion('layout', true)
+el.style = { x: motionValue(0) }        // a motion value bound to a property
+```
+
+The props are `initial`, `animate`, `exit`, `whileHover`, `whileTap`, `whileFocus`, `whileInView` (with `viewport`), `whileDrag`, `transition`, `variants`, `drag` (`true`, `'x'`, `'y'`) with `dragConstraints`, `dragElastic`, `dragMomentum` and `dragSnapToOrigin`, and `layout` (`true`, `'position'`, `'size'`). `setMotion(name, null)` removes one, and an unknown name throws.
+
+## In React
+
+```jsx
+import { motion, useMotionValue, useSpring, useTransform } from '@blender-ui/react/motion'
+
+<motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
+            whileHover={{ scale: 1.05 }} transition={{ type: 'spring', stiffness: 400 }} />
+```
+
+- **Host elements:** `motion.div`, `motion.span` and the rest take the props above; `motion.Button`, `motion.NumberSlider` and the other Blender widgets animate their own values.
+- **Motion values:** `style={{ width: mv }}` follows a value without rendering the component again.
+- **Exit animations:** an element with an `exit` that you remove stays and animates out before it goes; `AnimatePresence` passes its children through.
+- **Not there yet:** `layoutId`.
+
+## Springs and eases
+
+`type: 'spring'` is a real spring: the engine solves the damped spring equation in closed form, for the underdamped, critically damped and overdamped cases. A frame reads the value at its time, so the frame rate doesn't change the result, and interrupting a spring hands its position and velocity to the next motion. Give `stiffness`, `damping` and `mass`, or `duration` and `bounce`. `type: 'inertia'` decays from a velocity.
+
+Every ease of GSAP, Motion, CSS and Blender works by name: `'none'`, `'power2.out'`, `'sine.inOut'`, `'expo.out'`, `'back.out(1.7)'`, `'elastic.out(1, 0.3)'`, `'bounce.out'`, `'steps(4)'`, `'easeInOut'`, `'anticipate'`, `'cubic-bezier(0.2, 0.8, 0.4, 1)'`, a `[x1, y1, x2, y2]` array, or a name you registered with `CustomEase`.
+
+## Web Animations
+
+`el.animate(keyframes, options)` runs for real, on the same engine. **Status: built**, with `play`, `pause`, `reverse`, `finish`, `cancel`, `playbackRate`, `currentTime`, `onfinish` and `finished`.
+
+```js
+const a = el.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: 'ease-out', fill: 'forwards' })
+await a.finished
+```
+
+`endDelay` and a `composite` other than `'replace'` throw. `cancel()` stops it and rejects `finished` with an `AbortError`, but the engine cannot yet revert an animated style, so the first keyframe's values stay until you set the style yourself.
+
+## Svelte transitions
+
+**Status: built.** Svelte's `transition:`, `in:` and `out:` run on this engine with no import: Svelte calls `el.animate()` with the transition's `css`, and the engine runs it. A transition that only has `tick` runs in Svelte's own loop.
+
+```svelte
+<script>
+  import { fly } from 'svelte/transition'
+  let open = $state(false)
+</script>
+{#if open}<div transition:fly={{ y: 20, duration: 300 }}>hello</div>{/if}
+```
+
+An outro keeps the element until it ends, and showing it again during the outro keeps one element. Svelte cancels a finished animation, so give an element that transitions explicit styles (see the `cancel()` note above). `app.advanceClock(ms)` steps a transition in tests (`bindings/svelte/test/svelte.test.js`). `use:motion` and the `spring` and `tweened` stores are not built.
+
+## Numbers and positions
+
+Every call checks its numbers where you make it: a NaN or infinite `duration`, `delay`, `repeatDelay`, `seek` or `timeScale` throws a `RangeError`, a negative duration or delay is 0, `repeat: -1` (or `Infinity`) is forever and a repeat above 1,000,000 is clamped, and a position that is not GSAP's grammar (`'<=1'`, `{}`) throws instead of being taken as a label. The whole contract is under [Numbers and positions](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#numbers-and-positions).
+
+## Testing animations
+
+A headless app's clock stands still. Move it by hand to check a value frame by frame:
+
+```js
+const app = new App({ headless: true })
+// ...open a window, start an animation...
+await app.advanceClock(500)   // half a second later, every window has rendered that frame
+```
+
+## Examples
+
+`examples/animation/` has four small windows, each run with `node examples/animation/<name>.js`, or saved as frames with `BUI_SHOT=out.png BUI_SHOT_MS=100,500,3000`:
+
+- `hero.js`: a headline whose letters rise one by one, one GSAP timeline with position strings.
+- `cards.js`: a card grid with staggered entrance, spring tilt on hover and counting numbers.
+- `magnetic.js`: buttons that lean toward the pointer and snap back with a spring.
+- `playground.js`: a marquee, a draggable puck and an equalizer.
+
+React and Svelte: `bindings/react/test/motion.test.js` and `bindings/svelte/test/svelte.test.js` are small runnable examples of `motion.div`, `useTransform`, `AnimatePresence` and Svelte transitions.
+
+## Limits
+
+- **Widgets:** a Blender widget has no draw transform or opacity; `x`, `y`, `scale`, `rotate` and `opacity` apply to HTML elements. A widget animates its own values.
+- **QuickJS:** `bui build` without `--bun` runs on QuickJS, which has no animation commands yet: `gsap`, `animate` and `el.animate` throw an error that says so. Node and Bun have them.
+- **Not built:** `gsap.quickTo`, `context`, `matchMedia`, `utils`, `ScrollTrigger`, `Flip`, `Draggable`, `Observer`, Motion's `spring`, `scroll`, `inView`, `hover`, `press`, animation sequences, and in React `useVelocity`, `useScroll`, `useInView`, `useAnimate`, `LayoutGroup`, `MotionConfig` and `layoutId`. [The full table](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#status-of-each-entry-point).
+- **Cost:** a frame that only animates skips rendering, the cascade and layout and repaints only what changed. It is not allocation-free: each call hands its values over once, and a callback such as `onUpdate` costs an event per frame it runs.
+
+## Next steps
+
+<CardGrid>
+  <Card title="React" href="docs/javascript/react/" icon="atom" kicker="JavaScript & React">
+    Render React components with BUI.
+  </Card>
+  <Card title="Signals" href="docs/javascript/signals/" icon="broadcast" kicker="JavaScript & React">
+    State that updates one node without rendering again.
+  </Card>
+</CardGrid>

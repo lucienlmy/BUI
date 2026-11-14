@@ -4,12 +4,7 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
-
-#include "BUI_kit.h"
-
-BKNode *buipy_kit_node(PyObject *obj); /* buipy_kit.c */
+#include "buipy.h"
 
 typedef struct VideoObject {
   PyObject_HEAD

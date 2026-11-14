@@ -18,6 +18,11 @@ with a centred number), built with the same element tree in both
   changes: closer to a real UI (a hover, a ticking value), where reusing the
   previous frame's work pays off.
 - **idle**: the scene renders once and then nothing changes.
+- **motion**: every cell loops its colour and opacity forever through the
+  framework's own animation system (gpui's `with_animation`, blenderui's
+  `<motion.div>` keyframes): the app has no per-frame code. blenderui redraws
+  these frames without rendering the view or laying it out again, so its
+  frames are counted where they're drawn (`blenderui::frames_presented`).
 - **blenderui (uncapped)**: animation without vsync pacing (`--uncapped`), for
   both renderers.
 

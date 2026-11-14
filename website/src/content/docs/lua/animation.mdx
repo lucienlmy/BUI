@@ -1,0 +1,112 @@
+---
+title: Animation with gsap and motion
+sidebarLabel: Animation
+description: bui.gsap and bui.motion animate widgets with real springs, GSAP's timelines and every ease by name, run by the C engine; Lua runs only for the callbacks you give it.
+section: Lua
+order: 20
+sources: ["docs/animation-api.md", "bindings/lua/README.md", "bindings/lua/src/bui_anim.c", "bindings/lua/tests/test_anim.lua", "bindings/lua/examples/anim.lua", "kit/include/BUI_anim.h"]
+---
+
+A slider that eases to 80, a progress bar that fills with a spring, a row of widgets that appear one after another: **call `gsap.to(slider, {value = 80})` and the slider moves.** The animation runs in BUI's C engine, so a frame costs no Lua. Lua runs only for callbacks you give it.
+
+`bui.gsap` follows GSAP's API with Lua tables, and `bui.motion` follows Motion's. Both are the same engine Rust, JavaScript and Python use.
+
+## Animate a widget
+
+```lua
+local bui = require("bui")
+local gsap, motion = bui.gsap, bui.motion
+
+local volume = bui.Node("slider")
+volume:set("min", 0); volume:set("max", 100); volume:set("value", 10)
+local bar = bui.Node("progress")
+
+gsap.to(volume, {value = 80, duration = 0.4, ease = "power2.out"})
+motion.animate(bar, {factor = 1}, {type = "spring", stiffness = 300, damping = 20})
+```
+
+A node animates what BUI draws for it: `value`, colors (`color`, `backgroundColor`) and the numbers it has, such as `factor`, `min`, `max`, `height`, `padding` and `scroll`. Kit widgets have no draw transform or opacity, so `x`, `y`, `scale`, `rotate` and `opacity` are errors.
+
+## GSAP
+
+```lua
+local t = gsap.to(slider, {value = 80, duration = 0.6, ease = "power2.out",
+                           repeat_ = 1, yoyo = true, onComplete = function() print("done") end})
+gsap.from(progress, {factor = 0, duration = 1})
+gsap.fromTo(frame, {backgroundColor = "#202020"}, {backgroundColor = "#4772b3"})
+gsap.set(swatch, {color = {1, 0.5, 0, 1}})
+gsap.to({a, b, c}, {value = 100, stagger = {each = 0.1, from = "center"}})
+t:pause(); t:resume(); t:reverse(); t:restart(); t:seek(0.3); t:progress(0.5)
+t:timeScale(2); t:kill(); t:isActive(); t:paused(true); t:reversed()
+
+local tl = gsap.timeline({defaults = {duration = 0.5, ease = "none"}, repeat_ = 1})
+tl:to(a, {value = 100}):to(b, {value = 100}, "<0.2"):addLabel("mid")
+  :to(c, {value = 50}, "mid+=0.25"):call(print, {"halfway"}, "mid")
+
+gsap.delayedCall(1, fn)
+gsap.killTweensOf(slider, "value")
+gsap.registerEase("myEase", {0.2, 0.8, 0.4, 1}); gsap.parseEase("back.out(2)")(0.5)
+```
+
+- **Targets:** a node, or a list of nodes.
+- **Values:** numbers, strings (`"+=30"`, `"50%"`, `"#ff8800"`, `"rgb(255 128 0)"`), colors as `{r, g, b[, a]}`, and arrays for keyframes.
+- **Options** in GSAP's camelCase or snake_case (`repeat_` or `["repeat"]` for Lua's keyword): `duration`, `delay`, `repeat`, `repeatDelay`, `yoyo`, `timeScale`, `paused`, `reversed`, `ease`, `overwrite`, `immediateRender`, `stagger`, and the callbacks `onStart`, `onUpdate`, `onComplete`, `onRepeat`, `onReverseComplete` and `onInterrupt`.
+
+## Motion
+
+```lua
+motion.animate(items, {value = 1}, {duration = 1, ease = "linear",
+                                    delay = motion.stagger(0.25, {from = "last"})})
+motion.animate(slider, {value = {0, 100, 40}}, {duration = 1, times = {0, 0.3, 1}})   -- keyframes
+motion.animate(slider, {value = 75}, {type = "spring", bounce = 0.25, visualDuration = 0.5})
+```
+
+Not built in Lua: animation sequences, motion values, `<motion.div>`-style props, `gsap.quickTo`, `context`, `matchMedia` and the plugins (`ScrollTrigger`, `Flip`, `Draggable`, `Observer`). [The full status table](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#status-of-each-entry-point).
+
+## Springs and eases
+
+`type = "spring"` is a real spring. The engine solves the damped spring equation in closed form, for the underdamped, critically damped and overdamped cases, so a frame reads the value at its time and the frame rate doesn't change the result. Interrupt a spring and the next motion starts from its position and velocity. Give `stiffness`, `damping`, `mass` and `velocity`, or `bounce` with `visualDuration`. `type = "inertia"` decays from a velocity (`power`, `timeConstant`, `min`, `max`).
+
+Every ease of GSAP, Motion, CSS and Blender works by name (`"none"`, `"power2.out"`, `"elastic.out(1, 0.3)"`, `"back.out(1.7)"`, `"steps(4)"`, `"easeInOut"`, `"cubic-bezier(...)"`), or give `{x1, y1, x2, y2}`. `gsap.registerEase(name, curve)` names your own.
+
+Mistakes fail where you make them: an unknown ease, property or option, a value of the wrong kind, or a freed node is a Lua error that names it.
+
+## Testing animations
+
+The engine's clock is yours in a test. Turn on the host clock, then move time by hand:
+
+```lua
+gsap.ticker.useHostClock(true)
+gsap.ticker.lagSmoothing(0)
+local now = 100.0
+local function step(s) now = now + s; gsap.ticker.tick(now) end
+
+step(0)
+local t = gsap.to(volume, {value = 90, duration = 1, ease = "none"})
+step(0.5)
+assert(math.abs(volume:get("value") - 50) < 1e-3)
+```
+
+`bindings/lua/tests/test_anim.lua` covers tweens, timelines, springs, callbacks and the errors at the call this way.
+
+## Examples
+
+`examples/anim.lua` is a pump-driven loop with a progress bar, color cycling and a wave slider: `./bui-lua bindings/lua/examples/anim.lua`.
+
+## Limits
+
+- **Widgets** have no draw transform or opacity (see above).
+- **Callbacks** live in the registry for exactly as long as their motion; a tween whose handle is collected plays on and lets go of its callbacks when it is done.
+- **Numbers:** a NaN or infinite time is an error, a negative duration or delay is 0, and `repeat = -1` is forever (more than 1,000,000 is clamped); see [Numbers and positions](https://github.com/ppmpreetham/BUI/blob/main/docs/animation-api.md#numbers-and-positions).
+- **Cost:** a frame that only animates skips rendering, the cascade and layout and repaints only what changed, and runs no Lua unless you gave a callback. It is not allocation-free: a callback costs an event per call.
+
+## Next steps
+
+<CardGrid>
+  <Card title="Lua overview" href="docs/lua/overview/" icon="book" kicker="Lua">
+    The bui-lua executable and every widget.
+  </Card>
+  <Card title="Python animation" href="docs/python/animation/" icon="sliders" kicker="Python">
+    The same engine, with keyword arguments.
+  </Card>
+</CardGrid>

@@ -265,7 +265,14 @@ void BUI_gpu_set_slug(int on)
   g_slug = on ? 1 : 0;
 }
 
-int BUI_gpu_slug(void)
+/* The text size from which the default draws with Slug: below it a glyph's bitmap is small,
+ * cached once and exactly what the CPU renderer draws, and sampling it costs the GPU far less
+ * than evaluating outlines per pixel (half the GPU time on a UI of small text); above it
+ * bitmaps get big and Slug keeps edges sharp. */
+#define SLUG_MIN_PX 40
+
+/* The explicit choice (BUI_SLUG, else BUI_gpu_set_slug), or -1: the default. */
+static int slug_choice(void)
 {
   /* called per text run: read the environment once */
   static int env_slug = -2; /* -2 unread, -1 unset */
@@ -275,10 +282,22 @@ int BUI_gpu_slug(void)
                                   env[0] == 'T') :
                                  -1;
   }
-  if (env_slug >= 0) {
-    return env_slug;
-  }
-  return g_slug >= 0 ? g_slug : BUI_SLUG_DEFAULT;
+  return env_slug >= 0 ? env_slug : g_slug;
+}
+
+int BUI_gpu_slug(void)
+{
+  const int c = slug_choice();
+  return c >= 0 ? c : BUI_SLUG_DEFAULT;
+}
+
+/* Whether text of `px` pixels draws with Slug. `shear` (a synthetic italic): the atlas has
+ * upright glyph bitmaps only, so slanted text stays on Slug, which applies the slant, unless Slug
+ * was turned off explicitly. */
+static int slug_for(float px, float shear)
+{
+  const int c = slug_choice();
+  return c >= 0 ? c : (BUI_SLUG_DEFAULT && (px >= (float)SLUG_MIN_PX || shear != 0.0f));
 }
 
 int BUI_raster_gpu_attach(BuiRaster *r, void *window_handle, int wait)
@@ -2941,7 +2960,7 @@ static int gpu_text_glyphs(BuiRaster *r, TextRun *e, float x, float y, const flo
   }
   const FontSlot *fs = &g_fonts[e->font];
   const float ox = floorf(x + 0.5f), base = floorf(y + 0.5f);
-  const int slug = BUI_gpu_slug() && bui_gpu_slug_on(r->gpu);
+  const int slug = slug_for((float)fs->px, shear) && bui_gpu_slug_on(r->gpu);
   const int passes = embolden > 0.0f ? 1 + (int)(embolden + 0.5f) : 1; /* synthetic bold */
   for (int i = 0; i < e->ng; i++) {
     const float pen = ox + e->gx[i];
@@ -2978,7 +2997,14 @@ static int gpu_text_glyphs(BuiRaster *r, TextRun *e, float x, float y, const flo
       if (!key || gw <= 0 || gh <= 0 || !bui_gpu_mask(r->gpu, key, g_text_gen, bits, gw, gh, &ax, &ay)) {
         continue;
       }
-      for (int k = 0; k < passes; k++) {
+      /* a FreeType bitmap is emboldened already (glyph_get): its passes are not drawn twice */
+      int atlas_passes = passes;
+#if TEXT_FT
+      if (g_faces[fs->face].ft && fs->ft_size) {
+        atlas_passes = 1;
+      }
+#endif
+      for (int k = 0; k < atlas_passes; k++) {
         const int px = (int)ox + gx + k, py = (int)base + gy;
         int x0, y0, x1, y1;
         if (!clip_box(r, (float)px, (float)py, (float)(px + gw), (float)(py + gh), &x0, &y0, &x1, &y1)) {
@@ -3724,8 +3750,13 @@ static int face_find(const char *family, int style, int *r_have)
   if (fam == 0 && generic) { /* Inter (italic synthesized, like Blender) */
     const int f = face_inter(want & 1);
     if (f >= 0) {
-      /* FreeType instances the bold weight; stb_truetype can't (synthesized) */
-      *r_have = TEXT_FT && g_faces[f].ft ? (style & BUI_FONT_BOLD) : 0;
+      /* FreeType instances the bold weight; stb_truetype can't (synthesized). Without FreeType
+       * compiled in, a Face has no `ft` to look at. */
+#    if TEXT_FT
+      *r_have = g_faces[f].ft ? (style & BUI_FONT_BOLD) : 0;
+#    else
+      *r_have = 0;
+#    endif
       return f;
     }
   }

@@ -95,6 +95,11 @@ void BK_geom_set(BKNode *n, const char *key, double v)
   else if (K("reqwidth")) g->reqw = iv;
   else if (K("reqheight")) g->reqh = iv;
   else if (K("reset_place")) { g->x = g->y = g->relx = g->rely = 0; g->has = 0; }
+  else if (K("clipx")) { g->clip[0] = iv; g->has_clip = true; }
+  else if (K("clipy")) { g->clip[1] = iv; g->has_clip = true; }
+  else if (K("clipw")) { g->clip[2] = iv; g->has_clip = true; }
+  else if (K("cliph")) { g->clip[3] = iv; g->has_clip = true; }
+  else if (K("noclip")) g->has_clip = false;
 #undef K
   if (fresh || memcmp(&old, g, sizeof(old)) != 0) { /* unchanged: no relayout */
     bk_relayout(n);
@@ -591,7 +596,8 @@ static void frame_draw_tree(BKNode *n)
   bk_clip_pop();
 }
 
-static BKNode *frame_hit(BKNode *n, int x, int y)
+/* the topmost child under the point */
+static BKNode *kids_hit(BKNode *n, int x, int y)
 {
   for (int i = n->nkids - 1; i >= 0; i--) {
     BKNode *c = n->kids[i];
@@ -602,7 +608,13 @@ static BKNode *frame_hit(BKNode *n, int x, int y)
       }
     }
   }
-  return (n->flags & NF_EVENTS) ? n : NULL;
+  return NULL;
+}
+
+static BKNode *frame_hit(BKNode *n, int x, int y)
+{
+  BKNode *f = kids_hit(n, x, y);
+  return f ? f : ((n->flags & NF_EVENTS) ? n : NULL);
 }
 
 const BKClass bk_cls_frame = {.name = "frame",
@@ -702,6 +714,9 @@ typedef struct CanvasData {
    * are not compared or damaged one by one (Blender's ED_region_tag_redraw_partial) */
   long damaged_px;
   bool all_damaged;
+  /* hit only inside an item (a layer drawn over widgets: the widgets below get the pointer
+   * everywhere else), not over the whole canvas */
+  bool hit_items;
 } CanvasData;
 
 #define IDX_EMPTY INT_MIN
@@ -884,7 +899,9 @@ static bool citem_image_box(const CItem *ci, float b[4])
 
 /* The canvas-space box an item can paint into, with margins for outline
  * width, anti-aliasing and glyph overhang. False when unknown. */
-static bool citem_bbox(const CItem *ci, float b[4])
+/* `tight`: where the item is (for hits), not where it may draw (damage: margins for edges, text
+ * overhang) */
+static bool citem_bbox_ex(const CItem *ci, float b[4], bool tight)
 {
   const BKCanvasItem *it = &ci->it;
   const float *p = ci->coords;
@@ -898,8 +915,25 @@ static bool citem_bbox(const CItem *ci, float b[4])
     y0 = BK_MIN(y0, p[k + 1]);
     y1 = BK_MAX(y1, p[k + 1]);
   }
-  float m = (it->width > 0 ? it->width : 1.0f) + 3.0f;
-  if (it->type == BK_ITEM_TEXT) {
+  /* a line has no area: a hit gets it at least a few pixels of thickness around it */
+  float m = tight ? (it->type == BK_ITEM_LINE ? BK_MAX(it->width * 0.5f, 3.0f) : 0.0f) :
+                    (it->width > 0 ? it->width : 1.0f) + 3.0f;
+  if (it->type == BK_ITEM_TEXT && tight) {
+    if (!ci->text) {
+      return false;
+    }
+    const float size = it->size > 0 ? it->size : bk_font_size();
+    float tw = 0;
+    BUI_text_measure(it->family ? it->family : "", it->text_flags, size, ci->text, (int)strlen(ci->text), &tw);
+    const float x = p[0] - anchor_off(it->anchor, (int)tw, BK_ANCHOR_W, BK_ANCHOR_E);
+    const float base = p[1] + size * 0.72f - anchor_off(it->anchor, (int)(size * 0.72f), BK_ANCHOR_N, BK_ANCHOR_S);
+    x0 = x;
+    x1 = x + tw;
+    y0 = base - size * 0.85f;
+    y1 = base + size * 0.25f;
+    m = 0.0f;
+  }
+  else if (it->type == BK_ITEM_TEXT) {
     if (!ci->text) {
       return false;
     }
@@ -931,6 +965,11 @@ static bool citem_bbox(const CItem *ci, float b[4])
   b[2] = x1 + m;
   b[3] = y1 + m;
   return true;
+}
+
+static bool citem_bbox(const CItem *ci, float b[4])
+{
+  return citem_bbox_ex(ci, b, false);
 }
 
 /* True when the whole canvas is redrawn this frame anyway. */
@@ -1016,7 +1055,7 @@ static bool citem_same(const CItem *c, const BKCanvasItem *it)
       o->ncoords != it->ncoords || o->hidden != it->hidden || o->anchor != it->anchor ||
       o->text_flags != it->text_flags || o->clip_on != it->clip_on || o->family != it->family ||
       o->width != it->width || o->radius != it->radius || o->size != it->size ||
-      o->start != it->start || o->extent != it->extent)
+      o->start != it->start || o->extent != it->extent || o->no_hit != it->no_hit)
   {
     return false;
   }
@@ -1746,13 +1785,54 @@ static void canvas_arrange(BKNode *n)
   }
 }
 
+/* A canvas's children (widgets on it) first; then the canvas itself: everywhere, or with
+ * `hititems` only inside an item (a canvas over widgets lets the pointer through elsewhere). */
+static BKNode *canvas_hit(BKNode *n, int x, int y)
+{
+  BKNode *f = kids_hit(n, x, y);
+  if (f || !(n->flags & NF_EVENTS)) {
+    return f;
+  }
+  const CanvasData *d = CANVAS(n);
+  if (!d->hit_items) {
+    return n;
+  }
+  const float px = (float)(x - (n->x - n->scroll_x)), py = (float)(y - (n->y - n->scroll));
+  for (int i = d->n - 1; i >= 0; i--) {
+    float b[4];
+    const BKCanvasItem *it = &d->items[i].it;
+    if (!it->hidden && !it->no_hit && citem_bbox_ex(&d->items[i], b, true) && px >= b[0] &&
+        px < b[2] && py >= b[1] && py < b[3])
+    {
+      /* what the item's clip cuts away can't be hit (as it isn't drawn) */
+      if (it->clip_on && (px < it->clip[0] || px >= it->clip[0] + it->clip[2] || py < it->clip[1] ||
+                          py >= it->clip[1] + it->clip[3]))
+      {
+        continue;
+      }
+      return n;
+    }
+  }
+  return NULL;
+}
+
+static int canvas_set_num(BKNode *n, const char *key, double v)
+{
+  if (strcmp(key, "hititems") == 0) {
+    CANVAS(n)->hit_items = v != 0;
+    return 1;
+  }
+  return 0;
+}
+
 const BKClass bk_cls_canvas = {.name = "canvas",
+                               .set_num = canvas_set_num,
                                .init = canvas_init,
                                .free_ext = canvas_free,
                                .measure = canvas_measure,
                                .arrange = canvas_arrange,
                                .draw = canvas_draw,
                                .draw_tree = frame_draw_tree,
-                               .hit = frame_hit};
+                               .hit = canvas_hit};
 
 /** \} */

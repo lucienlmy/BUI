@@ -163,8 +163,8 @@ is a Svelte store (`$count`). Svelte 5.57 or newer; Node.js 22.15 or newer.
   element with a delegated handler listens natively, so BUI sends it its
   events, and Svelte bubbles them through `event.composedPath()`.
 - **Styles:** a component's scoped `<style>` is added to each window once.
-- **Not yet:** transitions run their start and end without animating in
-  between; `{@html}` and size bindings (`bind:clientWidth`) aren't there.
+- **Not yet:** `use:motion` and the motion stores; transitions themselves run on the animation engine (`el.animate()`).
+  `{@html}` and size bindings (`bind:clientWidth`) aren't there either.
 
 ## Vue
 

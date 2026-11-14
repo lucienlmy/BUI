@@ -71,7 +71,7 @@ static void host_schedule(void *data, int ms, int timer_id) {
 
 /* Call debug.traceback on the error at the top of the stack, write to stderr,
  * then pop the error and any temporaries. Leaves the stack one item lighter. */
-static void report_error(lua_State *L) {
+void luabui_report_error(lua_State *L) {
   const char *err = lua_tostring(L, -1);
   if (!err) err = "(error without message)";
   fprintf(stderr, "bui: callback error: %s\n", err);
@@ -91,7 +91,7 @@ static void host_emit(void *data, BKNode *node, int kind, void *ref, double a, d
       return;
     }
     if (lua_pcall(L, 0, 0, 0) != LUA_OK) {
-      report_error(L);
+      luabui_report_error(L);
     }
     lua_settop(L, top);
     return;
@@ -111,7 +111,7 @@ static void host_emit(void *data, BKNode *node, int kind, void *ref, double a, d
     lua_pushnumber(L, a);
     lua_pushnumber(L, b);
     if (lua_pcall(L, 3, 0, 0) != LUA_OK) {
-      report_error(L);
+      luabui_report_error(L);
     }
   }
   lua_settop(L, top);

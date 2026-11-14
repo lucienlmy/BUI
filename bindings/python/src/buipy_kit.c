@@ -11,13 +11,10 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later */
 
-#define PY_SSIZE_T_CLEAN
-#include <Python.h>
+#include "buipy.h"
 
 #include <stdlib.h>
 #include <string.h>
-
-#include "BUI_kit.h"
 
 BuiRaster *buipy_current_raster(void);
 BuiRaster *buipy_raster_of(PyObject *obj);
@@ -28,7 +25,7 @@ BuiRaster *buipy_raster_of(PyObject *obj);
 
 static PyObject *g_err_type, *g_err_value, *g_err_tb;
 
-static void stash_error(void)
+void buipy_stash_error(void)
 {
   if (!PyErr_Occurred()) {
     return;
@@ -40,8 +37,7 @@ static void stash_error(void)
   PyErr_Fetch(&g_err_type, &g_err_value, &g_err_tb);
 }
 
-/* Returns 1 (with the exception restored) when a callback failed. */
-static int restore_error(void)
+int buipy_restore_error(void)
 {
   if (!g_err_type) {
     return 0;
@@ -64,10 +60,9 @@ static void ref_release(void *ref)
 /* The kit calls back into Python from places where the GIL may not be held: a native window's
  * message can be dispatched by another toolkit sharing the thread (Tk's update() releases the GIL
  * around Tcl, and Tcl's notifier dispatches every window message of the thread, BUI's included).
- * Every callback the kit gets is therefore one of these wrappers, which take the GIL first;
- * PyGILState_Ensure is cheap and nests, so it also does no harm when the GIL is already held. */
-#define GIL_ENTER PyGILState_STATE gil_ = PyGILState_Ensure()
-#define GIL_LEAVE PyGILState_Release(gil_)
+ * Every callback the kit gets is therefore one of these wrappers, which take the GIL first
+ * (GIL_ENTER, buipy.h); PyGILState_Ensure is cheap and nests, so it also does no harm when the
+ * GIL is already held. */
 
 static void ref_retain_gil(void *ref)
 {
@@ -145,7 +140,6 @@ static int kitnode_init(KitNodeObject *self, PyObject *args, PyObject *kw)
   return 0;
 }
 
-/* The node of a KitNode (buipy_video.c attaches videos); NULL with an error. */
 BKNode *buipy_kit_node(PyObject *obj)
 {
   if (!obj || !PyObject_TypeCheck(obj, &KitNode_Type) || !((KitNodeObject *)obj)->node) {
@@ -247,7 +241,7 @@ static PyObject *kitnode_set(KitNodeObject *self, PyObject *args)
     PyErr_Format(PyExc_TypeError, "unsupported value for '%s'", key);
     return NULL;
   }
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   if (!ok) {
@@ -1314,7 +1308,7 @@ static void call_quiet(PyObject *fn, PyObject *args)
   }
   PyObject *r = PyObject_CallObject(fn, args);
   if (!r) {
-    stash_error();
+    buipy_stash_error();
   }
   Py_XDECREF(r);
 }
@@ -1433,7 +1427,7 @@ static void host_emit(void *data, BKNode *node, int kind, void *ref, double a, d
                             a, b);
   }
   if (!r) {
-    stash_error();
+    buipy_stash_error();
   }
   Py_XDECREF(r);
 }
@@ -1641,7 +1635,7 @@ static PyObject *kitctx_render(KitContextObject *self, PyObject *args, PyObject 
     return NULL;
   }
   const int regions = BK_render(self->ctx, r, w, h, full);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyLong_FromLong(regions);
@@ -1655,7 +1649,7 @@ static PyObject *kitctx_render(KitContextObject *self, PyObject *args, PyObject 
       return NULL; \
     } \
     const int r = call(self->ctx, x, y, mods); \
-    if (restore_error()) { \
+    if (buipy_restore_error()) { \
       return NULL; \
     } \
     return PyBool_FromLong(r); \
@@ -1673,7 +1667,7 @@ static PyObject *kitctx_wheel(KitContextObject *self, PyObject *args)
     return NULL;
   }
   const int r = BK_wheel(self->ctx, x, y, delta, mods);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyBool_FromLong(r);
@@ -1687,7 +1681,7 @@ static PyObject *kitctx_key(KitContextObject *self, PyObject *args)
     return NULL;
   }
   const int r = BK_key(self->ctx, text ? text : "", keysym ? keysym : "", mods);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyBool_FromLong(r);
@@ -1701,7 +1695,7 @@ static PyObject *kitctx_key_release(KitContextObject *self, PyObject *args)
     return NULL;
   }
   const int r = BK_key_release(self->ctx, keysym, mods);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyBool_FromLong(r);
@@ -1714,7 +1708,7 @@ static PyObject *kitctx_button(KitContextObject *self, PyObject *args)
     return NULL;
   }
   const int r = BK_button(self->ctx, x, y, button, release, mods);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyBool_FromLong(r);
@@ -1731,7 +1725,7 @@ static PyObject *kitctx_focus_node(KitContextObject *self, PyObject *arg)
     n = ((KitNodeObject *)arg)->node;
   }
   BK_focus_node(self->ctx, n);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   Py_RETURN_NONE;
@@ -1758,7 +1752,7 @@ static PyObject *kitctx_clipboard_set(KitContextObject *self, PyObject *arg)
 static PyObject *kitctx_timer(KitContextObject *self, PyObject *arg)
 {
   BK_timer(self->ctx, (int)PyLong_AsLong(arg));
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   Py_RETURN_NONE;
@@ -1928,7 +1922,7 @@ static PyObject *kitctx_tooltip(KitContextObject *self, void *c)
 static PyObject *kitctx_undo(KitContextObject *self, PyObject *unused)
 {
   const int r = BK_undo(self->ctx);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyBool_FromLong(r);
@@ -1937,7 +1931,7 @@ static PyObject *kitctx_undo(KitContextObject *self, PyObject *unused)
 static PyObject *kitctx_redo(KitContextObject *self, PyObject *unused)
 {
   const int r = BK_redo(self->ctx);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyBool_FromLong(r);
@@ -2525,7 +2519,7 @@ static void win_on_timer(void *data, BKWindow *w, int id)
   }
   Py_XDECREF(key);
   if (PyErr_Occurred()) {
-    stash_error();
+    buipy_stash_error();
   }
 }
 
@@ -2537,7 +2531,7 @@ static int win_on_close(void *data, BKWindow *w)
   }
   PyObject *r = PyObject_CallObject(self->on_close, NULL);
   if (!r) {
-    stash_error();
+    buipy_stash_error();
     return 1;
   }
   const int allow = (r == Py_None) ? 0 : PyObject_IsTrue(r); /* Tk protocol: handler decides */
@@ -2551,7 +2545,7 @@ static void win_on_focus(void *data, BKWindow *w, int active)
   if (self->on_focus && self->on_focus != Py_None) {
     PyObject *r = PyObject_CallOneArg(self->on_focus, active ? Py_True : Py_False);
     if (!r) {
-      stash_error();
+      buipy_stash_error();
     }
     Py_XDECREF(r);
   }
@@ -2806,7 +2800,7 @@ static PyObject *kitwin_hwnd(KitWindowObject *self, void *c)
 static PyObject *kitwin_render_now(KitWindowObject *self, PyObject *unused)
 {
   BK_window_render_now(self->win);
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   Py_RETURN_NONE;
@@ -2920,7 +2914,7 @@ static PyTypeObject KitWindow_Type = {
 static PyObject *kit_run(PyObject *m, PyObject *unused)
 {
   BK_window_run();
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   Py_RETURN_NONE;
@@ -2929,7 +2923,7 @@ static PyObject *kit_run(PyObject *m, PyObject *unused)
 static PyObject *kit_pump(PyObject *m, PyObject *unused)
 {
   const int open = BK_window_pump();
-  if (restore_error()) {
+  if (buipy_restore_error()) {
     return NULL;
   }
   return PyLong_FromLong(open);

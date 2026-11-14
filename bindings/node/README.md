@@ -73,8 +73,24 @@ win.body.appendChild(button)
   - Memos and effects track what they read, are glitch-free, and need no
     dependency arrays.
   - Without the addon: `require('@blender-ui/native/signals')`.
+- **Animation:** GSAP's and Motion's APIs, run by BUI's engine (Rust and C:
+  JavaScript hands over each call's objects once and hears only the
+  callbacks it asked for).
+  - `@blender-ui/native/gsap`: `gsap.to / from / fromTo / set / timeline /
+    delayedCall`, timelines with GSAP's positions (`'<'`, `'+=1'`, labels),
+    the tween controls, callbacks, `await tween`, `CustomEase`, every ease
+    name of GSAP, Motion, CSS and Blender. Targets: selectors, elements,
+    motion values, a plain object's numbers.
+  - `@blender-ui/native/motion`: `animate` (elements, motion values,
+    `animate(0, 100, { onUpdate })`), `motionValue`, `stagger`.
+  - Every element takes Motion's props: `el.setMotion('animate', { x: 100 })`
+    (`initial`, `animate`, `exit`, `whileHover`, `whileTap`, `whileFocus`,
+    `transition`, `variants`), and `style = { x: motionValue }`.
+  - `el.animate(keyframes, options)` (Web Animations) runs for real (`cancel()` leaves the first keyframe applied until the engine can revert a style).
+  - Numbers are checked at the call: NaN or infinite times throw a `RangeError`, a negative duration is 0, `repeat: -1` is forever, a position outside GSAP's grammar throws (`docs/animation-api.md`, "Numbers and positions"). Svelte's transitions run on the engine through `el.animate()`.
 - **Tests:** `new App({ headless: true })` renders off-screen, and
-  `win.click(x, y)` simulates input.
+  `win.click(x, y)` simulates input. Its clock stands still:
+  `await app.advanceClock(ms)` steps animations frame-exactly.
 - **Looks and theme:** plain HTML looks like a browser's; the `styled`
   attribute gives an element and its subtree Blender's look; the Blender
   components (`win.createElement('NumberSlider')`, `'Button'`, `'Checkbox'`

@@ -17,7 +17,7 @@
 'use strict'
 
 const { App } = require('./index')
-const { BLENDER_COMPONENTS } = require('./dom')
+const { BLENDER_COMPONENTS, MOTION_PROPS } = require('./dom')
 const { isSignal } = require('./signals')
 
 /**
@@ -136,6 +136,9 @@ function isText (children) {
   return typeof children === 'string' || typeof children === 'number' || typeof children === 'bigint'
 }
 
+/** Motion's props (`animate`, `whileHover` ...) on any element; `style` is the style's own. */
+function isMotionProp (k) { return k in MOTION_PROPS && k !== 'style' }
+
 /** Apply the difference between two prop objects to an element. Hot: React
  *  calls it for every element of a re-rendered list, mostly with equal props. */
 function applyProps (el, prev, next) {
@@ -144,6 +147,10 @@ function applyProps (el, prev, next) {
       if (k in next || SKIP.has(k)) continue
       if (k in EVENTS) {
         listen(el, k, null)
+      } else if (isMotionProp(k)) {
+        el.setMotion(k, null)
+      } else if (k === 'style') {
+        el.style = null // the setter also lets go of the Motion values in it
       } else {
         el.removeAttribute(ATTR_ALIASES[k] ?? k)
       }
@@ -155,9 +162,10 @@ function applyProps (el, prev, next) {
     if (prev[k] === v || SKIP.has(k)) continue
     if (k in EVENTS) {
       events = true // after the attributes: onChange's event depends on `type`
+    } else if (isMotionProp(k)) {
+      el.setMotion(k, v) // read by the engine once, when the tick's changes are sent
     } else if (k === 'style') {
-      if (v == null) el.removeAttribute('style')
-      else el.style = v // a string, an object or a signal of either
+      el.style = v // a string, an object (motion values too), a signal of either, or null
     } else if (v == null || v === false) {
       el.removeAttribute(ATTR_ALIASES[k] ?? k)
     } else if (isSignal(v)) {

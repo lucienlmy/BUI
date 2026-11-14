@@ -13,6 +13,7 @@ use proc_macro::{TokenStream, TokenTree};
 
 mod component;
 mod rsx;
+mod vars;
 
 /// A function component (zopra / Leptos style): `#[component] fn card(title: &str) { rsx!{..} }`,
 /// used as `<card title="x"/>`. See `component.rs`.
@@ -33,6 +34,14 @@ pub fn derive_props(item: TokenStream) -> TokenStream {
 #[proc_macro]
 pub fn rsx(input: TokenStream) -> TokenStream {
     rsx::rsx(input)
+}
+
+/// A GSAP vars / Motion target object: `vars!{ x: 100, opacity: 0.5, duration: 1,
+/// ease: "power2.out" }`, sorted out when the program compiles (rsx's `{{ .. }}`
+/// is the same). See `vars.rs`.
+#[proc_macro]
+pub fn vars(input: TokenStream) -> TokenStream {
+    vars::vars(input)
 }
 
 #[proc_macro]
