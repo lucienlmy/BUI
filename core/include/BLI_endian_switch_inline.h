@@ -39,7 +39,7 @@ BLI_INLINE void BLI_endian_switch_uint16(unsigned short *val)
 
 BLI_INLINE void BLI_endian_switch_int32(int *val)
 {
-  BLI_endian_switch_uint32((val));
+  BLI_endian_switch_uint32((unsigned int *)(val));
 }
 BLI_INLINE void BLI_endian_switch_uint32(unsigned int *val)
 {
