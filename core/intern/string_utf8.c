@@ -527,7 +527,17 @@ size_t BLI_strncpy_wchar_from_utf8(wchar_t *__restrict dst_w,
                                    const char *__restrict src_c,
                                    const size_t dst_w_maxncpy)
 {
-  /* WIN32 branch dropped with the utfconv C++ dependency; UTF-32 path below. */
+  if (dst_w_maxncpy == 0) {
+    return 0;
+  }
+  const size_t src_len = strlen(src_c);
+  size_t index = 0;
+  size_t len = 0;
+  while (index < src_len && len + 1 < dst_w_maxncpy) {
+    dst_w[len++] = (wchar_t)BLI_str_utf8_as_unicode_step_safe(src_c, src_len, &index);
+  }
+  dst_w[len] = 0;
+  return len;
 }
 
 /* End wchar_t / UTF8 functions. */

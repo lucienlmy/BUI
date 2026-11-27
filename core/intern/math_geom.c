@@ -1297,8 +1297,13 @@ int isect_seg_seg_v2_point_ex(const float v0[2],
     if (equals_v2v2(v0, v1)) {
       if (len_squared_v2v2(v2, v3) > square_f(eps)) {
         /* use non-point segment as basis */
-        BUI_SWAP(v0, v2);
-        BUI_SWAP(v1, v3);
+        const float *v_tmp;
+        v_tmp = v0;
+        v0 = v2;
+        v2 = v_tmp;
+        v_tmp = v1;
+        v1 = v3;
+        v3 = v_tmp;
 
         sub_v2_v2v2(s10, v1, v0);
         sub_v2_v2v2(s30, v3, v0);
