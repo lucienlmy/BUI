@@ -1110,7 +1110,7 @@ fn corner_radii(c: &Computed, b: Bounds<f32>, vp: (f32, f32)) -> [f32; 4] {
     }
     let u = c.units(vp);
     let (w, h) = (b.size.width, b.size.height);
-    let r: [f32; 4] = std::array::from_fn(|k| c.radius[k].resolve(&u, w.min(h)).max(0.0));
+    let r: [f32; 4] = std::array::from_fn(|k| c.radius[k].resolve(&u, w.min(h)).clamp(0.0, 1.0e6));
     let f = [w / (r[0] + r[1]), h / (r[1] + r[2]), w / (r[2] + r[3]), h / (r[3] + r[0])]
         .into_iter()
         .filter(|f| f.is_finite())
