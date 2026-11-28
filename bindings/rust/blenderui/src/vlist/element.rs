@@ -137,6 +137,7 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
                     }
                     let local = |s: &ListState<S, P>| (e.position.x.0 - s.bounds.origin.x, e.position.y.0 - s.bounds.origin.y);
                     state_pointer_down(down, &handlers, local, cx);
+                    w.set_pointer_capture(cx);
                     w.refresh();
                 })
                 .on_mouse_move(move |e, w, cx| {
@@ -212,12 +213,7 @@ impl<S: ItemSource, P: Measurer + ItemPainter> IntoElement for VariableList<S, P
                         w.request_animation_frame();
                     }
                 })
-                .child(
-                    // the canvas alone in its layer, as the data table does
-                    div().absolute().left(px(0.0)).top(px(0.0)).w_full().h_full().child(
-                        canvas_with(move |b, p, cx| state.read(cx).draw(b, p, scale)).size_full(),
-                    ),
-                );
+                .child(canvas_with(move |b, p, cx| state.read(cx).draw(b, p, scale)).absolute().left(px(0.0)).top(px(0.0)).w_full().h_full());
         });
         AnyElement::Element(el)
     }
