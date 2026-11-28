@@ -1904,6 +1904,16 @@ impl Window {
         self.dirty = true;
     }
 
+    /// Give the text field with `.id(id)` keyboard focus and start editing, as a click on it does
+    /// ([`focus_id`](Self::focus_id) only moves the document's focus, not the widget's caret).
+    pub fn focus_input(&mut self, id: &str) {
+        self.focus_id(id);
+        if let Some(w) = self.widgets.nodes.get(&id_key(id)) {
+            // SAFETY: a live context and one of its live widget nodes.
+            unsafe { sys::BK_focus_node(self.ctx, w.node) };
+        }
+    }
+
     /// Show (or hide) the popover with `.id(id)` (an element with a `popover` attribute): it
     /// matches `:popover-open`, which the user-agent sheet shows in the top layer. An open
     /// `<dialog>` shown so is modal (`:modal`).
